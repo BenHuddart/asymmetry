@@ -1,4 +1,4 @@
-"""Waterfall-stacked time-domain overlay of the Ag LF decoupling series.
+"""Waterfall-stacked time-domain overlay of the generic LF decoupling series.
 
 Reuses the same five-field LF Kubo–Toyabe field-decoupling series as
 ``lf_kt_series_plot.py`` (B_L = 0, 5, 10, 25, 50 G against Δ=0.39 μs⁻¹), but
@@ -15,13 +15,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ..data import make_ag_lf_decoupling
+from ..data import make_generic_lf_decoupling
 from ._base import Scenario, register
 
 
 class WaterfallOverlayScenario(Scenario):
     name = "waterfall_overlay"
-    description = "Waterfall-stacked time-domain overlay of an Ag LF decoupling series."
+    description = "Waterfall-stacked time-domain overlay of a generic LF decoupling series."
     size = (1500, 920)
 
     def build(self) -> QWidget:
@@ -31,14 +31,14 @@ class WaterfallOverlayScenario(Scenario):
         window._plot_panel.set_connect_points_enabled(True)
         window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
-        datasets = make_ag_lf_decoupling()
+        datasets = make_generic_lf_decoupling()
         # Per-add table rebuilds are O(n²); batch_updates defers to one rebuild.
         with window._data_browser.batch_updates():
             for dataset in datasets:
                 window._data_browser.add_dataset(dataset)
 
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(run_numbers, name="LF decoupling — Ag")
+        window._data_browser.create_data_group(run_numbers, name="LF decoupling — generic fields")
 
         # Enable Overlay, then Waterfall (auto spacing) before selecting, so
         # all five LF runs render stacked rather than piled on one baseline.

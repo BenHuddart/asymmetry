@@ -173,9 +173,9 @@ an anchor for several distinct acquisitions. See :doc:`period_mapping`.
 References
 ----------
 
-* S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
+* S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
   An Introduction* (Oxford University Press, Oxford, 2022), time-zero calibration.
-* A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
+* A\. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
 * `musrfit user manual <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_.
 * `Mantid MuonPreProcess <https://docs.mantidproject.org/v6.16.0/algorithms/MuonPreProcess-v1.html>`_.
 * `WiMDA <https://shadow.nd.rl.ac.uk/wimda/>`_.

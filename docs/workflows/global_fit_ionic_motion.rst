@@ -1,6 +1,18 @@
 Global fitting across fields: Li⁺ ionic motion in a garnet electrolyte
 ======================================================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use several applied fields at each temperature, together with reliable field
+   and temperature metadata and a common instrument calibration. The LLZ triplets
+   below identify the demonstration. Form your own groups of runs at matched
+   temperatures, verify the field units, and decide which parameters can
+   physically be shared before fitting them together.
+
 This chapter is the flagship worked example of a **global fit** — a single
 simultaneous fit of several runs that share some parameters and differ in
 others. It takes a real longitudinal-field (LF) decoupling series measured on
@@ -12,11 +24,10 @@ Li₇La₃Zr₂O₁₂ (LLZ), a candidate solid electrolyte for a lithium-ion ba
 the same runs were published by Amores *et al.*, J. Mater. Chem. A **4**, 1729
 (2016), so the analysis here has a paper-grade target to aim at.
 
-Its synthetic sibling, :doc:`lf_decoupling_dynamics`, builds the same story on a
-textbook Ag decoupling series and works through the static-versus-dynamic
-formalism in detail. Read that page for the theory of Kubo–Toyabe decoupling;
-this page is the real-data counterpart and concentrates on *why you need a
-global fit at all*, and on the practical mechanics of tying parameters across a
+The related demonstration, :doc:`lf_decoupling_dynamics`, uses a magnetic
+longitudinal-field series and works through the static-versus-dynamic
+interpretation in detail. Read that page for the theory of Kubo–Toyabe decoupling;
+this page concentrates on *why you need a global fit at all*, and on the practical mechanics of tying parameters across a
 field triplet.
 
 Why a global fit is unavoidable here
@@ -47,7 +58,7 @@ Fit" it descends from) calls a global fit.
 The runs
 --------
 
-The corpus example ships 40 EMU runs collected in April 2015 (experiment
+The corpus example contains 40 EMU runs collected in April 2015 (experiment
 RB1510349): one transverse-field calibration run and thirteen temperatures each
 measured at three longitudinal fields.
 
@@ -398,16 +409,16 @@ Assumptions and limitations
 References
 ----------
 
-- M. Amores, T. E. Ashton, P. J. Baker, E. J. Cussen, and S. A. Corr, J. Mater.
+- M\. Amores, T. E. Ashton, P. J. Baker, E. J. Cussen, and S. A. Corr, J. Mater.
   Chem. A **4**, 1729 (2016) — the published analysis of this dataset: EMU LF
   0/5/10 G decoupling, a simultaneous Keren fit at each temperature, and the
   Li⁺ activation energy :math:`E_a = 0.19(1)` eV.
-- A. Keren, Phys. Rev. B **50**, 10039 (1994) — the analytic longitudinal-field
+- A\. Keren, Phys. Rev. B **50**, 10039 (1994) — the analytic longitudinal-field
   relaxation function used here.
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
   Phys. Rev. B **20**, 850 (1979) — the dynamic Kubo–Toyabe theory of field
   decoupling that Keren's function generalises.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), Ch. 5
   — LF decoupling and dynamic relaxation.
 
@@ -415,7 +426,7 @@ Cross-references
 ----------------
 
 - :doc:`lf_decoupling_dynamics` — the synthetic sibling: the static-versus-
-  dynamic Kubo–Toyabe formalism behind LF decoupling, worked on a textbook Ag
+  dynamic Kubo–Toyabe formalism behind LF decoupling, worked on a generic Gaussian-field
   series.
 - :doc:`calibration_grouping_emu` — the EMU grouping profile and α calibration
   used in Step 1.

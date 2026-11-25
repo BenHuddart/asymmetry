@@ -5,8 +5,10 @@ API cookbook
 
 Copy-paste recipes for the most common scripting workflows, each linking to the
 page that documents it in full. If you are driving Asymmetry from a script or an
-agent rather than the GUI, **start here** — every recipe below is a runnable
-snippet against the public :mod:`asymmetry.core` API. If an AI coding agent is
+agent rather than the GUI, **start here**. Self-contained examples create their inputs. Other recipes
+require your own files, already loaded datasets, or arrays from the preceding
+analysis; replace those inputs before running them against the public
+:mod:`asymmetry.core` API. If an AI coding agent is
 doing the driving, :doc:`agent_workflow` documents a packaged command-line
 workflow and skill built on this same API, with no Python to write.
 
@@ -31,36 +33,33 @@ workflow and skill built on this same API, with no Python to write.
      ``model.param_names`` *first* and seed exactly those.
 
 
-Load a run, group, calibrate α, correct deadtime
-------------------------------------------------
+Load a run, calibrate α, and reduce
+-----------------------------------
 
-:func:`~asymmetry.core.io.load` returns a
-:class:`~asymmetry.core.data.dataset.MuonDataset`; its raw histograms live on
-``ds.run``. Group detectors, estimate the F/B balance :math:`\alpha`, and form
-the asymmetry:
+This recipe requires your own ``calibration.nxs`` file, its HDF5 or HDF4 reader
+extra, and a signal suitable for the count-ratio calibration. It uses the file's
+detector groups and explicitly selects its first acquired period. The workflow
+API retains timing, good-bin support, and calibration context:
 
 .. code-block:: python
 
+   from dataclasses import replace
+
    from asymmetry.core.io import load
-   from asymmetry.core.transform import (
-       apply_grouping, estimate_alpha, compute_asymmetry,
+   from asymmetry.core.workflow import (
+       CalibrationOptions, ReductionSettings, calibrate_run, reduce_run,
    )
 
-   ds = load("MUSR00044989.nxs")
-   histograms = ds.run.histograms
+   ds = load("calibration.nxs", period=1)
+   settings = ReductionSettings(deadtime="off", background="none", rebin=1)
+   calibration = calibrate_run(ds, settings, CalibrationOptions(method="ratio"))
+   reduced = reduce_run(ds.run, replace(settings, alpha=calibration.result))
+   time, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
 
-   # apply_grouping takes 0-based histogram indices.
-   backward = apply_grouping(histograms, list(range(0, 32)))   # detectors 1–32
-   forward = apply_grouping(histograms, list(range(32, 64)))   # detectors 33–64
-
-   alpha = estimate_alpha(forward, backward)
-   asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
-
-Deadtime correction (PSI BIN / ROOT raw histograms need it; ISIS NeXus arrives
-pre-corrected) is applied to the histograms *before* grouping — the order is
-always deadtime → background → grouping → asymmetry. See
-:doc:`grouping_calibration` and :doc:`data_processing` for the deadtime APIs and
-the error model.
+Here corrections are explicitly disabled. Choose correction settings from the
+acquisition's calibration and exposure, rather than its filename or format.
+See :doc:`grouping_calibration` and :doc:`data_processing` for the available
+settings. The returned dataset's asymmetry and errors are in percent.
 
 
 .. _temperature-selection-example:
@@ -199,7 +198,7 @@ composite renames parameters (sequential ``A_1``, ``A_2``, …; background
        FitEngine, CompositeModel, Parameter, ParameterSet,
    )
 
-   ds = load("data.nxs")
+   ds = load("data.nxs", period=1)
 
    # In expressions use COMPONENTS names (Gaussian, Exponential, Constant) —
    # NOT the MODELS names (GaussianRelaxation, ...).
@@ -207,7 +206,7 @@ composite renames parameters (sequential ``A_1``, ``A_2``, …; background
    print(model.param_names)          # ['A_1', 'sigma', 'A_bg']  <- seed THESE
 
    params = ParameterSet([
-       Parameter("A_1", value=0.2, min=0.0, max=1.0),
+       Parameter("A_1", value=20.0, min=0.0, max=100.0),
        Parameter("sigma", value=0.3, min=0.0),
        Parameter("A_bg", value=0.0),
    ])
@@ -231,7 +230,7 @@ arguments (its first positional field is ``n_spectrum_points``):
    from asymmetry.core.io import load
    from asymmetry.core.maxent import maxent, MaxEntConfig
 
-   ds = load("data.nxs")
+   ds = load("data.nxs", period=1)
    config = MaxEntConfig(n_spectrum_points=2048, f_max_mhz=5.0,
                          t_min_us=0.1, t_max_us=8.0)
    result = maxent(ds.run, config, cycles=10)        # ds.run, NOT ds
@@ -241,7 +240,8 @@ Passing the ``MuonDataset`` raises a ``TypeError`` telling you to pass
 ``ds.run``. See :doc:`fourier_analysis`.
 
 For a large joint reconstruction, ``MaxEntConfig(..., backend="cuda")`` runs
-the same kernels on an optional CUDA GPU (``pip install "asymmetry[gpu]"``);
+the same kernels on an optional CUDA GPU (install ``.[gpu]`` from your
+repository checkout);
 see :ref:`maxent-gpu-acceleration`.
 
 
@@ -291,11 +291,13 @@ sharing the physics parameters across the dataset's detector groups:
        GROUP_NUISANCE_PARAMS,
    )
 
-   ds = load("tf_run.nxs")
+   ds = load("tf_run.nxs", period=1)
    groups = build_grouped_time_domain_groups(ds, t_min=0.1, t_max=8.0)
 
-   def tf_gaussian(t, sigma, frequency):
-       ...   # transverse-field polarization P(t; sigma, frequency)
+   import numpy as np
+
+   def tf_gaussian(t, sigma, frequency, phase=0.0):
+       return np.exp(-0.5 * (sigma * t) ** 2) * np.cos(2 * np.pi * frequency * t + phase)
 
    seed = {g.group_id: ParameterSet([
        Parameter("N0", 1000.0, min=0.0),
@@ -506,7 +508,7 @@ to match the data you are fitting:
 
 .. code-block:: python
 
-   ds = load("data.nxs")
+   ds = load("data.nxs", period=1)
    print(ds.asymmetry.max())     # ~25 here -> percent scale
 
    model = CompositeModel.from_expression("Gaussian + Constant").to_model_definition()

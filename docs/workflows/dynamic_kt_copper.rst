@@ -1,6 +1,18 @@
 Muon diffusion in copper: Kubo–Toyabe, Abragam, and QLCR
 ========================================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own temperature series with the field geometries you want to study,
+   plus the instrument calibration. The copper run numbers and fitted values below
+   belong to the demonstration. For another sample, establish its low-temperature
+   static width and suitable models from its own spectra; do not copy the copper
+   width or fit starting values without checking them.
+
 Copper is the textbook host for muon diffusion. A positive muon stops at an
 octahedral interstitial site in the face-centred-cubic lattice, where it behaves
 as a light isotope of hydrogen — a proton with one ninth of the mass — and its
@@ -29,7 +41,7 @@ The experiment and the corpus data
 -----------------------------------
 
 The corpus example (*Nuclear magnetism and ionic motion → Muon diffusion and
-QLCR in copper*, ``Data/``) ships 74 NeXus ``.nxs`` runs from two campaigns: a
+QLCR in copper*, ``Data/``) contains 74 NeXus ``.nxs`` runs from two campaigns: a
 2010 **EMU** set (runs 20882–20917) and a 2024 **ARGUS** set (runs
 76924–76961), both pulsed ISIS instruments. Between them they cover all three
 geometries.
@@ -224,7 +236,10 @@ matter:
      - free
      - Flat background
 
-Taking the warmest EMU run ``20917`` (200 K) as a worked single fit:
+The demonstration fits the warmest EMU run, ``20917`` (200 K). To adapt the
+script, replace the filename with your zero-field run and determine the fixed
+static width from your own reference data. The input values and quoted output
+below describe the copper example:
 
 .. code-block:: python
 
@@ -233,7 +248,7 @@ Taking the warmest EMU run ``20917`` (200 K) as a worked single fit:
    from asymmetry.core.fitting.models import MODELS
    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-   ds = load(".../Muon diffusion and QLCR in copper/Data/EMU00020917.nxs")
+   ds = load("your_zf_run.nxs")
 
    model = MODELS["DynamicGaussianKT"]
    params = ParameterSet([
@@ -246,7 +261,7 @@ Taking the warmest EMU run ``20917`` (200 K) as a worked single fit:
    result = FitEngine().fit(ds, model.function, params)
 
    fitted = {p.name: p.value for p in result.parameters}
-   print(round(fitted["nu"], 2))                       # 2.40 (MHz)
+   print(round(fitted["nu"], 2))                       # demonstration: 2.40 MHz
 
 The fit converges with :math:`A_0 \approx 21.7\,\%` and
 
@@ -462,22 +477,22 @@ Assumptions and limitations
 References
 ----------
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
   Phys. Rev. B **20**, 850 (1979) — the dynamic Kubo–Toyabe strong-collision
   theory used for the ZF hop-rate fits.
-- R. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
-  R. Blinc (North-Holland, Amsterdam, 1967), p. 810 — the original Kubo–Toyabe
+- R\. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
+  R\. Blinc (North-Holland, Amsterdam, 1967), p. 810 — the original Kubo–Toyabe
   zero-field relaxation function.
-- A. Abragam, *The Principles of Nuclear Magnetism* (Oxford University Press,
+- A\. Abragam, *The Principles of Nuclear Magnetism* (Oxford University Press,
   Oxford, 1961) — the Gaussian-to-exponential crossover envelope used on the
   transverse-field line shape.
-- G. M. Luke, J. H. Brewer, S. R. Kreitzman, D. R. Noakes, M. Celio, R. Kadono,
+- G\. M. Luke, J. H. Brewer, S. R. Kreitzman, D. R. Noakes, M. Celio, R. Kadono,
   and E. J. Ansaldo, Phys. Rev. B **43**, 3284 (1991) — muon diffusion and spin
   dynamics in copper, including the low-temperature quantum-diffusion upturn.
-- S. R. Kreitzman, J. H. Brewer, D. R. Harshman, R. Keitel, and D. Ll. Williams,
+- S\. R. Kreitzman, J. H. Brewer, D. R. Harshman, R. Keitel, and D. Ll. Williams,
   Phys. Rev. Lett. **56**, 181 (1986) — the quadrupolar level-crossing resonance
   of the muon in copper.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), Ch. 5–6
   — Kubo–Toyabe relaxation, dynamics, and level-crossing resonance.
 
@@ -497,6 +512,6 @@ Cross-references
 - :doc:`/reference/parameter_trending` — the trending panel, log axes, and the
   Arrhenius-on-a-plateau recipe used for :math:`\nu(T)`.
 - :doc:`lf_decoupling_dynamics` — the static-versus-dynamic Kubo–Toyabe formalism
-  worked on a synthetic Ag decoupling series.
+  worked on a synthetic generic Gaussian-field decoupling series.
 - :doc:`global_fit_ionic_motion` — the same dynamic-relaxation trending workflow
   applied to Li⁺ ionic motion, via a global fit across fields.

@@ -30,7 +30,9 @@ fits alone — a batch, global, grouped or scan run never writes one), and the
 *batches* (fit series, each carrying the recipe that produced it) that
 drive the Fit Parameters trending panel and the plot's overlays. Raw
 detector arrays are *not* embedded — the file references source data by
-path and reloads from disk on open. Fourier spectra are regenerated from
+path and reloads from disk on open. Preserve the raw acquisition files and any
+background-reference files alongside the project; sharing the project alone
+does not supply those observations. Fourier spectra are regenerated from
 their stored recipe (window, padding, phase, group selection) rather
 than embedded, so the file remains compact even after frequency-domain
 work. This makes ``.asymp`` files small enough to share alongside the
@@ -68,7 +70,7 @@ incomplete-project confirmation. This deliberately partial restore does not roll
 back to the outgoing session.
 
 .. image:: /_generated/screenshots/project_rejection.png
-   :alt: A contextual malformed-project error in the log with retained unsaved synthetic Ag data.
+   :alt: A contextual malformed-project error in the log with retained unsaved synthetic Gaussian-field data.
 
 Saving is crash-safe: the new content is written to a temporary file
 next to the target and only swapped into place once it is fully flushed

@@ -1,36 +1,40 @@
 Grouping and calibration walkthrough
 ====================================
 
-For the operation order and calibration dependencies, see
-:doc:`/explanation/reduction_pipeline`.
+A grouping profile keeps the detector groups and calibration choices used by
+runs of one instrument. Use the **Grouping** window to check which detectors
+form the forward and backward signals, how they are balanced, and which
+corrections apply before fitting. The live preview shows the effect of your
+choices on the selected run.
 
-Calibration preparation uses the same unique acquired-channel membership and
-exclusions as reduction. Invalid or missing members and required groups emptied
-by exclusions, or shared effective channels within an independent F/B pair,
-make the request unavailable; select a matching preset or edit
-the groups before estimating. See :doc:`detector_grouping` for the membership
-contract and its comparisons with other programs.
+For a first analysis with generated counts, start with the
+:doc:`/getting_started/quickstart`. The
+:doc:`interactive reduction guide </explanation/reduction_pipeline>` explains
+the operation order; :doc:`detector_grouping` describes the profile settings,
+corrections, and file formats in detail. The
+:doc:`EMU demonstration </workflows/calibration_grouping_emu>` shows these
+choices on teaching measurements and explains the inputs to supply yourself.
 
-Before you fit anything, a raw run has to be *calibrated*: the time-zero and
-good-bin range set, the detectors combined into forward and backward groups, the
-calibration constant :math:`\alpha` fixed, and — for raw histogram formats — deadtime
-correction applied. In Asymmetry this is a **grouping profile** — one named,
-shareable calibration per instrument — edited in the **Grouping** window, with
-the detector arrangement built visually in the **Detector Layout** editor and
-calibration and correction controls together in the Corrections column.
+Prepare a run
+-------------
 
-.. note::
+#. Load and select a run, then open **Grouping** on the main toolbar or
+   **Analysis → Grouping…**.
+#. Check the **Instrument**, profile, and selected run. The editing-target
+   strip tells you whether a change affects a shared profile or one run.
+#. Review the **Forward Group** and **Backward Group**. Use the
+   :ref:`detector layout editor <grouping-layout-editor>` to inspect or change
+   their detector membership.
+#. Check timing, good bins, and the deadtime and background choices against
+   the acquisition. If you need a new detector-balance calibration, use a
+   suitable reference run and **Estimate calibration**; see
+   :doc:`data_reduction/alpha_calibration` for the method choices.
+#. Inspect the preview and status rows, then click **Apply** to apply your
+   changes. `Scope: following, releasing, and assigning`_ explains how to keep
+   a run-specific exception separate from the shared profile.
 
-   **Coming from WiMDA?** Asymmetry has no "edit detector list" text box. The
-   visual **Detector Layout** editor — concentric detector rings you click to
-   build groups, seeded by instrument presets — is its replacement. See
-   `The Detector Layout editor`_ below.
-
-This page is a practical walkthrough. For the grouping-profile model, the
-stored payload, the deadtime/background correction maths, and the per-format
-(PSI / ROOT) details, see the reference page :doc:`detector_grouping`; for the
-same calibration carried out end-to-end on a real EMU run, see
-:doc:`/workflows/calibration_grouping_emu`.
+The sections below describe the controls, profile scope, a worked calibration,
+and the equivalent Python operations.
 
 The Grouping window
 --------------------
@@ -156,6 +160,8 @@ several overrides in one session, editing each in turn, and a single **Apply**
 commits them all — the profile to its following runs and every edited override
 to its own run.
 
+.. _grouping-layout-editor:
+
 The Detector Layout editor
 ---------------------------
 
@@ -237,6 +243,16 @@ broadcast step required.
    that sample before trusting the asymmetry. The inherited value is a
    convenience, not a measurement of the new sample.
 
+Check calibration inputs
+------------------------
+
+Calibration preparation uses the same unique acquired-channel membership and
+exclusions as reduction. Invalid or missing members and required groups emptied
+by exclusions, or shared effective channels within an independent F/B pair,
+make the request unavailable; select a matching preset or edit
+the groups before estimating. See :doc:`detector_grouping` for the membership
+contract and its comparisons with other programs.
+
 Recomputing asymmetry from the API (custom grouping and α)
 ----------------------------------------------------------
 
@@ -271,27 +287,25 @@ Where each function lives
   return no added uncertainty; the ratio reports first-order propagation.
   The simple form raises ``CorrectionUnavailableError`` for empty inputs,
   nonpositive integrals or an unrepresentable ratio; it has no default result.
-* ``apply_grouping(histograms, group_indices)``
-  (``asymmetry.core.io.nexus``; also re-exported from
-  ``asymmetry.core.transform``) — sums the listed detector histograms into one
-  grouped counts array. ``group_indices`` are **0-based** indices into the
-  run's histogram list.
+* :func:`~asymmetry.core.transform.grouping.group_forward_backward`
+  (``asymmetry.core.transform``) — resolves effective detector membership and
+  aligns the selected pair on common support. For already compatible synthetic
+  histograms, ``apply_grouping_aligned(histograms, group_indices)`` sums a group
+  using **0-based** histogram indices. Use the workflow API for a full reduction.
 * :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`
   (``asymmetry.core.transform``) — the standard fixed-width pair asymmetry
   :math:`(F - \alpha B)/(F + \alpha B)` with a chosen :math:`\alpha`; returns
   ``(asymmetry, error)``.
-* ``binned_fb_asymmetry`` (``asymmetry.core.representation.time``) — the
-  variable / constant-error binning path (it raises on the ``"fixed"`` binning
-  mode; use ``compute_asymmetry`` for ordinary fixed-width bins).
-* ``slice_to_good_window`` (``asymmetry.core.data.combine``) — trim a computed
-  asymmetry/error pair to the good-bin window.
+* ``binned_fb_asymmetry`` (``asymmetry.core.transform.rebin``) — bins
+  grouped counts before forming the ratio, for fixed, variable, or
+  constant-error binning.
 * ``prepare_histograms_with_deadtime`` (``asymmetry.core.transform.deadtime``)
   — apply signed deadtime coefficients before grouping; invalid inputs or a
   singular inverse raise ``DeadtimeCorrectionError``.
 * :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
   (``asymmetry.core.transform.reduce``) — the single reduction chokepoint the
   GUI and the Grouping window's live preview both call: deadtime, grouping,
-  optional background, then the counts-then-ratio asymmetry, in one function.
+  optional grouped background, count binning, then asymmetry, in one function.
 * :func:`~asymmetry.core.project.profiles.resolve_effective_grouping`
   (``asymmetry.core.project.profiles``) — merge a
   :class:`~asymmetry.core.project.profiles.GroupingProfile` with a run to
@@ -301,31 +315,22 @@ Where each function lives
 Minimal workflow
 ~~~~~~~~~~~~~~~~~
 
-.. code-block:: python
-
-   from asymmetry.core.io import load
-   from asymmetry.core.transform import (
-       apply_grouping,
-       estimate_alpha,
-       compute_asymmetry,
-   )
-
-   ds = load("MUSR00044989.nxs")
-   histograms = ds.run.histograms
-
-   # MUSR F/B grouping: detectors 1–32 = Back, 33–64 = Fwd (1-based);
-   # apply_grouping takes 0-based histogram indices.
-   backward = apply_grouping(histograms, list(range(0, 32)))    # detectors 1–32
-   forward = apply_grouping(histograms, list(range(32, 64)))    # detectors 33–64
-
-   alpha = estimate_alpha(forward, backward)   # ≈ 1.103 for this run
-   asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
-
-For the lower-level grouping/asymmetry APIs (deadtime-first ordering, the error
-model, PSI background correction) see :doc:`data_processing`.
+The :doc:`API cookbook <cookbook>` provides the runnable **Load a run, calibrate α,
+and reduce** recipe. It selects an acquired period, estimates the detector
+balance, and returns time, asymmetry, and error arrays through the workflow API.
+Supply your own suitable calibration file and choose corrections for that
+acquisition. For the correction settings and uncertainty model, see
+:doc:`data_processing`.
 
 Compared with other programs
 ----------------------------
+
+.. note::
+
+   **Coming from WiMDA?** Asymmetry has no "edit detector list" text box. The
+   visual **Detector Layout** editor — concentric detector rings you click to
+   build groups, seeded by instrument presets — is its replacement. See
+   `The Detector Layout editor`_.
 
 Calibration preparation enforces Asymmetry's independent-pair uncertainty model.
 Native Mantid 6.16.1 rejects the tested identical pair lists but accepts partial

@@ -156,12 +156,12 @@ is given by F. L. Pratt, Physica B **289–290**, 710 (2000),
 References
 ----------
 
-.. [1] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+.. [1] S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
    *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) — the
    rotating-reference-frame section of the time-domain-analysis chapter;
-   T. M. Riseman and J. H. Brewer, Hyperfine Interact. **65**, 1107 (1991).
+   T\. M. Riseman and J. H. Brewer, Hyperfine Interact. **65**, 1107 (1991).
 
-.. [2] B. D. Rainford, in *Muon Science*, edited by S. L. Lee, S. H. Kilcoyne,
+.. [2] B\. D. Rainford, in *Muon Science*, edited by S. L. Lee, S. H. Kilcoyne,
    and R. Cywinski (Institute of Physics Publishing, Bristol, 1999), p. 463.
 
 .. [3] JCGM 100:2008, *Evaluation of measurement data — Guide to the expression

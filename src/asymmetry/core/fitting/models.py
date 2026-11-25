@@ -669,7 +669,7 @@ def risch_kehr(t: NDArray, Gamma: float) -> NDArray:
 
     References
     ----------
-    R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).
+    R\\. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).
     """
     gt = np.abs(float(Gamma)) * np.abs(np.asarray(t, dtype=float))
     return np.asarray(erfcx(np.sqrt(gt)), dtype=float)

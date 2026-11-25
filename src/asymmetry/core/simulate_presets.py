@@ -1,11 +1,11 @@
 """Archetype gallery: one-click textbook synthetic runs.
 
 Each preset pairs a built-in idealised instrument (:mod:`asymmetry.core.simulate`)
-with a fit model and a set of physically grounded parameters, and generates a
+with a fit model and a set of teaching parameters, and generates a
 first-class **synthetic run** — Poisson count histograms drawn through the same
 reduction chain as beamline data, badged with provenance — rather than a curve
-with Gaussian noise bolted on. The parameter values are the canonical
-textbook/literature numbers also used by the documentation screenshots
+with Gaussian noise bolted on. The teaching parameters are also used by the
+documentation screenshots
 (``docs.screenshots.data.archetypes``); here they drive the full simulate
 pipeline so the runs are fittable and recover their generating physics.
 
@@ -32,7 +32,7 @@ from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RAT
 
 # Rounded frequencies preserve the textbook examples' field scale in MHz/G.
 GAMMA_MU_MHZ_PER_G = round(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA, 5)
-DELTA_AG_PER_US = 0.39  # Ag nuclear dipolar width, Ch. 5
+ILLUSTRATIVE_KT_DELTA_PER_US = 0.39  # Chosen teaching width; no material attribution.
 TC_EUO_K = 69.0  # EuO Curie temperature, Ch. 6
 R_MUF_ANG = 1.17  # F-μ-F equilibrium separation, Ch. 4
 
@@ -122,15 +122,20 @@ def _euo_specs() -> tuple[PresetRunSpec, ...]:
     return tuple(specs)
 
 
-def _ag_lf_specs() -> tuple[PresetRunSpec, ...]:
-    """Ag LF Kubo–Toyabe decoupling series, shared Δ = 0.39 µs⁻¹ (Ch. 5)."""
+def _generic_lf_specs() -> tuple[PresetRunSpec, ...]:
+    """Generic static LF Kubo–Toyabe series, illustrative Δ = 0.39 µs⁻¹."""
     lfkt = MODELS["LFKuboToyabe"].function
     return tuple(
         PresetRunSpec(
             model_name="LFKuboToyabe",
             model=lfkt,
-            parameters={"A0": 24.0, "Delta": DELTA_AG_PER_US, "B_L": field_g, "baseline": 0.0},
-            title=f"Ag LF {field_g:g} G",
+            parameters={
+                "A0": 24.0,
+                "Delta": ILLUSTRATIVE_KT_DELTA_PER_US,
+                "B_L": field_g,
+                "baseline": 0.0,
+            },
+            title=f"Generic LF {field_g:g} G",
             temperature=20.0,
             field=field_g,
             field_state="LF" if field_g > 0 else "ZF",
@@ -144,12 +149,11 @@ def _build_registry() -> dict[str, SimulatePreset]:
     return {
         "ag_zf_kt": SimulatePreset(
             key="ag_zf_kt",
-            label="Ag — ZF Gaussian Kubo–Toyabe",
+            label="Generic — ZF Gaussian Kubo–Toyabe",
             chapter="Ch. 5",
             description=(
-                "Zero-field silver polycrystal: the canonical static "
-                "nuclear-dipolar reference, a Gaussian Kubo–Toyabe with "
-                "Δ = 0.39 µs⁻¹."
+                "Static isotropic Gaussian local fields: a zero-field Kubo–Toyabe "
+                "with illustrative Δ = 0.39 µs⁻¹, not assigned to a material."
             ),
             template_key="ideal_pulsed_fb",
             seed=2301,
@@ -157,8 +161,8 @@ def _build_registry() -> dict[str, SimulatePreset]:
                 PresetRunSpec(
                     model_name="StaticGKT_ZF",
                     model=MODELS["StaticGKT_ZF"].function,
-                    parameters={"A0": 24.0, "Delta": DELTA_AG_PER_US, "baseline": 0.0},
-                    title="Ag ZF 20 K (Kubo–Toyabe)",
+                    parameters={"A0": 24.0, "Delta": ILLUSTRATIVE_KT_DELTA_PER_US, "baseline": 0.0},
+                    title="Generic ZF 20 K (Kubo–Toyabe)",
                     temperature=20.0,
                     field=0.0,
                 ),
@@ -166,16 +170,16 @@ def _build_registry() -> dict[str, SimulatePreset]:
         ),
         "ag_lf_decoupling": SimulatePreset(
             key="ag_lf_decoupling",
-            label="Ag — LF decoupling series",
+            label="Generic — LF decoupling series",
             chapter="Ch. 5",
             description=(
-                "Longitudinal-field decoupling of the same Ag Kubo–Toyabe: as "
-                "B_L grows the relaxation is progressively decoupled, the "
-                "textbook test of static nuclear dipolar fields."
+                "Static Gaussian Kubo–Toyabe decoupling with illustrative "
+                "Δ = 0.39 µs⁻¹. Applied field suppresses relaxation in this "
+                "static model; this is not a material measurement."
             ),
             template_key="ideal_pulsed_fb",
             seed=4100,
-            specs=_ag_lf_specs(),
+            specs=_generic_lf_specs(),
         ),
         "euo_tscan": SimulatePreset(
             key="euo_tscan",
@@ -259,7 +263,7 @@ def build_preset_runs(
     Each run is produced by :func:`asymmetry.core.simulate.simulate_run` on the
     preset's built-in instrument template, badged synthetic, and carries the
     preset key and textbook chapter in its ``metadata["simulation"]``
-    provenance. A scan preset (EuO, Ag LF) returns several runs; seeds are the
+    provenance. A scan preset (EuO, generic LF) returns several runs; seeds are the
     preset's fixed seed offset by the member index, so the family is
     reproducible. ``seed`` overrides the preset's fixed base seed when given.
 
@@ -294,6 +298,7 @@ def build_preset_runs(
         provenance = run.metadata.setdefault("simulation", {})
         provenance["preset"] = preset.key
         provenance["preset_label"] = preset.label
+        provenance["preset_description"] = preset.description
         provenance["reference"] = (
             f"Blundell, De Renzi, Lancaster & Pratt, "
             f"Muon Spectroscopy: An Introduction (OUP, 2022), {preset.chapter}"

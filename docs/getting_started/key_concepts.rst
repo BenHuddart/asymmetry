@@ -5,8 +5,9 @@ Asymmetry organises an analysis around a small number of objects. They map onto
 the physics of a muon experiment rather than onto files or windows, and the same
 objects appear whether you drive the program from the graphical interface or
 script against the :mod:`asymmetry.core` API. This page introduces them once, so
-that the rest of the documentation can refer to them without ceremony. For the
-underlying physics, see :doc:`/explanation/musr_primer`.
+that the rest of the documentation can refer to them without ceremony. For a
+first analysis without measurement files, follow :doc:`quickstart`. For
+the underlying physics, see :doc:`/explanation/musr_primer`.
 
 Runs and datasets
 -----------------
@@ -17,10 +18,16 @@ temperature, applied field, detector geometry, time-zero, the good-bin range, an
 so on. Loading a file with :func:`~asymmetry.core.io.load` returns a **dataset**
 (a :class:`~asymmetry.core.data.dataset.MuonDataset`), which wraps the run and
 carries the reduction choices applied to it; the raw histograms themselves live
-on ``ds.run``. A multi-period measurement loads as a list of datasets, one per
-period. Provenance travels with the dataset — every correction is recorded rather
+on ``ds.run``. By default, single-period and two-period files return one
+dataset; the
+two-period dataset retains both acquired periods. Files with three or more
+periods return a list. Select an acquired period explicitly with
+``load(path, period=1)`` or ``select_period(loaded, 1)`` to obtain one dataset
+before accessing ``.run``; see :ref:`selecting-periods`. Provenance travels with
+the dataset — every correction is recorded rather
 than baked into the histograms, so a saved analysis reproduces the same numbers
-when it is reopened.
+when it is reopened with the required source files and compatible recorded
+settings.
 
 Detector grouping
 -----------------
@@ -113,5 +120,8 @@ Projects
 
 A complete session — the loaded datasets, their grouping and reduction choices,
 the fits, the trends, and the state of the browser and plot — saves to a single
-``.asymp`` **project** file and reopens exactly as it was left. See
-:doc:`/reference/project_files`.
+``.asymp`` **project** file. Source detector arrays are not embedded: keep the
+raw acquisition and any reference files available when reopening or sharing the
+project. Missing sources limit restoration and re-reduction; saved fit records
+do not reconstruct their observations. See :doc:`/reference/project_files` for
+source relocation, verification, and partial restoration.

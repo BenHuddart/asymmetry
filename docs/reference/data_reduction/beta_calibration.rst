@@ -233,7 +233,7 @@ its exponential model.
 
 **References**
 
-- A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, whose
+- A\. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, whose
   asymmetry fit (fit type 2) defines :math:`\beta`.
 - musrfit user manual, "Asymmetry Fit (fit type 2)"
   (<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>).

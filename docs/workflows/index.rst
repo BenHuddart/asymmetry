@@ -1,21 +1,23 @@
 Analysis workflows
 ==================
 
-These chapters walk through end-to-end μSR data analyses and
-demonstrate the Asymmetry GUI and Python API in lock-step. Almost all
-are reproducible walkthroughs on **real instrument runs from the WiMDA
-muon-school corpus** — several on the very datasets behind published
-papers — each with the model, seeds, and expected numbers; the
-Knight-shift chapter (and a few illustrative subsections) use synthetic
-versions of canonical experiments grounded in textbook archetypes
-(Blundell *et al.* 2022; Amato & Morenzoni 2024).
+Start with :doc:`/getting_started/quickstart` for a complete analysis using
+publicly generated data. These chapters then show how to approach particular
+experiments, mainly through the graphical interface, with selected Python
+examples. For scripting recipes, see :doc:`/reference/cookbook` and the
+:doc:`/reference/agent_workflow` command-line workflow.
 
-The narratives are the recommended onboarding path for users who
-have collected real data and want to see how to analyse it. They
-cross-reference the reference pages elsewhere in this user guide
-for full feature documentation.
+Most chapters are **demonstrations using private teaching measurements** from
+the WiMDA muon-school collection. Those files are not distributed with
+Asymmetry. The figures, run numbers, and fitted values describe the example
+measurements; use the methods with your own suitable data rather than expecting
+to obtain the same numerical results. Each chapter explains the inputs and
+choices to adapt. The :doc:`knight_shift_angle` chapter and explicitly labelled
+illustrations use synthetic data instead.
 
-New users should start with :doc:`calibration_grouping_emu`.
+If you have collected data, :doc:`calibration_grouping_emu` explains grouping
+and calibration before you move to the chapter closest to your experiment.
+The linked reference pages describe the controls and their limits in detail.
 
 .. toctree::
    :maxdepth: 2
@@ -43,7 +45,7 @@ Quick chooser
      - Key Asymmetry features
    * - :doc:`calibration_grouping_emu`
      - Set up EMU detector grouping and calibrate α from a TF run
-       (onboarding)
+       (instrument setup)
      - Grouping window, Estimate α, visual Detector Layout Editor,
        dead-time
    * - :doc:`dynamic_kt_copper`

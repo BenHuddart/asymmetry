@@ -1,6 +1,6 @@
-"""Saved single fits and historical execution of one ZF Ag run: the Saved fits row and the Compare window.
+"""Saved single fits and historical execution of one ZF generic run: the Saved fits row and the Compare window.
 
-The ZF Ag polycrystal (static Gaussian Kubo–Toyabe, Δ ≈ 0.39 μs⁻¹; Kubo &
+The ZF Gaussian-field (static Gaussian Kubo–Toyabe, Δ ≈ 0.39 μs⁻¹; Kubo &
 Toyabe 1966, Blundell et al. Ch 5.2) is fitted three times on the Single tab
 with the real engine: ``StaticGKT_ZF + Constant`` and ``Gaussian + Constant``
 over 0.05–8 μs, then the Kubo–Toyabe again over 0.5–6 μs. The two full-window
@@ -19,13 +19,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from ..data import make_ag_zf_gkt
+from ..data import make_generic_zf_gkt
 from ._base import Scenario, _process_events_for, register
 
 
 class SingleFitSavedFitsScenario(Scenario):
     name = "single_fit_saved_fits"
-    description = "Current and historical saved fits of one Ag run in Compare saved fits."
+    description = "Current and historical saved fits of one generic run in Compare saved fits."
     size = (1500, 760)
     requires_fit = True
 
@@ -37,7 +37,7 @@ class SingleFitSavedFitsScenario(Scenario):
         window = MainWindow()
         window.resize(1500, 920)
         window._on_fit()
-        dataset = make_ag_zf_gkt()
+        dataset = make_generic_zf_gkt()
         window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(dataset.run_number)
         _process_events_for(milliseconds=80)

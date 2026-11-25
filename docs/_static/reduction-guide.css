@@ -1,0 +1,60 @@
+.reduction-guide {
+  --guide-ink: #183e50;
+  --guide-accent: #17657a;
+  --guide-controls-space: 30rem;
+  border: 1px solid #c8d6dd;
+  border-radius: .5rem;
+  padding: 1.2rem;
+  margin: 1.5rem 0;
+  background: #f5f9fa;
+}
+@media (scripting: enabled) {
+  .reduction-guide:not(.reduction-enhanced)::before {
+    content: "";
+    display: block;
+    height: var(--guide-controls-space);
+  }
+}
+.reduction-interaction { display: flow-root; min-height: var(--guide-controls-space); }
+.reduction-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .9rem 1rem;
+}
+.reduction-controls label { display: grid; gap: .3rem; color: var(--guide-ink); font-weight: bold; }
+.reduction-controls select { width: 100%; min-width: 0; height: auto; white-space: normal; font-size: .9rem; padding: .5rem; }
+.reduction-guide button { font: inherit; cursor: pointer; border: 1px solid #819ba8; border-radius: .25rem; background: white; color: var(--guide-ink); padding: .5rem .7rem; }
+.reduction-guide button:hover { background: #e5f0f4; }
+.reduction-guide :focus-visible { outline: 3px solid #ad4b00; outline-offset: 3px; }
+.reduction-controls > button { justify-self: start; }
+.reduction-guide .reduction-route { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; list-style: none; counter-reset: route; }
+.reduction-guide .reduction-route li { display: flex; align-items: center; margin: 0; counter-increment: route; }
+.reduction-route li::before { content: counter(route) "."; font-weight: bold; margin-right: .3rem; }
+.reduction-route li:not(:last-child)::after { content: "→"; margin-left: .5rem; }
+.reduction-guide button[aria-current="step"] { background: var(--guide-accent); color: white; border-color: var(--guide-accent); text-decoration: underline; text-underline-offset: .2em; }
+.reduction-context { margin-top: 1rem; }
+.reduction-context summary { cursor: pointer; font-weight: bold; color: var(--guide-ink); }
+.reduction-alternatives { margin-top: .7rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.reduction-alternatives button { font-size: .8rem; padding: .35rem .5rem; }
+.reduction-pager { display: flex; justify-content: space-between; gap: .6rem; margin: 1rem 0; }
+.reduction-pager button:disabled { opacity: .5; cursor: default; }
+.reduction-status { border-left: 3px solid var(--guide-accent); padding-left: .7rem; margin-top: 1rem; }
+.reduction-unavailable { border-color: #ad4b00; font-weight: bold; }
+.reduction-step { background: white; padding: 1rem; border-top: 3px solid var(--guide-accent); margin-top: 1rem; scroll-margin-top: 1rem; }
+.reduction-step .rubric { color: var(--guide-ink); font-size: 1.25rem; margin-bottom: .7rem; }
+html.writer-html5 .rst-content .reduction-step dl.field-list { display: block; }
+html.writer-html5 .rst-content .reduction-step dl.field-list > dt { float: none; display: block; width: auto; margin-top: .8rem; padding: 0; }
+html.writer-html5 .rst-content .reduction-step dl.field-list > dd { display: block; margin-left: 0; padding-left: 0; }
+.reduction-guide [hidden] { display: none !important; }
+@media (max-width: 600px) {
+  .reduction-guide { padding: .7rem; --guide-controls-space: 52rem; }
+  .reduction-controls { grid-template-columns: 1fr; }
+  .reduction-guide .reduction-route { flex-direction: column; }
+  .reduction-route li:not(:last-child)::after { content: "↓"; }
+  .reduction-step { padding: .8rem; }
+}
+@media print {
+  .reduction-guide::before, .reduction-interaction, .reduction-context { display: none !important; }
+  .reduction-guide, .reduction-step { background: white; padding: 0; border: none; }
+  .reduction-guide .reduction-step[hidden] { display: block !important; }
+}

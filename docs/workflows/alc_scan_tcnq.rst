@@ -1,6 +1,18 @@
 ALC field scan in TCNQ
 ======================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use a field-stepped series at a controlled temperature, with applied-field
+   metadata and the calibration for your instrument. The TCNQ run numbers, field
+   windows, and initial fit values below belong to the demonstration. Select your
+   own scan, inspect its resonance and non-resonant regions, and choose the
+   baseline windows and resonance model to match it.
+
 An **avoided-level-crossing (ALC)** measurement asks a different question from a
 time-domain relaxation fit. Instead of following one spectrum in time, it steps
 the applied longitudinal field through a resonance and watches a single reduced
@@ -258,7 +270,9 @@ The GUI build panel calls the same core builder your scripts can use.
 :func:`~asymmetry.core.transform.integral.build_field_scan` integrates every run
 over the window and returns the sorted scan; :func:`~asymmetry.core.fitting.field_scan.fit_scan_baseline`
 and :func:`~asymmetry.core.fitting.field_scan.fit_scan_model` reproduce the
-Baseline and Peaks buttons:
+Baseline and Peaks buttons. Replace the file pattern with your single-temperature
+field scan. The baseline windows, starting values, and quoted outputs below
+refer to the TCNQ demonstration; choose them from your own scan:
 
 .. code-block:: python
 
@@ -269,19 +283,19 @@ Baseline and Peaks buttons:
    from asymmetry.core.transform.integral import build_field_scan
    from asymmetry.core.fitting.field_scan import fit_scan_baseline, fit_scan_model
 
-   scan_files = sorted(glob(".../ALC resonance in TCNQ/Data/emu000195*.nxs"))
-   runs = [load(p) for p in scan_files[:31]]   # the 31 field-stepped 350 K runs
+   scan_files = sorted(glob("your_scan/*.nxs"))
+   runs = [load(p) for p in scan_files]  # one temperature, applied field varied
    scan = build_field_scan(runs, method="integral", order_key="field")
 
    b_dip = scan.x[int(np.argmin(scan.value))]
-   print(round(float(b_dip)))                  # 3100  (G, the raw minimum)
+   print(round(float(b_dip)))                  # demonstration: 3100 G
 
    # Cubic baseline over the non-resonant edges, then a Lorentzian on the dip:
    base = fit_scan_baseline(scan, [(2000.0, 2600.0), (3400.0, 5000.0)], model="Cubic")
    fit = fit_scan_model(base.corrected, ["LorentzianLCR"],
                         initial={"f": -3.0, "B0": 3100.0, "Bwid": 120.0})
    b_res = float(fit.parameters["B0"].value)
-   print(round(b_res / 36.71, 1))              # 84.6  (A_µ in MHz)
+   print(round(b_res / 36.71, 1))              # demonstration: 84.6 MHz
 
 The raw minimum falls on the 3100 G point, and the fitted Lorentzian centre
 (3104 G) inverts to :math:`A_\mu \approx 84.6` MHz — the GUI result reproduced
@@ -443,19 +457,19 @@ Assumptions and limitations
 References
 ----------
 
-- M. Gaboardi, F. L. Pratt, C. Milanese, J. Taylor, J. Siegel, and
-  F. Fernandez-Alonso, Carbon **155**, 432 (2019) — the published µLCR study of
+- M\. Gaboardi, F. L. Pratt, C. Milanese, J. Taylor, J. Siegel, and
+  F\. Fernandez-Alonso, Carbon **155**, 432 (2019) — the published µLCR study of
   corannulene reproduced in the advanced section: four muoniated-radical
   hyperfine couplings and their motional narrowing.
-- F. L. Pratt *et al.*, Magn. Reson. Chem. **38**, S27 (2000) — muonium addition
+- F\. L. Pratt *et al.*, Magn. Reson. Chem. **38**, S27 (2000) — muonium addition
   to TCNQ and the muoniated radical.
-- R. M. Macrae, Magn. Reson. Chem. **38**, S33 (2000) — the *ab initio*
+- R\. M. Macrae, Magn. Reson. Chem. **38**, S33 (2000) — the *ab initio*
   assignment of the muon addition site on TCNQ.
-- E. Roduner, Chem. Soc. Rev. **22**, 337 (1993) — the ALC-µSR technique and the
+- E\. Roduner, Chem. Soc. Rev. **22**, 337 (1993) — the ALC-µSR technique and the
   D1 resonance condition.
-- F. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose count-integral
+- F\. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose count-integral
   ALC the Integral scan mode follows.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), Ch. 6 —
   muonium, radicals, and avoided-level-crossing spectroscopy.
 

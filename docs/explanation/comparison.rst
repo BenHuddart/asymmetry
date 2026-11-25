@@ -1,64 +1,78 @@
 Asymmetry in the μSR software landscape
 =======================================
 
-This page compares Asymmetry with **WiMDA**, **musrfit**, and **Mantid**.
-The count-reduction guide below covers reviewed grouping, calibration-policy,
-timing, and loading conventions. Its agreement statements apply to the named
-versions, observations, and settings; they do not certify every analysis method
-or every supported file.
+Compare the operation you want to perform, rather than treating one program as
+a substitute for another in every setting. This page describes Asymmetry beside
+**WiMDA**, **musrfit**, and **Mantid**, with links to the observations, units,
+settings, and evidence behind each comparison. Agreement applies only to the
+named versions and matched cases.
 
-The intended reader is a μSR practitioner who already uses one of
-WiMDA, musrfit, or Mantid and wants to know where Asymmetry fits.
-
-For end-to-end analyses analogous to the typical workflows in
-those tools, see :doc:`/workflows/index`.
-
-The reference programs provide different ways to organise an analysis.
 WiMDA offers grouped time and frequency workflows; musrfit uses authored
 ``.msr`` model and run descriptions; Mantid composes algorithms on workspaces.
-Asymmetry exposes a Python analysis core with a desktop front end. The
-comparison below concerns particular operations rather than a ranking of
-programs or a collective file-format guarantee.
+Asymmetry provides a Python analysis core and a desktop interface. For a first
+analysis, use :doc:`/getting_started/quickstart`; for specialist examples to
+adapt to your own measurements, see :doc:`/workflows/index`.
 
 Choose a comparison by topic
 ----------------------------
 
-Start with the observation to be analysed. Loading a file, forming a count
-ratio, fitting that ratio, and reconstructing a field distribution are separate
-operations, even when one program presents them in the same window.
+First identify the quantity you are comparing and match the choices that
+produce it. The summary links to the detailed conventions and bounded evidence;
+a method description alone does not establish numerical agreement.
 
-.. list-table:: Methods and owning references
+.. _id2:
+
+.. list-table:: Operations, settings, and evidence
+   :name: id1
    :class: reduction-conventions
    :header-rows: 1
-   :widths: 24 40 36
+   :widths: 25 35 40
 
-   * - Topic
-     - Comparison on this page
-     - Asymmetry reference
-   * - Files and available observations
-     - :ref:`comparison-formats`
-     - :doc:`/reference/loading_data`
-   * - Groups, t0, and good bins
-     - :ref:`reviewed-count-reduction`, :ref:`comparison-timing`
-     - :doc:`/reference/detector_grouping`
-   * - Alpha, beta, backgrounds, and deadtime
-     - :ref:`comparison-calibration-policies`, :ref:`comparison-count-backgrounds`,
-       :ref:`comparison-deadtime-calibration`
-     - :doc:`/reference/data_reduction/alpha_calibration`,
-       :doc:`/reference/data_reduction/beta_calibration`,
-       :doc:`/reference/data_reduction/backgrounds`
-   * - Binning and errors
-     - :ref:`comparison-binning`, :ref:`comparison-asymmetry-errors`
-     - :doc:`/reference/data_reduction/binning`
-   * - Fit objectives and constraints
-     - :ref:`comparison-fitting`
-     - :doc:`/reference/fitting`, :doc:`/reference/count_domain_fitting`
-   * - Fourier phase, scale, and MaxEnt
-     - :ref:`comparison-spectral-conventions`, :ref:`comparison-maxent`
-     - :doc:`/reference/fourier_analysis`
-   * - Integral and RF scans
-     - :ref:`comparison-integral-scans`
-     - :doc:`/reference/alc_mode`
+   * - Quantity or task
+     - Match before comparing
+     - Meaningful differences and evidence
+   * - File loading
+     - Acquisition layout, available observations, and optional readers
+     - A readable suffix is not a common format guarantee. See
+       :ref:`comparison-formats` and :doc:`/reference/loading_data`.
+   * - Forward/backward asymmetry
+     - Detector membership, exclusions, timing, good bins, packing, and
+       fraction versus percent units
+     - Explicit selections resemble Mantid detector IDs and musrfit histogram
+       lists. Asymmetry requires unique members and disjoint effective pairs;
+       reuse across projections remains valid. See :ref:`comparison-membership`,
+       :ref:`comparison-asymmetry-errors`, and :ref:`comparison-binning`.
+   * - Detector balance and corrected counts
+     - Stored or estimated α and β, background, deadtime, and exposure
+     - Fixed coefficients and explicit estimates have distinct roles, as in
+       WiMDA's stored α and Estimate. Integral α follows the Mantid AlphaCalc
+       convention. See :ref:`comparison-calibration-policies`,
+       :ref:`comparison-count-backgrounds`, and :ref:`comparison-deadtime-calibration`.
+   * - Timing and file-good intervals
+     - Native bin width, origin, selected intervals, and endpoint conventions
+     - Whole-bin alignment retains residual origins; Mantid also offers common-grid
+       rebinning. Explicit musrfit PSI endpoints differ from omitted defaults;
+       WiMDA endpoint membership is unverified here. See :ref:`comparison-timing`
+       and :ref:`comparison-psi-intervals`.
+   * - ROOT observations
+     - Stored bank selection, count errors, and supported layout
+     - Legacy v4/v5 and modern layouts use Asymmetry's common reduction.
+       Calibration and coverage have separate scopes in :ref:`comparison-root`.
+   * - Fitted values and uncertainties
+     - Observations, error units, objective, fixed parameters, and constraints
+     - The supplied-error constant control checks a bounded Gaussian fit;
+       it does not certify general nonlinear errors. See :ref:`comparison-fitting`
+       and :ref:`comparison-evidence`.
+   * - Fourier coefficients and reconstructed spectra
+     - Signal source, time window, phase, filter, scale, and frequency units
+     - A same-bin manual-phase control is separate from full FFT or MaxEnt
+       agreement. See :ref:`comparison-spectral-conventions`,
+       :ref:`comparison-auto-phase`, and :ref:`comparison-maxent`.
+   * - Integrated field or RF scans
+     - Selected periods, integration window, normalisation, and field units
+     - Compare the reduced response and its assumptions, not only a fitted
+       peak centre. See :ref:`comparison-integral-scans` and
+       :doc:`/reference/alc_mode`.
 
 Program and documentation identities have different scopes. The executed cases
 name the actual release/build. A numbered Mantid algorithm revision (such as
@@ -175,36 +189,10 @@ The closest reference depends on the operation, rather than on a single
 preferred program. The detailed contracts and versioned comparisons are linked
 below; different defaults must be matched before judging numerical agreement.
 
-.. list-table:: Conventions and meaningful differences
-   :class: reduction-conventions
-   :header-rows: 1
-   :widths: 24 36 40
-
-   * - Operation
-     - Asymmetry convention / closest comparison
-     - Meaningful difference and detail
-   * - Membership and F/B pairs
-     - Explicit selections, like Mantid detector IDs and musrfit histogram lists
-     - Unique members and independent disjoint pairs are Asymmetry choices;
-       reuse across projections remains valid. See :ref:`comparison-membership`.
-   * - Calibration policies
-     - Stored versus explicit estimates, like WiMDA's stored α and Estimate;
-       integral α uses the Mantid AlphaCalc convention
-     - Enabled automatic policies use current inputs; fixed and one-shot values
-       stay fixed. See :ref:`comparison-calibration-policies`.
-   * - Alignment and NeXus width
-     - Whole-bin alignment and declared-resolution fixed-bin counts, compared
-       with musrfit
-     - Selected exact origin and residuals are retained; Mantid also preserves
-       coordinates and offers common-grid rebinning. See :ref:`comparison-timing`.
-   * - PSI intervals
-     - Selected file-good intersection; musrfit is the primary PSI comparator
-     - Explicit musrfit endpoints and omitted defaults differ; WiMDA endpoint membership is
-       not established here. See :ref:`comparison-psi-intervals`.
-   * - ROOT calibration and coverage
-     - Legacy v4/v5 and modern layouts use common reduction; closest to musrfit
-     - Stored bank selection, PPC uncertainty, and the directory-case limit
-       have distinct scopes. See :ref:`comparison-root`.
+The operation summary above links membership, calibration, timing, PSI
+intervals, and ROOT coverage to their detailed sections. Use
+:doc:`reduction_pipeline` for the derivation and operation order, and the
+owning reference pages for instructions in Asymmetry.
 
 Agreement means agreement for matched observations and uncertainty conventions,
 within the stated storage or export precision. Explained convention differences
@@ -1150,6 +1138,7 @@ with Auto/Manual BG off and FileBG enabled. Its sample exposure is restored to
 200 frames after reference loading, which can change the active frame count.
 
 .. list-table:: First-group count and standard error
+   :name: id3
    :header-rows: 1
    :widths: 45 28 27
 
@@ -1269,6 +1258,7 @@ Fourier workflow, PhaseQuad or MaxEnt; the separate standalone pulse-kernel
 comparison does not establish them either.
 
 .. list-table:: Operations and conventions
+   :name: id4
    :class: reduction-conventions
    :header-rows: 1
    :widths: 25 38 37
@@ -1310,7 +1300,7 @@ sampled transform grid; it supplies no new observations. Neither peak height nor
 magnitude area is universally invariant to window, damping, phase, or apodisation.
 
 The `WiMDA homepage/manual <https://shadow.nd.rl.ac.uk/wimda/>`__ and
-F. L. Pratt, Physica B **289–290**, 710 (2000), describe grouped spectral
+F\. L. Pratt, Physica B **289–290**, 710 (2000), describe grouped spectral
 analysis. The original manual's all-poles discussion is distinguished from
 iterative reconstruction in :ref:`comparison-maxent`. The `musrfit manual
 <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`__ distinguishes
@@ -1484,7 +1474,7 @@ does not compare the fitted spectrum, objective, or covariance.
 The `WiMDA original manual, Sec. 9
 <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`__ explicitly distinguishes
 its maximum-entropy/all-poles transform from iterative entropy reconstruction.
-F. L. Pratt, Physica B **289–290**, 710 (2000), also describes muon spectral
+F\. L. Pratt, Physica B **289–290**, 710 (2000), also describes muon spectral
 analysis; these older method descriptions do not identify all reconstruction
 options in WiMDA 1.326. No matched native MaxEnt spectrum/error comparison is
 claimed for WiMDA or musrfit. A similar method name or a sharper peak does not

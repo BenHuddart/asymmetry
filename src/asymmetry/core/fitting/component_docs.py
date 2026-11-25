@@ -436,7 +436,8 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use for a static isotropic Gaussian field distribution in zero field. Δ is γµ times the "
         "standard deviation of one Cartesian field component. The early-time form is 1−Δ²t², matching "
         "Gaussian at σ = Δ. The dip and ⅓ tail are consistent with quasistatic fields; a relaxing tail "
-        "can indicate dynamics or another relaxation channel."
+        "can indicate dynamics or another relaxation channel. The ⅓ is the angular average "
+        "⟨cos²θ⟩ for isotropic fields, not a subset of exactly parallel spins."
     ),
     "LongitudinalFieldKT": (
         "Use for a static isotropic Gaussian field distribution with an applied longitudinal field Bₗ. Δ "
@@ -561,22 +562,24 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "dense magnets (use Oscillatory or Bessel with an internal field)."
     ),
     "GaussianPeak": (
-        "Use for a spectral line whose underlying time-domain envelope is Gaussian — a static, dense "
-        "(Gaussian) distribution of local fields, as in nuclear-dipole hosts or frozen disorder. The line is "
-        "parameterised by its full width at half maximum: a time-domain envelope e^(−(σt)²) transforms to a "
-        "Gaussian line of FWHM = 2σ√(ln2)/π, so the fitted width converts back to the relaxation rate via "
-        "σ = π·FWHM/(2√(ln2)). The centre ν₀ gives the local field through B₀ = ν₀/(γµ/2π). Peak heights are "
-        "in the arbitrary units of the displayed spectrum (they depend on apodization and normalisation), so "
-        "physical conclusions should rest on positions and widths rather than absolute heights."
+        "Fit a Gaussian peak to the displayed real spectrum. Its full width at half maximum "
+        "(FWHM) is measured in MHz. "
+        "For an isolated, correctly phased absorptive line with an effectively infinite record, "
+        "e^(−(σt)²) gives FWHM = 2σ√(ln2)/π, using Gaussian's time-domain σ convention. "
+        "The fitted width describes the processed peak; this function does not automatically "
+        "convolve with or remove the time window, apodization, or instrument response. Modulus, "
+        "power, and MaxEnt spectra need not obey the ideal rate conversion. Peak heights are in "
+        "displayed arbitrary units; ν₀ and FWHM convert to field equivalents through γµ/(2π)."
     ),
     "LorentzianPeak": (
-        "Use for a spectral line whose underlying time-domain envelope is exponential — dynamic (motionally "
-        "narrowed) relaxation, or a dilute (Lorentzian) static field distribution. The line is parameterised "
-        "by its full width at half maximum: a time-domain envelope e^(−λt) transforms to a Lorentzian line of "
-        "FWHM = λ/π, so the fitted width converts back to the relaxation rate via λ = π·FWHM. The centre ν₀ "
-        "gives the local field through B₀ = ν₀/(γµ/2π). Lorentzian tails are heavy: fit windows should extend "
-        "several FWHM beyond the peak or the width will be underestimated. A line that is neither Gaussian "
-        "nor Lorentzian usually signals overlapping sites — prefer two peaks over one broadened one."
+        "Fit a Lorentzian peak to the displayed real spectrum. Its full width at half maximum "
+        "(FWHM) is measured in MHz. "
+        "For an isolated, correctly phased absorptive line with an effectively infinite record, "
+        "e^(−λt) gives FWHM = λ/π. The fitted width describes the processed peak; this function "
+        "does not automatically convolve with or remove the time window, apodization, or instrument "
+        "response. Modulus, power, and MaxEnt spectra need not obey the ideal rate conversion. "
+        "Use a sufficiently broad fit window to constrain the heavy tails. Overlap, processing, "
+        "or another field distribution can change the shape; extra peaks alone do not identify sites."
     ),
     "ConstantBackground": (
         "Use for the flat spectral baseline present in essentially every displayed Fourier spectrum, arising "

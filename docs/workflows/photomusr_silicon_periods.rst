@@ -1,6 +1,18 @@
 Photo-μSR in silicon: carrier recombination from period-mode runs
 =================================================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own light-on/light-off measurements and the experiment log that maps
+   periods to laser states, injection density, and timing. The HiFi run numbers below
+   identify the demonstration. Check the labels and period order in your files
+   before assigning ON and OFF, and establish your own calibration between
+   relaxation rate and carrier density.
+
 Photoexcited muon-spin spectroscopy turns the muon into a contactless
 probe of excess charge carriers in a semiconductor. A pulsed laser injects
 electron–hole pairs into intrinsic silicon; the implanted μ⁺ captures an
@@ -15,7 +27,7 @@ end to end on real HiFi data, and doubles as the corpus's showcase for
 
 The dataset is not a teaching mock-up: runs ``HIFI00103277``–``103299``
 (ISIS proposal RB1520457, May 2016) are the very measurements published in
-K. Yokoyama *et al.*, Phys. Rev. Lett. **119**, 226601 (2017). That makes
+K\. Yokoyama *et al.*, Phys. Rev. Lett. **119**, 226601 (2017). That makes
 the example **paper-graded** — the numbers Asymmetry recovers below can be
 held against the published fit values, and they agree.
 
@@ -85,23 +97,25 @@ The scriptable API
 
 The grouping controls call the same core period-selection API your scripts
 use, so the desktop app and a batch script agree on the per-period spectra.
-Pull out a single period as an ordinary
+For the two-period demonstration file, red is ON and green is OFF. Replace the
+filename and state labels with those verified for your measurement. Pull out
+a single period as an ordinary
 :class:`~asymmetry.core.data.dataset.MuonDataset`:
 
 .. code-block:: python
 
    from asymmetry.core.io import load, select_period, period_count, period_labels
 
-   run = load(".../Photo-muSR in silicon/Data/HIFI00103277.nxs")
-   print(period_count(run))                  # 2
-   print(period_labels(run))                 # ['red', 'green']
+   run = load("your_period_run.nxs")
+   print(period_count(run))                  # demonstration: 2
+   print(period_labels(run))                 # demonstration: ['red', 'green']
 
    light_on = select_period(run, "red")      # period 1
    light_off = select_period(run, "green")   # period 2
 
    # ...or select a single period at load time:
    light_off = load(
-       ".../Data/HIFI00103277.nxs", period="green",
+       "your_period_run.nxs", period="green",
    )
 
 Each returned dataset keeps its parent's :math:`t_0`, good-bin window,
@@ -288,7 +302,7 @@ because they set the accuracy of the recovered numbers:
 
 .. rubric:: References
 
-- K. Yokoyama, J. S. Lord, J. Miao, P. Murahari, and A. J. Drew, Phys. Rev.
+- K\. Yokoyama, J. S. Lord, J. Miao, P. Murahari, and A. J. Drew, Phys. Rev.
   Lett. **119**, 226601 (2017) — the photoexcited-μSR carrier-lifetime
   method; the source of the calibration exponent :math:`\alpha = 0.68(4)`
   and the lifetime :math:`\tau_0 = 11.1(9)\;\mathrm{\mu s}` used as targets

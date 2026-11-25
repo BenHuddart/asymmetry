@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Put common grouping, Fourier, and parameter-trend tasks before specialist
+  reference details, with direct routes from the reference index.
+
+- Organise desktop and command-line reference pages by task, consolidate shared
+  project guidance, and put matched operations first in program comparisons.
+
+- Lead practical documentation searches to the deadtime, grouping, and alpha
+  calibration guides while retaining exact-symbol API searches, and avoid fetching
+  every matching page for a search snippet.
+
+- Label private-data workflow demonstrations and explain the inputs and choices
+  to adapt them to readers’ own measurements.
+
+- Correct documentation references and inline mathematics, reserve image space,
+  wrap tables, and identify the exact source revision behind API links.
+
+- Walk through a complete synthetic first analysis, including fit checks, saved
+  source data, a reopenable project, and a readable result export.
+
+- Align the first-fit walkthrough with current wizard controls and clarify
+  period loading, reduction order, and saved-project source dependencies.
+
+- Repair public grouping, calibration, and Fourier examples, and document optional
+  dependency installation from the supported Git checkout.
+
+- Qualify LF model interpretations and width units; distinguish processed FFT
+  linewidths, count uncertainties, and the limits of symmetric fit errors.
+
+- Identify the synthetic Kubo–Toyabe examples as generic Gaussian fields, with
+  an illustrative width, and retain their seeds, parameters, and stable preset keys.
+
 - Use PyPI gleplot 6.0.0 for GLE exports, retaining data markers, translucent
   fills and full-height phase shading with unsmoothed curves and legible labels.
 
@@ -21,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add project-local **View → Plot display → Connect data points** for time-domain
   spectra, with short-dashed guides, source-based dense selection, and reusable viewport artists.
+
+- Explore an interactive counts-to-result guide with selectable reduction routes,
+  counting examples, conditional errors, and accessible static and print explanations.
 
 - Select GPS Individual or Hardware-combined readouts explicitly, retaining saved
   groups and blocking analysis of declared shared-event or unresolved Mobile overlaps.

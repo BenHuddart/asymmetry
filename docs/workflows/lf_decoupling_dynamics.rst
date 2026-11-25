@@ -1,67 +1,98 @@
 LF decoupling and static-vs-dynamic field distributions
 =======================================================
 
-A longitudinal-field (LF) decoupling series answers one question: are the
-local fields the muon senses **static** or **dynamic**? The two cases look
-almost identical in a single zero-field spectrum, yet they demand different
-models and carry different physics. Decoupling separates them. In a static
-distribution the polarisation is fully recovered once the applied field
-exceeds the internal width, and the relaxation switches off at a fixed field.
-In a dynamic distribution the relaxation *survives* to high field and its rate
-falls smoothly as :math:`1/B^2` — the Redfield signature — so a field scan
-measures both the field width and the fluctuation time.
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own longitudinal-field series at a stable temperature, with field
+   metadata, instrument calibration, and a zero-field reference where available.
+   The Ca₃Co₂O₆ and Re₆Zr runs below identify the demonstrations. Choose the fit
+   window and candidate models from your own spectra, and check whether the
+   time resolution and field range can distinguish their predictions.
+
+A longitudinal-field (LF) series tests models for the local fields at the muon.
+Static fields can be decoupled by a sufficiently large longitudinal field, but
+slowly fluctuating fields can also give a nearly flat high-field spectrum.
+Interpret the field dependence together with the time dependence, experimental
+resolution, and the assumptions of the candidate models. Decoupling alone does
+not establish a unique static or dynamic mechanism.
 
 This chapter works the dynamic case on real data: the Ca₃Co₂O₆ magnetic-plateau
 decoupling scan from the WiMDA muon school corpus (HiFi runs 9023–9051, 15 K,
 0–3.8 T), the same measurement published by Baker, Lord, and Prabhakaran,
-J. Phys.: Condens. Matter **23**, 306001 (2011). Its headline is the Redfield
+J\. Phys.: Condens. Matter **23**, 306001 (2011). Its headline is the Redfield
 linearisation — :math:`1/\lambda` against :math:`B^2` — built directly in the
 parameter-trending panel using the native axis transforms
 (:doc:`/reference/parameter_trending`), so the paper's Fig. 2(b) is reproduced
 without leaving the GUI. A short contrast section then shows the *static*
 counter-example on the superconductor Re₆Zr, where 10 mT of longitudinal field
-fully decouples a static Gaussian Kubo–Toyabe relaxation — the discriminating
-diagnostic in its cleanest form.
+suppresses the observed relaxation, consistent with static or quasistatic
+fields on the experimental timescale.
 
 Physical motivation
 -------------------
 
 A muon implanted in a magnetic material samples a distribution of local fields
 :math:`B_\mu`. The relaxation of its spin polarisation depends both on the
-*width* of that distribution and on whether the fields are frozen on the muon's
-observation timescale (~10 µs) or fluctuating.
+*width* of that distribution and on its evolution during the usable observation
+window. That window depends on the instrument, counting statistics, and signal.
 
-For a **static** isotropic distribution of width :math:`\Delta/\gamma_\mu`,
-the zero-field polarisation is the static Gaussian Kubo–Toyabe function
+For a **static**, zero-mean, isotropic Gaussian field distribution, define
+:math:`\Delta = \gamma_\mu\sqrt{\langle B_x^2\rangle}` in μs⁻¹, using
+the angular gyromagnetic ratio, with
+:math:`\gamma_\mu/(2\pi)\approx135.5` MHz/T. Time is in μs and field in
+tesla in the Redfield equations below. The zero-field polarisation is
+the static Gaussian Kubo–Toyabe function
 
 .. math::
 
    P_z^{\mathrm{KT}}(t) = \frac{1}{3} + \frac{2}{3}
    (1 - \Delta^2 t^2)\exp\!\left(-\frac{\Delta^2 t^2}{2}\right),
 
-whose long-time recovery to one-third of the initial polarisation — the "1/3
-tail" — is the fingerprint of an isotropic static field. Applying a
-longitudinal field :math:`B_L` quenches the perpendicular dephasing once
-:math:`\gamma_\mu B_L \gg \Delta`, and the polarisation is decoupled back to
-unity. The field needed is set only by the static width, so decoupling happens
-abruptly over a narrow field range.
+whose one-third tail is the angular average
+:math:`\langle\cos^2\theta\rangle = 1/3` of the spin projection along the
+local field. It does not require a third of the spins to be exactly parallel
+to their fields. A longitudinal field suppresses dephasing progressively as
+:math:`\gamma_\mu B_L/\Delta` grows. The static prediction approaches unity
+as this ratio tends to infinity; there is no sharp finite decoupling threshold.
+See :doc:`/reference/fit_functions/kubo_toyabe` and Hayano *et al.* below.
 
-If the fields **fluctuate** with a single correlation time :math:`\tau`, the
-static formula no longer holds. In the motionally-narrowed limit the relaxation
-is a single exponential, :math:`P_z(t) = \exp(-\lambda t)`, and its rate obeys
-**Redfield's equation**
+For **fluctuating** fields, one useful limit has an exponential transverse-field
+autocorrelation with a single time :math:`\tau`. In the motional-narrowing
+regime :math:`\gamma_\mu\Delta_B\tau\ll1`, the polarisation is approximately
+:math:`P_z(t)=\exp(-\lambda t)`, with the Redfield rate
 
 .. math::
 
-   \lambda(B_L) = \frac{2\gamma_\mu^2 \Delta^2 \tau}{1 + \gamma_\mu^2 B_L^2 \tau^2},
+   \lambda(B_L) = \frac{2\gamma_\mu^2\Delta_B^2\tau}
+                       {1+\gamma_\mu^2 B_L^2\tau^2}.
 
-with :math:`\gamma_\mu = 2\pi \times 135.5\;\mathrm{MHz\,T^{-1}}`. Here
-:math:`\Delta` is the width of the fluctuating field distribution and
-:math:`\tau` its correlation time. The decisive difference from the static
-case is that :math:`\lambda` does not switch off at a threshold field: it falls
-continuously, as :math:`1/B_L^2` once :math:`\gamma_\mu B_L \tau \gg 1`, and a
-scan of :math:`\lambda(B_L)` measures :math:`\Delta` and :math:`\tau`
-separately.
+Here :math:`\Delta_B` is a **field** scale in tesla, while the static KT
+:math:`\Delta` above is an **angular-frequency** width in μs⁻¹.
+For equal finite transverse component variances, the correlation model sets
+:math:`\Delta_B^2=\langle B_x^2\rangle=\langle B_y^2\rangle`.
+The two width conventions are related by :math:`\Delta=\gamma_\mu\Delta_B`
+only when they describe the same component distribution. Baker *et al.* use
+:math:`\Delta` for their phenomenological field-width parameter; this page
+writes that parameter as :math:`\Delta_B` to distinguish the units.
+Their fitted field scale does not establish a static Gaussian distribution.
+
+This form assumes the relevant field amplitude and correlation time are
+independent of applied field over the fitted range. Its :math:`1/B_L^2`
+falloff applies only for :math:`\gamma_\mu B_L\tau\gg1`. Other correlation
+functions, slow dynamics, multiple sites, or field-induced changes need not
+follow this law. Separating width from correlation time requires data sensitive
+to the crossover; low-field data constrain mainly
+:math:`\Delta_B^2\tau`, while the high-field limit constrains mainly
+:math:`\Delta_B^2/\tau`.
+
+This workflow fits ``Linear`` to transformed axes. The standalone
+``Redfield`` component uses stored :math:`D` and a cyclic-frequency
+:math:`\nu`; these are not :math:`\Delta_B` and :math:`1/\tau`. Use the
+conversion in :ref:`derived-redfield-convention` when choosing that component.
 
 Ca₃Co₂O₆ is a frustrated Ising-chain magnet: ferromagnetic Ising chains couple
 antiferromagnetically on a triangular lattice, and below :math:`T_{N1} = 25`
@@ -75,16 +106,17 @@ The data
 
 The corpus holds the real HiFi ISIS NeXus (HDF4) files, runs 9023–9051, read
 natively by Asymmetry. Run 9023 is a TF20 calibration (300 K, 20 G transverse)
-that fixes :math:`\alpha` and the field dependence of the initial asymmetry; the
+used as a reference for :math:`\alpha` and the initial asymmetry. One
+calibration run does not determine their full field dependence. The
 15 K longitudinal-field scan runs from 9031 (zero field) to 9051 (3.8 T),
 stepping the applied field through and beyond the plateau. Ten million decay
-positrons were collected per run. The applied field is longitudinal throughout,
+positrons were collected per run. The applied field in the 15 K scan is longitudinal throughout,
 so this is a decoupling scan, not a transverse-field precession measurement.
 
 Two features of the raw data shape the analysis. First, below about 0.2 T the
 relaxation is faster than the ISIS pulse width can resolve and the observed
 asymmetry is suppressed, so the zero-field and 0.1 T runs cannot yield a
-physical :math:`\lambda` and are excluded from the trend. Second, the initial
+reliably resolved :math:`\lambda` in this analysis and are excluded from the trend. Second, the initial
 asymmetry is only fully recovered by ~0.5 T; the constant background grows with
 field as decay positrons spiral in the applied field (from ~7 % at 1 T to ~37 %
 at 3.5 T), so every fit carries an additive background term.
@@ -127,7 +159,7 @@ Step 2 — Fit each run with a single exponential
    on the unbinned 0–16 µs data and converges cleanly.
 
 The per-run model is ``Exponential + Constant``,
-:math:`P_z(t) = A_1\,\exp(-\lambda t) + A_{bg}`, exactly the single exponential
+:math:`A(t) = A_1\,\exp(-\lambda t) + A_{bg}`, consistent with the single-exponential limit
 of the Redfield picture with an additive background. Seed :math:`\lambda`
 high (~9 µs⁻¹) at low field and carry it downward from run to run in field
 order: the low-field runs are otherwise prone to walking into a spurious
@@ -140,10 +172,10 @@ baseline from positron spiralling. Each converged run contributes one
    The fit-results panel tags this fit's :math:`\chi^2_r = 1.25` (npar = 3,
    ndof = 991) with the wording *poor*. The verdict is the panel's two-sided
    goodness-of-fit band (:doc:`/reference/parameter_trending`); with nearly a
-   thousand degrees of freedom that band is narrow, and a :math:`\chi^2_r` of
-   1.25 sits just outside it. The fit itself is good — the residual is the
-   late-time forward–backward noise as the counts vanish, not a model
-   deficiency.
+   thousand degrees of freedom, :math:`\chi^2_r=1.25` is a statistically
+   significant excess over unity. Inspect residual structure, model adequacy,
+   and the uncertainty assumptions. Late-time noise alone does not establish
+   why the fit fails the goodness-of-fit criterion.
 
 Step 3 — Build the λ(B) trend
 -----------------------------
@@ -168,11 +200,11 @@ field-polarised ferromagnet and :math:`\lambda` is nearly constant. The zero-
 field and 0.1 T points are absent by design (Step 2): their relaxation is
 unresolvable at the ISIS pulse width, so they carry no physical rate.
 
-That a dynamic rate should *fall* with field is already the qualitative
-discriminator. A static distribution would keep :math:`\lambda` at its
-zero-field value until the decoupling threshold and then drop it to zero over a
-narrow range; a smooth :math:`1/B^2`-like falloff spanning several tesla is the
-dynamic signature. The next step makes that quantitative.
+A decreasing fitted rate is consistent with field suppression of dynamics,
+but it is not unique evidence: static decoupling is also continuous, and a
+static KT signal is not generally a single exponential. Compare the full
+candidate time-domain predictions rather than interpreting exponential rates
+as a universal static-versus-dynamic discriminator.
 
 Step 4 — The Redfield linearisation (headline)
 ----------------------------------------------
@@ -196,13 +228,14 @@ Redfield's equation linearises exactly. Inverting it,
 
 .. math::
 
-   \frac{1}{\lambda} = \frac{1}{2\gamma_\mu^2\Delta^2\tau}
-       + \frac{\tau}{2\Delta^2}\,B_L^2 ,
+   \frac{1}{\lambda} = \frac{1}{2\gamma_\mu^2\Delta_B^2\tau}
+       + \frac{\tau}{2\Delta_B^2}\,B_L^2 ,
 
 so :math:`1/\lambda` is a straight line in :math:`B_L^2` for constant
-:math:`\Delta` and :math:`\tau`, with slope :math:`\tau/(2\Delta^2)` and
-intercept :math:`1/(2\gamma_\mu^2\Delta^2\tau)`. No large-field approximation
-is needed — the relation is exact across the whole plateau.
+:math:`\Delta_B` and :math:`\tau`, with slope :math:`\tau/(2\Delta_B^2)` and
+intercept :math:`1/(2\gamma_\mu^2\Delta_B^2\tau)`. No large-field approximation
+is needed for this algebra; its interpretation still requires the Redfield
+assumptions and field-independent parameters over the chosen interval.
 
 This is the flagship demonstration of the parameter-trending **axis
 transforms** on real data. The transform is applied where the panel assembles
@@ -218,20 +251,22 @@ action), so they remain visible and ringed but do not pull the fit — the
 model-fit dialog.
 
 Reading the slope and intercept back through the algebra gives
-:math:`\Delta = 41.0\;\mathrm{mT}` and :math:`\tau = 929\;\mathrm{ps}`, against
-the paper's :math:`\Delta = 40.6(3)\;\mathrm{mT}` and
-:math:`\tau = 880(30)\;\mathrm{ps}`. The field width lands essentially on the
-published value; the correlation time is ~6 % high, traceable to the two
-high-field plateau points that scatter above the line and pull the slope up
-slightly. The reduced :math:`\chi^2` of the ``Linear`` fit is 1.84. The result
-is, as the paper notes, insensitive to small changes of the fitting window.
+:math:`\Delta_B = 41.0\;\mathrm{mT}` and :math:`\tau = 929\;\mathrm{ps}`, against
+the paper's :math:`\Delta_B = 40.6(3)\;\mathrm{mT}` and
+:math:`\tau = 880(30)\;\mathrm{ps}`. These are conditional model estimates.
+The transformed linear fit and a fit
+in the original rate coordinates have different finite-error weighting;
+reciprocal propagation is a local approximation, particularly for uncertain
+rates. The reduced :math:`\chi^2` of the ``Linear`` fit is 1.84. The paper
+reports that its estimates are insensitive to small reductions of its fitted
+field interval; that does not validate every choice of points or weights here.
 
-.. dropdown:: Solving the slope and intercept for :math:`\Delta` and :math:`\tau`
+.. dropdown:: Solving the slope and intercept for :math:`\Delta_B` and :math:`\tau`
 
    Write the fitted line as :math:`1/\lambda = m\,B_L^2 + b` with slope
-   :math:`m = \tau/(2\Delta^2)` and intercept
-   :math:`b = 1/(2\gamma_\mu^2\Delta^2\tau)`. Their ratio removes
-   :math:`\Delta`:
+   :math:`m = \tau/(2\Delta_B^2)` and intercept
+   :math:`b = 1/(2\gamma_\mu^2\Delta_B^2\tau)`. Their ratio removes
+   :math:`\Delta_B`:
 
    .. math::
 
@@ -243,12 +278,13 @@ is, as the paper notes, insensitive to small changes of the fitting window.
 
    .. math::
 
-      \Delta = \sqrt{\frac{\tau}{2m}}.
+      \Delta_B = \sqrt{\frac{\tau}{2m}}.
 
    With the transformed fit returning :math:`m = 0.276\;\mu\mathrm{s\,T^{-2}}`
    and :math:`b = 0.442\;\mu\mathrm{s}`, and
    :math:`\gamma_\mu = 2\pi\times 135.5\;\mathrm{MHz\,T^{-1}}`, this gives
-   :math:`\tau = 929\;\mathrm{ps}` and :math:`\Delta = 41.0\;\mathrm{mT}`.
+   approximately :math:`\tau = 0.93\;\mathrm{ns}` and
+   :math:`\Delta_B = 41\;\mathrm{mT}` from the rounded coefficients.
 
 .. note::
 
@@ -263,10 +299,10 @@ is, as the paper notes, insensitive to small changes of the fitting window.
    is best trended through a custom logbook column carrying its own unit
    (:doc:`/reference/parameter_trending`).
 
-The dynamic conclusion is now quantitative: the internal fields in the plateau
-fluctuate with a correlation time of just under a nanosecond and a width of
-~40 mT, and the muon relaxation follows Redfield's dynamic form across three
-tesla of applied field.
+Within the single-timescale Redfield interpretation, the plateau data support
+a correlation time just under a nanosecond and an effective field scale near
+40 mT. These estimates are conditional on the model, plateau selection, and
+background treatment; they do not uniquely identify a microscopic process.
 
 Contrast: the static counter-example
 -------------------------------------
@@ -279,39 +315,33 @@ Contrast: the static counter-example
    (0.3 K), zero field (blue, 38224) overlaid with 10 mT longitudinal field
    (orange, 38263). The zero-field trace relaxes toward its Kubo–Toyabe 1/3
    tail; a mere 10 mT (100 G) of longitudinal field flattens it completely.
-   This is the discriminating diagnostic — a single small field fully
-   decouples a static distribution.
+   This supports the static or quasistatic interpretation on the observation
+   timescale, as stated by Singh *et al.*; the field pair alone cannot rule
+   out every dynamic model.
 
-The Ca₃Co₂O₆ plateau is dynamic; Re₆Zr's spontaneous fields below its
-superconducting :math:`T_c` are **static**, and the same LF geometry proves it
-the opposite way. In Re₆Zr the relaxation is a Gaussian Kubo–Toyabe with a
-width :math:`\Delta \approx 0.26\;\mu\mathrm{s}^{-1}` — equivalent to an
-internal field of only a few gauss — so a longitudinal field of 10 mT is a
-hundredfold larger than the internal width and decouples the muon completely.
-The relaxation switches off at a fixed, small field, and does not fall
-smoothly with increasing field as a dynamic rate would.
+For Re₆Zr, the reported Gaussian KT width near
+:math:`\Delta\approx0.26\;\mu\mathrm{s}^{-1}` corresponds to a component
+field width :math:`\Delta/\gamma_\mu\approx3.1` G. A 10 mT field (100 G)
+is about 33 times that width, consistent with strong static-model decoupling.
+A nearly flat spectrum means any remaining relaxation is below the sensitivity
+of that measurement; it does not imply an exactly zero rate.
 
-That is the whole discriminator in one pair of numbers. A static distribution
-decouples at a threshold field set by its width and stays decoupled; a dynamic
-distribution keeps relaxing to far higher fields, with a rate that falls as
-:math:`1/B^2`. Ca₃Co₂O₆ still shows a measurable :math:`\lambda = 0.3\;\mu
-\mathrm{s}^{-1}` at 3.8 T; Re₆Zr is flat by 10 mT. The two corpus datasets
-bracket the diagnostic — dynamic Redfield falloff on one side, a clean static
-decoupling threshold on the other. The Re₆Zr measurement is worked in full,
-including the time-reversal-symmetry-breaking signature it was designed to
-find, in the superconductivity chapters.
+The published interpretation of Re₆Zr is static or quasistatic on the muon
+precession timescale. The Ca₃Co₂O₆ field dependence is instead described by a
+dynamic Redfield model over its plateau. Neither interpretation follows from
+a universal sharp threshold or from a single flat high-field trace.
 
 The static LF-KT decoupling series
 ----------------------------------
 
 Neither corpus dataset shows a full *static* decoupling series — Ca₃Co₂O₆ is
 dynamic, and the Re₆Zr contrast uses only two fields. The textbook static case,
-where the LF-KT polarisation is measured across a progression of fields
-spanning :math:`\gamma_\mu B_L/\Delta \in \{0, 1, 2, 5, 10\}`, is best shown on
-a synthetic silver dataset, for which the answer is known exactly.
+where the LF-KT polarisation is calculated across a progression of fields
+spanning the decoupling crossover, is shown on
+a synthetic generic Gaussian-field dataset, for which the answer is known exactly.
 
 .. image:: /_generated/screenshots/lf_kt_global_results.png
-   :alt: Member Results window from a global Ag LF-KT fit, showing shared width and Hessian error
+   :alt: Member Results window from a global generic LF-KT fit, showing shared width and Hessian error
    :width: 100%
 
 The member results window shows the fitted parameters and Hessian errors for
@@ -321,35 +351,31 @@ across the field series in a global fit: the Gaussian width :math:`\Delta` is
 shared (Global), the applied field :math:`B_L` is fixed per run (File), and the
 initial asymmetry and background are shared. Hayano *et al.* computed the full
 LF-KT polarisation function, which recovers to unity once
-:math:`\gamma_\mu B_L \gg \Delta`. For the synthetic Ag series with input
+:math:`\gamma_\mu B_L \gg \Delta`. For the synthetic generic series with input
 :math:`\Delta = 0.39\;\mu\mathrm{s}^{-1}` the global fit recovers
 :math:`\Delta = 0.3903(4)\;\mu\mathrm{s}^{-1}` with per-run reduced :math:`\chi^2`
-near unity, and the diagnostic is read off the highest-field run: because it
-flattens to :math:`A_0 + A_{bg}` within the fit uncertainty, the distribution
-is confirmed static and :math:`\Delta` is the final answer. Were that run still
-relaxing, the LF-KT model would fail and the dynamic Redfield analysis above
-would be required instead.
+near unity. The highest-field run is consistent with the static prediction
+:math:`A_0+A_{bg}` within its fit uncertainty. Its static character is known
+from the generating model. For acquired data, remaining relaxation could
+reflect dynamics, an inadequate static distribution, misalignment, background,
+or additional components; it does not select Redfield uniquely.
 
 Interpretation
 --------------
 
 What the analysis delivers:
 
-- **Static vs dynamic.** The shape of :math:`\lambda(B_L)` is the diagnostic:
-  a smooth :math:`1/B^2` falloff over several tesla is dynamic (Ca₃Co₂O₆);
-  a sharp decoupling at a fixed small field is static (Re₆Zr). This
-  distinction is invisible in a single zero-field spectrum.
-- **Field width** :math:`\Delta`. For the dynamic plateau,
-  :math:`\Delta = 41.0\;\mathrm{mT}` is the width of the fluctuating internal
-  field distribution — the spread of local fields the muon samples. For a
-  static case it is instead read from the decoupling threshold or a KT fit.
-- **Correlation time** :math:`\tau`. Only a dynamic scan yields this:
-  :math:`\tau = 929\;\mathrm{ps}` is the timescale on which the plateau's
-  internal fields fluctuate, otherwise inaccessible to a single measurement.
-- **Site and model cross-checks.** :math:`\Delta` can be compared against a
-  calculated dipolar tensor (via MuFinder or μ-LFC) to confirm the muon
-  stopping site, and the whole scan cross-checks the Redfield model against the
-  independently-known plateau boundaries.
+- **Static and dynamic model tests.** The complete field series and its
+  time-domain shapes constrain candidate models. Decoupling is consistent with
+  static or quasistatic fields; the Redfield field dependence supports a
+  particular dynamic interpretation within its domain.
+- **Field-width convention.** The KT :math:`\Delta` is an angular-frequency
+  component width; the Redfield :math:`\Delta_B` is a field scale. Their
+  numerical values cannot be compared without the gyromagnetic conversion
+  and matching distribution assumptions.
+- **Correlation time.** The fitted :math:`\tau` describes the assumed
+  autocorrelation. Assigning it to hopping, a particular magnetic excitation,
+  or one stopping site needs independent evidence.
 
 Common pitfalls
 ---------------
@@ -357,9 +383,9 @@ Common pitfalls
 - **Fitting the unresolvable low-field runs.** Below ~0.2 T the fast relaxation
   is beyond the ISIS pulse width and the asymmetry is suppressed, so the single
   exponential is degenerate and :math:`\lambda` collapses to a spurious near-
-  zero minimum. These points are physically meaningless and are excluded from
-  the trend (they appear as ringed markers) — this is a property of the pulsed
-  source, not a program fault.
+  zero minimum. Those fits do not resolve a reliable rate for this experiment and are
+  excluded from the trend. The limit depends on the pulse profile, timing
+  response, usable window, and statistics; it is not a universal ISIS cutoff.
 
 - **Forgetting the field-growing background.** The constant background rises
   from ~7 % at 1 T to ~37 % at 3.5 T as decay positrons spiral in the applied
@@ -369,8 +395,8 @@ Common pitfalls
 
 - **Reading dynamic where the data are static.** A single flat high-field
   spectrum is consistent with *both* a decoupled static distribution and a
-  weakly-relaxing dynamic one. Only the field dependence of :math:`\lambda`
-  discriminates — always scan several fields before concluding.
+  weakly-relaxing dynamic one. Examine multiple fields and time-domain shapes,
+  and report the models and timescales the data can distinguish.
 
 - **Confusing the axis-scale log toggle with a transform.** The Redfield
   linearisation needs the plotted *values* transformed (reciprocal Y, square
@@ -382,21 +408,21 @@ Common pitfalls
 Further reading
 ---------------
 
-- P. J. Baker, J. S. Lord, and D. Prabhakaran, J. Phys.: Condens. Matter
+- P\. J. Baker, J. S. Lord, and D. Prabhakaran, J. Phys.: Condens. Matter
   **23**, 306001 (2011) — the Ca₃Co₂O₆ plateau decoupling measurement worked
-  here (arXiv:1105.2200); Redfield analysis of the dynamic plateau fields.
-- R. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979) — the original static
+  here (`arXiv:1105.2200 <https://arxiv.org/abs/1105.2200>`_, Eq. 4).
+- R\. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979) — the original static
   and dynamic Kubo–Toyabe polarisation functions, including the LF-KT
   decoupling form; still the canonical reference.
-- R. P. Singh, A. D. Hillier, B. Mazidian, J. Quintanilla, J. F. Annett,
-  D. McK. Paul, G. Balakrishnan, and M. R. Lees, Phys. Rev. Lett. **112**,
-  107002 (2014) — the Re₆Zr time-reversal-symmetry-breaking measurement whose
-  static LF decoupling is the counter-example.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- R\. P. Singh, A. D. Hillier, B. Mazidian, J. Quintanilla, J. F. Annett,
+  D\. McK. Paul, G. Balakrishnan, and M. R. Lees, Phys. Rev. Lett. **112**,
+  `107002 (2014) <https://doi.org/10.1103/PhysRevLett.112.107002>`_ —
+  Re₆Zr LF measurements support static or quasistatic fields.
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
   Ch. 5.2–5.3 — static Gaussian KT, the LF-KT decoupling form, and the
   strong-collision dynamic KT.
-- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+- A\. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance: Applications to Condensed Matter* (Oxford University Press,
   Oxford, 2011), Ch. 6 — the most detailed mathematical treatment of dynamic
   relaxation and the Redfield limit.

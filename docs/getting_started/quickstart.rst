@@ -1,85 +1,149 @@
 Quickstart
 ==========
 
-This page takes you from a fresh install to a first fitted result in a few
-minutes — and you need no data of your own, because Asymmetry can generate a
-realistic demo run for you. The objects each step refers to are collected in
-:doc:`key_concepts`, and complete real-world analyses follow in
-:doc:`/workflows/index`.
+Make a synthetic dataset, fit its relaxation, and keep a result you can reopen
+and share. This walkthrough needs no measurement files. You will create three
+files in a folder of your choice:
 
-Install and launch
-------------------
+* ``first_run.nxs`` — the generated detector counts;
+* ``first_analysis.asymp`` — the analysis settings and fitted result;
+* ``first_fit.txt`` — a readable report of the fitted parameters.
 
-Install Asymmetry (see :doc:`installation`) and start the graphical interface
-from a terminal:
+Launch Asymmetry
+----------------
+
+Install Asymmetry using :doc:`installation`. Open **Asymmetry** from the Windows
+Start menu or macOS Applications folder. For a Python installation, install the
+``gui`` and ``hdf5`` extras described there, then run:
 
 .. code-block:: bash
 
    asymmetry-gui
 
-The main window opens with an empty Data Browser on the left and a plot in the
-centre.
+The window opens with an empty **Data Browser** on the left, a plot in the
+centre, and an **Untitled** project tab above them.
 
-Make a demo dataset
--------------------
+Generate and save the data
+--------------------------
 
-With your own data you would load a file from **File → Open…** and then set the
-detector grouping and calibrate :math:`\alpha`
-(see :doc:`/reference/grouping_calibration`). With nothing to hand, generate a
-ready-made run instead:
+#. Open **File → Generate Synthetic Run…**.
+#. Keep **Template run** set to **Built-in: Ideal pulsed F/B (ISIS-style)**,
+   **Generation** set to **Forward/backward asymmetry**, and the default
+   **Model A(t)**, an exponential relaxation plus a constant.
+#. Enter these values in the parameter table:
 
-#. Open **File → Simulate Preset**.
-#. Choose **Ag — ZF Gaussian Kubo–Toyabe**.
+   .. list-table::
+      :header-rows: 1
+      :widths: 35 25 40
 
-A synthetic silver run appears in the Data Browser, badged ``SIM`` and tinted to
-mark it as simulated, and the central plot shows its **asymmetry** — already
-grouped and calibrated, because the preset carries a complete reduction. The
-preset is a genuine Poisson-sampled dataset built from a known model, so it
-behaves exactly as beamline data would.
+      * - Parameter
+        - Value
+        - Meaning
+      * - ``A_1``
+        - 24
+        - Relaxing part of the asymmetry, in percent.
+      * - ``Lambda``
+        - 0.3
+        - Relaxation rate, in μs⁻¹.
+      * - ``A_bg``
+        - 2
+        - Constant part of the asymmetry, in percent.
 
-Read the asymmetry
-------------------
+#. Set **Total events** to 40 (40 million events). Leave the detector background
+   at its default, keep **Fixed seed** checked, and set its number to 23. The
+   seed makes this particular random draw repeatable in the same environment.
+#. Click **Generate** and wait for it to finish. Click **Save as NeXus…**,
+   save ``first_run.nxs`` in your chosen folder, then click **Close**.
 
-The curve is the zero-field **Kubo–Toyabe** relaxation of muons in silver: a
-characteristic dip and partial recovery produced by the static distribution of
-nuclear dipolar fields at the muon site, with a width set by the spread of those
-fields. This time-domain signal is what every fit works on; for the physics
-behind it see :doc:`/explanation/musr_primer` and
-:doc:`/reference/fit_functions/kubo_toyabe`.
+The generated counts have random counting fluctuations around the chosen model.
+The parameters are teaching choices, with no material attribution. The NeXus
+file keeps the counts; the project you save later will refer to that file.
 
-Fit it
-------
+Open and inspect the saved run
+------------------------------
 
-Fit the relaxation and recover its parameters:
+#. Choose **File → New Project** to open an empty project tab.
+#. Close the earlier **Untitled** tab with its **×**, and choose **Discard**
+   when asked about unsaved changes. Its generated counts are already in
+   ``first_run.nxs``; this discards only the unsaved session.
+#. In the remaining tab, choose **File → Open Data File(s)…** and select
+   ``first_run.nxs``. Select its row in the **Data Browser** if needed.
 
-#. In the fit panel's single-fit tab, open the **Fit Wizard**.
-#. Click **Start Analysis**. The wizard fingerprints the spectrum, fits a
-   portfolio of candidate models, and ranks them by an information criterion.
-#. It recommends ``StaticGKT_ZF + Constant`` — the static Gaussian Kubo–Toyabe
-   with a flat baseline. Click **Apply Recommended Fit** to write the result back
-   into the single-fit tab.
+The central plot shows **asymmetry**: the normalised difference between the
+forward and backward detector groups, displayed in percent. It starts near
+26 % and relaxes towards the 2 % constant component. Error bars describe the
+counting uncertainty of each point. The synthetic file already supplies the
+grouping and calibration needed for this example.
 
-The fitted field width comes out at :math:`\Delta \approx 0.39` μs⁻¹ — the value
-the preset was generated from, recovered within the counting errors. That is a
-complete analysis: data in, model fitted, parameter out.
+For the route from counts to the plotted signal, explore
+:doc:`/explanation/reduction_pipeline`. For real measurements, grouping and
+calibration need checking against the instrument and experiment;
+:doc:`/reference/grouping_calibration` explains those choices.
+
+Fit and check the result
+------------------------
+
+#. Open **Analysis → Fit**, then click **Wizard…** in the **Single** tab.
+#. If no field direction is recorded, choose **Zero field**. Click **Analyze**
+   and wait for the recommendation.
+#. Check that its expression is an exponential plus a constant. The wizard
+   can label this **Current model**, because it is also the initial model in
+   the fit panel. The recommendation is a starting point for checking the data.
+#. Check **Show residuals** before applying the fit. A residual is the
+   difference between a data point and the fitted curve. Look for fluctuations
+   around zero, rather than a persistent slope or wave: structure can reveal
+   a missing contribution even when a summary statistic looks acceptable.
+#. Click **Apply this fit**, close the wizard, and set the plot's upper **X:**
+   limit to 10 μs to inspect the relaxation.
+
+The fitted ``Lambda`` should be close to the generating value, 0.3 μs⁻¹.
+Counting fluctuations mean the fitted values need not equal the inputs exactly.
+The parameter table includes estimated uncertainties; these describe the fit
+under its model and error assumptions, rather than every possible experimental
+error. Click the fit's χ² indicator for its result summary. A reduced χ² near one
+is expected for this example, but neither convergence nor χ² alone establishes
+that a model is physically appropriate. See :doc:`/reference/assessing_a_fit`
+for the checks to use with your own measurements.
+
+Some late-time bins have too few counts to provide usable asymmetry errors
+and are omitted from this fit. You can still inspect the residual plot. The
+additional residual autocorrelation and FFT checks look for repeating patterns;
+they need an uninterrupted time grid and are unavailable here. Setting the
+plot’s **X:** limit changes the displayed range, not the fitted range.
 
 .. image:: /_generated/screenshots/quickstart_first_fit.png
-   :alt: The main window after the first fit, with the fitted Gaussian
-         Kubo–Toyabe curve overlaid on the silver asymmetry data and the
-         converged parameters shown in the fit panel.
+   :alt: The saved synthetic first analysis, with an exponential-plus-constant fit
+      over the reloaded data and fitted parameters in the Single tab.
    :width: 100%
 
-*The main window right after the walkthrough's first fit converges. The red*
-*fit curve traces the* ``StaticGKT_ZF + Constant`` *model over the silver*
-*asymmetry, and the fit panel reports* **Fit converged** *with*
-*Δ = 0.39 μs⁻¹ (row* **Δ (μs⁻¹)** *) and a reduced chi-square near 1.*
+*The walkthrough's generated file, fitted through the wizard and saved as a
+project. Your fitted values should be close to the teaching inputs; the final
+digits depend on the count draw and numerical environment.*
+
+Save the analysis
+-----------------
+
+Choose **File → Save Project**, enter ``first_analysis.asymp``, and wait for
+saving to finish. Keep ``first_run.nxs`` alongside it. The project records
+settings and fits; it does not embed the detector counts. To return to the
+analysis, choose **File → Open Project…** and select ``first_analysis.asymp``.
+Keep both files when moving the analysis to another machine. Source relocation
+and verification are explained in :doc:`/reference/project_files`.
+
+Export a result
+---------------
+
+Choose **Analysis → Export fit report…**, save ``first_fit.txt``, and open it in
+a text editor. It lists the model, fitted parameters with their uncertainties,
+and fit statistics. Check that it includes ``Lambda`` close to 0.3 μs⁻¹. This
+readable report complements the project and source file; it is not a reloadable
+analysis on its own.
 
 Where to go next
 ----------------
 
-* :doc:`key_concepts` — the objects an analysis is built from.
-* :doc:`/workflows/index` — full, worked analyses on representative experiments.
-* :doc:`/reference/fitting` and :doc:`/reference/fit_wizard` — the fitting tools
-  in depth.
-* :doc:`/reference/simulation` — more synthetic data, including whole temperature
-  scans and the other preset materials.
+* :doc:`key_concepts` — runs, asymmetry, fits, and projects.
+* :doc:`/reference/simulation` — one-click presets and other synthetic signals.
+* :doc:`/reference/fitting` and :doc:`/reference/fit_wizard` — fit controls and
+  model selection.
+* :doc:`/workflows/index` — demonstrations to adapt to your own measurements.

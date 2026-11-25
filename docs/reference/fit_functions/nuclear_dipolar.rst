@@ -79,7 +79,7 @@ extra nearby nucleus (e.g. a proton) materially affects the spectrum.
 
 **References**
 
-- T. Lancaster *et al.*, Phys. Rev. Lett. **99**, 267601 (2007).
+- T\. Lancaster *et al.*, Phys. Rev. Lett. **99**, 267601 (2007).
 
 .. _fit-proton-dipole:
 
@@ -114,7 +114,7 @@ Name          Symbol              Unit   Description
 
 **References**
 
-- P. F. Meier, Hyperfine Interact. **18**, 427 (1984).
+- P\. F. Meier, Hyperfine Interact. **18**, 427 (1984).
 
 .. _fit-electron-dipole:
 
@@ -134,7 +134,7 @@ the :doc:`muonium` components) or for dense magnets (use ``Oscillatory`` or
 
 **References**
 
-- P. F. Meier, Hyperfine Interact. **18**, 427 (1984).
+- P\. F. Meier, Hyperfine Interact. **18**, 427 (1984).
 
 .. _fit-dipolar-pair-field:
 
@@ -153,7 +153,7 @@ nucleus is identified. Parameters: ``A`` (%), ``B_dip`` (G), ``lambda_T``
 
 **References**
 
-- P. F. Meier, Hyperfine Interact. **18**, 427 (1984).
+- P\. F. Meier, Hyperfine Interact. **18**, 427 (1984).
 
 .. _fit-dipolar-spin-j:
 
@@ -203,8 +203,8 @@ dipolar/quadrupolar context, while the equation above specifies this variant.
 
 **References**
 
-- M. Celio and P. F. Meier, Hyperfine Interact. **18**, 435 (1984).
-- O. Hartmann, Phys. Rev. Lett. **39**, 832 (1977).
+- M\. Celio and P. F. Meier, Hyperfine Interact. **18**, 435 (1984).
+- O\. Hartmann, Phys. Rev. Lett. **39**, 832 (1977).
 
 .. _fit-fmuf-linear:
 
@@ -229,7 +229,7 @@ use for inequivalent fluorines or bent geometries — use ``FmuF_General``.
 
 **References**
 
-- J. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
+- J\. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
 
 .. _fit-fmuf-general:
 
@@ -269,8 +269,8 @@ for a third *fluorine*, use ``FmuF_Triangle``).
 
 **References**
 
-- T. Lancaster *et al.*, Phys. Rev. Lett. **99**, 267601 (2007).
-- J. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
+- T\. Lancaster *et al.*, Phys. Rev. Lett. **99**, 267601 (2007).
+- J\. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
 
 .. _fit-fmuf-triangle:
 
@@ -302,8 +302,8 @@ analytic F–μ–F forms.
 
 **References**
 
-- J. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
-- J. M. Wilkinson and S. J. Blundell, Phys. Rev. Lett. **125**, 087201 (2020).
+- J\. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
+- J\. M. Wilkinson and S. J. Blundell, Phys. Rev. Lett. **125**, 087201 (2020).
 
 .. _fit-dynamic-fmuf:
 
@@ -349,6 +349,6 @@ Name       Symbol              Unit   Description
 
 **References**
 
-- J. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- J\. H. Brewer *et al.*, Phys. Rev. B **33**, 7813 (1986).
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).

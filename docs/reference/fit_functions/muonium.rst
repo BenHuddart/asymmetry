@@ -60,7 +60,7 @@ targets genuine muonium where the relative transition weights matter.
 
 **References**
 
-- B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+- B\. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
 
 .. _fit-muonium-low-tf:
 
@@ -86,7 +86,7 @@ visibility depends on the instrument response.
 
 **References**
 
-- B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+- B\. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
 
 .. _fit-muonium-zf:
 
@@ -136,7 +136,7 @@ Name        Symbol                     Unit   Description
 
 **References**
 
-- B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+- B\. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
 
 .. _fit-muonium-high-tf:
 
@@ -159,7 +159,7 @@ high-field limit; at lower fields, where the amplitudes differ, use
 
 **References**
 
-- B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+- B\. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
 
 .. _fit-muonium-high-tf-aniso:
 
@@ -211,8 +211,8 @@ Name        Symbol                   Unit   Description
 
 **References**
 
-- B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
-- E. Roduner and H. Fischer, Chem. Phys. **54**, 261 (1981).
+- B\. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+- E\. Roduner and H. Fischer, Chem. Phys. **54**, 261 (1981).
 
 .. _fit-muonium-lf-relax:
 
@@ -261,7 +261,7 @@ enough field-dependent data to constrain both amplitude and correlation time.
 
 **References**
 
-- R. F. Kiefl *et al.*, Phys. Rev. Lett. **62**, 792 (1989).
-- R. Kadono *et al.*, Phys. Rev. Lett. **64**, 665 (1990).
-- R. Kadono and T. U. Ito, J. Phys. Soc. Jpn. **94**, 064601 (2025),
+- R\. F. Kiefl *et al.*, Phys. Rev. Lett. **62**, 792 (1989).
+- R\. Kadono *et al.*, Phys. Rev. Lett. **64**, 665 (1990).
+- R\. Kadono and T. U. Ito, J. Phys. Soc. Jpn. **94**, 064601 (2025),
   Eqs. (19) and (22), https://doi.org/10.7566/JPSJ.94.064601.

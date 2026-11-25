@@ -1,6 +1,35 @@
 Parameter trending
 ==================
 
+Trend a fitted parameter to see how it changes with temperature, field, angle,
+or another measured quantity. For example, you can follow a precession frequency
+through a magnetic transition or fit a relaxation rate across a field scan.
+The **Fit Parameters** panel displays these values and fits models to their
+variation. It uses the results of your run fits, so check those fits first with
+:doc:`assessing_a_fit`.
+
+Plot and fit a parameter
+------------------------
+
+#. Select the recorded fit series in the **Fit Parameters** panel. A series
+   collects the fitted values for the runs in an analysis.
+#. Choose the horizontal quantity on the **x** rail, then check the parameter
+   on the **y** rail. `Panel layout`_ explains the controls.
+#. Inspect the points and their uncertainties. Check the source of the
+   temperature or field in `How the T / B abscissa is sourced`_; use
+   `Axis transforms`_ when a physical relation calls for a transformed axis.
+#. Click **Fit…** on the parameter's card, choose a model and suitable range,
+   and inspect the preview before fitting. See `Fitting a trend model`_.
+#. Inspect the fitted parameters, residuals, and error assumptions before
+   interpreting the trend. `Weighting and error modes`_ and
+   `Accounting for x uncertainty`_ describe the choices.
+
+For several series, see `Overlaying several series`_ and `Cross-group fitting`_.
+For physical width conversions, use :ref:`trend-width-inputs`; shared-fit
+uncertainties are discussed in `Uncertainties after a shared fit`_.
+:doc:`sc_penetration_depth` explains the penetration-depth interpretation, while
+:ref:`knight-shift` covers frequency shifts and crystal orientation.
+
 .. image:: /_generated/screenshots/parameter_trending_mgb2.png
    :alt: Fit Parameters trending panel showing MgB₂ σ(T) points with the fitted two-gap SC_TwoGap_SS curve
    :width: 100%
@@ -13,100 +42,6 @@ Parameter trending
 *recovering σ₀ ≈ 1.24 µs⁻¹ and Tc ≈ 35.8 K; the card's* ``χ²ᵣ`` *chip grades*
 *it and opens the full results. The σ(T) → λ(T) inversion that follows from*
 *this fit is discussed in* :doc:`sc_penetration_depth`.
-
-Parameter trending is the second stage of any temperature or field scan
-analysis. Once a series of runs has been individually (or globally) fitted
-in the time domain, the extracted parameters themselves carry the
-physically interesting information: an order parameter as a function of
-temperature, a relaxation rate as a function of field, a precession
-frequency tracking magnetic ordering. The parameter-trending framework
-fits those *derived* curves with parametric models — power laws, Arrhenius
-expressions, Redfield denominators, superconducting gap models, transport
-forms — and reports the resulting physical quantities (critical
-temperature, activation energy, gap ratios, dimensionality of motion)
-with uncertainties.
-
-Global-fit parameter errors are marginal over every free shared and local
-parameter. Shared parameters also correlate local estimates across runs.
-Ordinary weighted trend fits use the individual marginal errors and approximate
-runs as independent; they do not use a full covariance between runs. See
-:ref:`global-marginal-errors` for covariance propagation and fixed nuisance
-assumptions.
-
-Frequency-domain global fits use the same panel.  Peak centres and widths from
-Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
-equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
-broadening directly against field, temperature, or run number.
-
-.. _trend-width-inputs:
-
-Gaussian widths at second-moment consumers
-------------------------------------------
-
-Asymmetry also checks the captured source of widths passed to
-``SC_Brandt_VortexLattice`` and ``SC_Brandt_VortexLattice_Powder``, including
-cross-group fits and composite branches connected to the output by addition,
-subtraction, or quadrature. A bare Brandt term beside a product background is
-still checked. A component inside an arbitrary product or ratio has no declared
-absolute output-width contract, so that branch remains unclassified. A known ``Gaussian`` component uses
-:math:`\exp(-\sigma_G^2t^2)`; these field laws require the second-moment
-width in :math:`\exp(-\sigma_2^2t^2/2)`. An unconverted ``sigma`` column
-therefore produces this explanation:
-
-.. code-block:: text
-
-   Column 'sigma' contains Gaussian-component width in exp(-sigma^2*t^2); SC_Brandt_VortexLattice expects second-moment width in exp(-sigma^2*t^2/2). Apply Custom Y transform sqrt(2)*x to Gaussian-component values and errors before fitting; mixed conventions require separate conversion.
-
-Choose **ƒ** → **Custom…** on that parameter's card, then enter
-``sqrt(2)*x`` in **Custom Y transform**, beside **Expression in x:**.
-The real fit receives transformed values and errors. Parentheses and whitespace
-are immaterial; ``x*sqrt(2)`` is also recognised. A rounded numerical multiplier
-or an arbitrary nonlinear expression does not declare a physical width
-conversion. Known second-moment input uses **None** (or Custom ``x``), and
-must not receive another factor. Mixed known conventions need separate
-conversion before combination.
-
-.. figure:: /_generated/screenshots/trend_gaussian_width_conversion.png
-   :alt: Brandt field fit after explicit Gaussian-width conversion, recovering 220 nm
-   :width: 100%
-
-   Synthetic single-crystal widths after explicit conversion, fitted with
-   ``SC_Brandt_VortexLattice`` at fixed ``Bc2`` and ``sigma_bg``.
-
-Source identity follows each captured component parameter, including repeated
-components and aliases; display labels do not establish it. A literal derived
-copy retains its source; ``sqrt(2)*parameter`` (or reversed operands) records an
-explicit conversion through the existing **Derived parameter…** expression
-boundary. Other derived expressions remain unclassified rather than being
-certified as physical widths.
-
-Temperature-dependent ``SC_*`` laws, and the same-Y-unit ``Constant.c`` and
-``Linear.b`` outputs, inherit the input convention in additive models. Their width outputs retain the known
-conventions of the observations that actually entered the fit. Other derived
-quantities do not acquire a certified width convention. Width outputs from an
-unverified transform of a known width retain that origin; a later factor cannot
-certify it. For example:
-
-.. code-block:: text
-
-   Column 'sigma_0' has an unverified transform of a known width (x*x); a second-moment fit requires an explicitly established width conversion.
-
-For already second-moment input, applying another transform produces:
-
-.. code-block:: text
-
-   Column 'sigma_0' already has second-moment width; use untransformed values and errors for a second-moment model.
-
-A saved Gaussian model supplies captured source identity even when a separate
-convention field is absent. Generic/manual tables and historical records without
-captured source attribution remain usable with convention not recorded. Inspect their provenance and choose the
-conversion explicitly. Unknown provenance is not treated as a known mismatch.
-Unknown convention alone does not prevent a new fit; existing execution and
-source-availability checks still apply. Loading preserves saved numbers and
-never fits or rescales them. Plotting and exporting apply selected transforms
-without rewriting the recorded source values. Saved fit context retains its execution transform; changing the displayed
-Y transform hides an incompatible historical fit overlay and fit export.
-See :ref:`sc-width-convention` for background, covariance, and geometry limits.
 
 .. _trend-panel-layout:
 
@@ -201,94 +136,6 @@ above it, and **Copy TSV** / **Export…** below. Reading a row and finding it o
 the plot is otherwise a matter of counting points, so resting the pointer on a
 row rings that run's point on every plot — on each expanded card in Subplots,
 and on both axes of a twin-axis Overlay.
-
-.. _trending-data-model:
-
-The trending data model
------------------------
-
-Everything trendable is a **FitSeries**. Whatever produced the numbers — a
-batch of single-run fits, a grouped multi-detector fit, a global cross-fit, a
-frequency-domain peak fit — the result lands in one container type, stored in
-the project's batch collection. A FitSeries holds the per-run fit summaries
-(:ref:`assessing-a-fit`: success, χ², reduced χ², parameter values and
-uncertainties) keyed by run, and that is exactly the structure the
-parameter-trending tools consume. There is no separate "trend object": to trend
-a quantity is to read a parameter out of a FitSeries across its runs.
-
-Two distinct paths *write* into this one container, by design:
-
-* **Results recursion** records the per-group rows of a model fit — each fitted
-  group's parameters become a row, so the series carries a parameter-versus-run
-  (or versus-group) curve ready to trend.
-* **The global summary** accumulates one row per fit from a cross-group or
-  global fit — the shared (global) parameters of each fit, gathered across a
-  run series.
-
-Both write FitSeries instances into the same collection; they differ only in
-*what* each row represents (per-group values versus per-fit global values), not
-in the container. This is why a grouped fit and a global fit both appear as
-selectable series in the panel and trend through identical machinery.
-
-The **Global Parameter Fit window** is a *view onto persisted studies*, not a
-third container. Each cross-group fit is a named **study** (a
-``GlobalFitStudy``) kept in a project-level registry, so several can sit side by
-side — rename, duplicate, or delete them from the window's studies sidebar, and
-select one to display it. A study records the group snapshot it was fit against
-and detects when the live trend data has drifted from it (a *stale* badge, with
-a **Refit** action). The window's *decorations* (the per-parameter local model
-fits and free-floating plot annotations you add in the window) are stored inside
-the FitSeries it is viewing — keyed by batch id, in the series' ``extra`` —
-rather than under a separate project key. They
-therefore travel with the data they annotate and reappear whenever the window
-shows that fit again, including across a project save/reload, and can no longer
-be orphaned when the fit is re-run. View *preferences* (log axes, plot mode,
-show-components) are not decorations: they are remembered per window, not per
-fit. Legacy projects that stored decorations under the old window-state key
-still load, and migrate to the new home on the next save.
-
-.. _group-bound-series-staleness:
-
-Group-bound series and staleness
----------------------------------
-
-A run-membered FitSeries produced by a batch or global fit belongs to a Data
-Browser group: either the group the fit was launched from (via **Fit this
-group…**), or a group auto-created from the ad-hoc run selection. The group
-is the batch vehicle — its membership drives the series, not the other way
-round. A series' *effective* membership is derived live as the owning group's
-members minus any runs the series itself has excluded (untick a run in the
-Batch tab's member list without removing it from the group), so the same
-group can carry more than one analysis — a field scan fit with one model and,
-separately, a subset of it re-fit with another — without duplicating the run
-collection.
-
-Because membership is live-derived, adding a run to the group or excluding
-one from the series does not retroactively change already-recorded results:
-those stay a snapshot of what was actually fit. When the group's current
-effective membership no longer matches that snapshot, the series is *stale*,
-and its chip grows a **⚠** with the tooltip "Membership changed since last
-fit — re-run to refresh."; opening it in the Batch tab
-(:ref:`batch-tab-groups` in :doc:`gui_usage`) and clicking **Run series**
-refreshes the snapshot and clears the marker.
-
-The Batch tab is a *series editor*: it always has one series open, and a run
-either replaces that series' results or records a new one, never both at
-once. An identical re-run — the same model, parameters, fit range, seeding
-and effective members as what is already recorded — replaces the series'
-results in place, under its existing name; changing anything first, a wider
-window, a different model, a run ticked back in, records the run as a
-**new** series instead and leaves the one you opened alone. The check looks
-at the series open in the Batch tab first, then the representation's active
-series, then the newest series already describing the same analysis, so a
-truly identical re-run replaces its series wherever it lives — which also
-keeps the Global Fit Wizard's per-phase re-applies from stacking a fresh
-series on every pass. A series with no owning group (a legacy analysis, or
-one kept as a standalone record after its group was deleted) is never
-stale — its membership is a fixed snapshot, exactly as before this
-distinction existed. See :doc:`project_files` for the persisted ``recipe``,
-``group_id`` / ``excluded_run_numbers`` / ``last_fitted_members`` fields and
-:doc:`gui_usage` for the Data Browser and Batch tab controls that drive them.
 
 .. _trend-abscissa-coordinate:
 
@@ -1306,13 +1153,13 @@ Published forms of the same step use different names and sign conventions:
 References
 ~~~~~~~~~~
 
-1. R. Khasanov, G. Simutis, Y. G. Pashkevich, T. Shevtsova, W. R. Meier, M.
+1. R\. Khasanov, G. Simutis, Y. G. Pashkevich, T. Shevtsova, W. R. Meier, M.
    Xu, S. L. Bud'ko, V. G. Kogan, and P. C. Canfield, Phys. Rev. B **102**,
    094504 (2020).
-2. A. J. Steele, T. Lancaster, S. J. Blundell, P. J. Baker, F. L. Pratt, C.
+2. A\. J. Steele, T. Lancaster, S. J. Blundell, P. J. Baker, F. L. Pratt, C.
    Baines, M. M. Conner, H. I. Southerland, J. L. Manson, and J. A.
    Schlueter, Phys. Rev. B **84**, 064412 (2011).
-3. B. A. Frandsen *et al.*, Nat. Commun. **7**, 12519 (2016).
+3. B\. A. Frandsen *et al.*, Nat. Commun. **7**, 12519 (2016).
 
 Polynomial trends
 -----------------
@@ -1440,11 +1287,11 @@ yet have.
 References
 ~~~~~~~~~~
 
-1. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+1. S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
    Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-2. B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
-3. J. Orear, Am. J. Phys. **50**, 912 (1982).
-4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
+2. B\. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+3. J\. Orear, Am. J. Phys. **50**, 912 (1982).
+4. D\. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
    Phys.* **72**, 367 (2004).
 
 .. _derived-empirical-definitions:
@@ -1598,9 +1445,9 @@ benefits from a complementary avoided-level-crossing (ALC) measurement.
 References
 ~~~~~~~~~~
 
-1. I. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
-   J. Phys. Chem. B **117**, 13614 (2013).
-2. E. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
+1. I\. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
+   J\. Phys. Chem. B **117**, 13614 (2013).
+2. E\. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
    Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).
 
 Compared with other programs
@@ -1612,6 +1459,179 @@ analytic checks, not recorded WiMDA execution. The bounded supplied-error
 constant control against Mantid 6.16.1 and musrfit 1.12.1 checks a separate
 three-point Gaussian objective; it does not certify the complete model library.
 See :doc:`/explanation/comparison` for versions, settings, and limits.
+
+.. _trending-data-model:
+
+The trending data model
+-----------------------
+
+Everything trendable is a **FitSeries**. Whatever produced the numbers — a
+batch of single-run fits, a grouped multi-detector fit, a global cross-fit, a
+frequency-domain peak fit — the result lands in one container type, stored in
+the project's batch collection. A FitSeries holds the per-run fit summaries
+(:ref:`assessing-a-fit`: success, χ², reduced χ², parameter values and
+uncertainties) keyed by run, and that is exactly the structure the
+parameter-trending tools consume. There is no separate "trend object": to trend
+a quantity is to read a parameter out of a FitSeries across its runs.
+
+Two distinct paths *write* into this one container, by design:
+
+* **Results recursion** records the per-group rows of a model fit — each fitted
+  group's parameters become a row, so the series carries a parameter-versus-run
+  (or versus-group) curve ready to trend.
+* **The global summary** accumulates one row per fit from a cross-group or
+  global fit — the shared (global) parameters of each fit, gathered across a
+  run series.
+
+Both write FitSeries instances into the same collection; they differ only in
+*what* each row represents (per-group values versus per-fit global values), not
+in the container. This is why a grouped fit and a global fit both appear as
+selectable series in the panel and trend through identical machinery.
+
+The **Global Parameter Fit window** is a *view onto persisted studies*, not a
+third container. Each cross-group fit is a named **study** (a
+``GlobalFitStudy``) kept in a project-level registry, so several can sit side by
+side — rename, duplicate, or delete them from the window's studies sidebar, and
+select one to display it. A study records the group snapshot it was fit against
+and detects when the live trend data has drifted from it (a *stale* badge, with
+a **Refit** action). The window's *decorations* (the per-parameter local model
+fits and free-floating plot annotations you add in the window) are stored inside
+the FitSeries it is viewing — keyed by batch id, in the series' ``extra`` —
+rather than under a separate project key. They
+therefore travel with the data they annotate and reappear whenever the window
+shows that fit again, including across a project save/reload, and can no longer
+be orphaned when the fit is re-run. View *preferences* (log axes, plot mode,
+show-components) are not decorations: they are remembered per window, not per
+fit. Legacy projects that stored decorations under the old window-state key
+still load, and migrate to the new home on the next save.
+
+.. _group-bound-series-staleness:
+
+Group-bound series and staleness
+---------------------------------
+
+A run-membered FitSeries produced by a batch or global fit belongs to a Data
+Browser group: either the group the fit was launched from (via **Fit this
+group…**), or a group auto-created from the ad-hoc run selection. The group
+is the batch vehicle — its membership drives the series, not the other way
+round. A series' *effective* membership is derived live as the owning group's
+members minus any runs the series itself has excluded (untick a run in the
+Batch tab's member list without removing it from the group), so the same
+group can carry more than one analysis — a field scan fit with one model and,
+separately, a subset of it re-fit with another — without duplicating the run
+collection.
+
+Because membership is live-derived, adding a run to the group or excluding
+one from the series does not retroactively change already-recorded results:
+those stay a snapshot of what was actually fit. When the group's current
+effective membership no longer matches that snapshot, the series is *stale*,
+and its chip grows a **⚠** with the tooltip "Membership changed since last
+fit — re-run to refresh."; opening it in the Batch tab
+(:ref:`batch-tab-groups` in :doc:`gui_usage`) and clicking **Run series**
+refreshes the snapshot and clears the marker.
+
+The Batch tab is a *series editor*: it always has one series open, and a run
+either replaces that series' results or records a new one, never both at
+once. An identical re-run — the same model, parameters, fit range, seeding
+and effective members as what is already recorded — replaces the series'
+results in place, under its existing name; changing anything first, a wider
+window, a different model, a run ticked back in, records the run as a
+**new** series instead and leaves the one you opened alone. The check looks
+at the series open in the Batch tab first, then the representation's active
+series, then the newest series already describing the same analysis, so a
+truly identical re-run replaces its series wherever it lives — which also
+keeps the Global Fit Wizard's per-phase re-applies from stacking a fresh
+series on every pass. A series with no owning group (a legacy analysis, or
+one kept as a standalone record after its group was deleted) is never
+stale — its membership is a fixed snapshot, exactly as before this
+distinction existed. See :doc:`project_files` for the persisted ``recipe``,
+``group_id`` / ``excluded_run_numbers`` / ``last_fitted_members`` fields and
+:doc:`gui_usage` for the Data Browser and Batch tab controls that drive them.
+
+.. _trend-width-inputs:
+
+Gaussian widths at second-moment consumers
+------------------------------------------
+
+Asymmetry also checks the captured source of widths passed to
+``SC_Brandt_VortexLattice`` and ``SC_Brandt_VortexLattice_Powder``, including
+cross-group fits and composite branches connected to the output by addition,
+subtraction, or quadrature. A bare Brandt term beside a product background is
+still checked. A component inside an arbitrary product or ratio has no declared
+absolute output-width contract, so that branch remains unclassified. A known ``Gaussian`` component uses
+:math:`\exp(-\sigma_G^2t^2)`; these field laws require the second-moment
+width in :math:`\exp(-\sigma_2^2t^2/2)`. An unconverted ``sigma`` column
+therefore produces this explanation:
+
+.. code-block:: text
+
+   Column 'sigma' contains Gaussian-component width in exp(-sigma^2*t^2); SC_Brandt_VortexLattice expects second-moment width in exp(-sigma^2*t^2/2). Apply Custom Y transform sqrt(2)*x to Gaussian-component values and errors before fitting; mixed conventions require separate conversion.
+
+Choose **ƒ** → **Custom…** on that parameter's card, then enter
+``sqrt(2)*x`` in **Custom Y transform**, beside **Expression in x:**.
+The real fit receives transformed values and errors. Parentheses and whitespace
+are immaterial; ``x*sqrt(2)`` is also recognised. A rounded numerical multiplier
+or an arbitrary nonlinear expression does not declare a physical width
+conversion. Known second-moment input uses **None** (or Custom ``x``), and
+must not receive another factor. Mixed known conventions need separate
+conversion before combination.
+
+.. figure:: /_generated/screenshots/trend_gaussian_width_conversion.png
+   :alt: Brandt field fit after explicit Gaussian-width conversion, recovering 220 nm
+   :width: 100%
+
+   Synthetic single-crystal widths after explicit conversion, fitted with
+   ``SC_Brandt_VortexLattice`` at fixed ``Bc2`` and ``sigma_bg``.
+
+Source identity follows each captured component parameter, including repeated
+components and aliases; display labels do not establish it. A literal derived
+copy retains its source; ``sqrt(2)*parameter`` (or reversed operands) records an
+explicit conversion through the existing **Derived parameter…** expression
+boundary. Other derived expressions remain unclassified rather than being
+certified as physical widths.
+
+Temperature-dependent ``SC_*`` laws, and the same-Y-unit ``Constant.c`` and
+``Linear.b`` outputs, inherit the input convention in additive models. Their width outputs retain the known
+conventions of the observations that actually entered the fit. Other derived
+quantities do not acquire a certified width convention. Width outputs from an
+unverified transform of a known width retain that origin; a later factor cannot
+certify it. For example:
+
+.. code-block:: text
+
+   Column 'sigma_0' has an unverified transform of a known width (x*x); a second-moment fit requires an explicitly established width conversion.
+
+For already second-moment input, applying another transform produces:
+
+.. code-block:: text
+
+   Column 'sigma_0' already has second-moment width; use untransformed values and errors for a second-moment model.
+
+A saved Gaussian model supplies captured source identity even when a separate
+convention field is absent. Generic/manual tables and historical records without
+captured source attribution remain usable with convention not recorded. Inspect their provenance and choose the
+conversion explicitly. Unknown provenance is not treated as a known mismatch.
+Unknown convention alone does not prevent a new fit; existing execution and
+source-availability checks still apply. Loading preserves saved numbers and
+never fits or rescales them. Plotting and exporting apply selected transforms
+without rewriting the recorded source values. Saved fit context retains its execution transform; changing the displayed
+Y transform hides an incompatible historical fit overlay and fit export.
+See :ref:`sc-width-convention` for background, covariance, and geometry limits.
+
+Uncertainties after a shared fit
+--------------------------------
+
+Global-fit parameter errors are marginal over every free shared and local
+parameter. Shared parameters also correlate local estimates across runs.
+Ordinary weighted trend fits use the individual marginal errors and approximate
+runs as independent; they do not use a full covariance between runs. See
+:ref:`global-marginal-errors` for covariance propagation and fixed nuisance
+assumptions.
+
+Frequency-domain global fits use the same panel.  Peak centres and widths from
+Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
+equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
+broadening directly against field, temperature, or run number.
 
 Model recipes and parameter conventions
 ---------------------------------------
@@ -2086,13 +2106,13 @@ should settle which is real.
 References
 ~~~~~~~~~~
 
-1. A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+1. A\. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
    Applications to Solid State and Material Sciences*, Lecture Notes in Physics
    Vol. 961 (Springer, Cham, 2024).
-2. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+2. S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
    Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-3. W. D. Knight, Phys. Rev. **76**, 1259 (1949).
-4. A. M. Clogston, V. Jaccarino, and Y. Yafet, Phys. Rev. **134**, A650 (1964).
+3. W\. D. Knight, Phys. Rev. **76**, 1259 (1949).
+4. A\. M. Clogston, V. Jaccarino, and Y. Yafet, Phys. Rev. **134**, A650 (1964).
 
 Runnable example
 ----------------

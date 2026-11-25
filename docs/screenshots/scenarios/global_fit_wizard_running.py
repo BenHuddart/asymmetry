@@ -9,7 +9,7 @@ core progress messages through the window's own ``_on_progress``. The same
 prefix table as a live run lights the trail, so this is a faithful snapshot of
 a real mid-stream state.
 
-Uses the four-field Ag LF decoupling series so the header chips match the
+Uses the four-field generic LF decoupling series so the header chips match the
 other Global Fit Wizard captures.
 """
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
-from ..data import make_ag_lf_decoupling
+from ..data import make_generic_lf_decoupling
 from ._base import Scenario, _process_events_for, register
 
 #: The direction row's "Longitudinal" button.
@@ -46,7 +46,7 @@ class GlobalFitWizardRunningScenario(Scenario):
             GlobalFitWizardWindow,
         )
 
-        datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
+        datasets = make_generic_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
         window = GlobalFitWizardWindow()
         window.set_analysis_context(datasets)
         # Answered the way global_fit_wizard_setup answers it.

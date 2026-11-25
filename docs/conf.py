@@ -3,21 +3,26 @@
 import importlib
 import inspect
 import os
-import re
 import sys
-sys.path.insert(0, os.path.abspath('../src'))
-sys.path.insert(0, os.path.abspath('_ext'))
-sys.path.insert(0, os.path.abspath('..'))
+from pathlib import Path
+
+_DOCS_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_DOCS_ROOT.parent / 'src'))
+sys.path.insert(0, str(_DOCS_ROOT / '_ext'))
+sys.path.insert(0, str(_DOCS_ROOT.parent))
 
 # Imported as a module (not `from asymmetry import __version__`) because
 # `linkcode_resolve` below also needs `asymmetry.__file__` to anchor source paths.
 import asymmetry
+from tools.docs_source import source_identity
 
 # -- Project information -----------------------------------------------------
 project = 'Asymmetry'
 copyright = '2026, Asymmetry Contributors'
 author = 'Asymmetry Contributors'
-release = asymmetry.__version__
+_source = source_identity(asymmetry.__file__, asymmetry.__version__)
+release = _source.label
+html_context = {'docs_source_label': _source.label, 'docs_source_revision': _source.revision}
 
 # -- General configuration ---------------------------------------------------
 extensions = [
@@ -29,6 +34,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx_design',
     'lazy_images',
+    'reduction_guide',
     'tools.docs_policy',
     'tools.instrument_docs',
 ]
@@ -38,6 +44,8 @@ instrument_review_directory = 'reference/instruments'
 templates_path = ['_templates']
 exclude_patterns = ['_build', '_generated', 'Thumbs.db', '.DS_Store']
 html_css_files = ['custom.css']
+# Search uses titles and headings without fetching every matching page for a snippet.
+html_show_search_summary = False
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = 'sphinx_rtd_theme'
@@ -85,25 +93,9 @@ napoleon_preprocess_types = False
 napoleon_type_aliases = None
 napoleon_attr_annotations = True
 
-# linkcode
-#
-# ``sphinx.ext.viewcode`` used to self-host a highlighted copy of every module
-# under ``_modules/``. For this codebase that meant ~15 MB of generated HTML,
-# with single pages (``_modules/asymmetry/gui/mainwindow.html``) reaching 2.7 MB
-# and ~80k ``<span>`` elements -- slow enough to stall the published site in the
-# browser. ``linkcode`` instead points each ``[source]`` link at GitHub.
-#
-# Links are pinned to the ``v{release}`` tag rather than ``main``: the tag always
-# exists by the time a build is published (the version in ``pyproject.toml`` is
-# the last released one), and the line anchors stay valid instead of drifting as
-# the branch moves. A deploy from ``main`` between releases therefore points at
-# the previous release's source, which is the intended trade for stable anchors.
+# Source line numbers and links refer to the same imported, clean checkout.
 _GITHUB_BLOB = 'https://github.com/BenHuddart/asymmetry/blob/{ref}/{path}#L{start}-L{end}'
-
-# Released docs pin to the release tag. A local build of an uninstalled checkout
-# has no distribution metadata (``__version__`` falls back to ``'unknown'``), so
-# point those at ``main`` rather than emitting a dead ``vunknown`` ref.
-_SOURCE_REF = f'v{release}' if re.match(r'^\d+\.\d+', release) else 'main'
+_SOURCE_REF = _source.revision
 
 # Root of the importable source tree (``.../src``), derived from the package
 # actually imported so the links are correct from a git worktree too.
@@ -123,7 +115,7 @@ def _unwrap_object(obj):
 
 def linkcode_resolve(domain, info):
     """Return a GitHub URL for the Python object described by ``info``."""
-    if domain != 'py':
+    if domain != 'py' or _SOURCE_REF is None:
         return None
     module_name = info.get('module')
     fullname = info.get('fullname')

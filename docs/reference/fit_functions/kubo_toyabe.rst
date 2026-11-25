@@ -9,8 +9,7 @@ characteristic zero-field dip and :math:`1/3` tail. The notation follows
 Chapter 5 of Blundell, De Renzi, Lancaster and Pratt: the Gaussian width is
 :math:`\Delta` (μs⁻¹), the Lorentzian half-width :math:`a_L` (μs⁻¹), the
 fluctuation (hop) rate :math:`\nu` (MHz ≡ μs⁻¹), and the applied longitudinal
-field :math:`B_L` (Gauss). Two universal limits bracket every dynamic member
-of the family:
+field :math:`B_L` (Gauss). Two useful limits for dynamic Gaussian KT are:
 
 - :math:`\nu \to 0` recovers the static function (with its zero-field
   :math:`1/3` tail);
@@ -21,8 +20,7 @@ of the family:
 A longitudinal field adds a Larmor term :math:`\omega_0 = \gamma_\mu B_L`
 that **decouples** the muon (:math:`G \to 1` as :math:`B_L \to \infty`);
 recovery under a field satisfying :math:`\gamma_\mu B_L\gg\Delta` is consistent
-with static fields, but slow fluctuations (:math:`
-u\ll\Delta`) can also
+with static fields, but slow fluctuations (:math:`\nu\ll\Delta`) can also
 decouple. Field recovery alone does not uniquely establish a static state. For an
 end-to-end walk-through see :doc:`/workflows/lf_decoupling_dynamics`.
 
@@ -40,7 +38,9 @@ The zero-field static Gaussian Kubo–Toyabe function: the foundational
 response of a host in which a static, isotropic, Gaussian-distributed local
 field (typically randomly oriented nuclear moments) dominates. The :math:`1/3` tail is the angular average of the squared spin
 projection
-along the local field; that component does not dephase. The complementary
+along the local field, :math:`\langle\cos^2\theta\rangle=1/3`; that component
+does not dephase. This is an orientation average, not a subset of exactly
+parallel spins. Anisotropic orientations need not give the same tail. The complementary
 transverse projection precesses and dephases into the dip at
 :math:`t=\sqrt{3}/\Delta`.
 The width
@@ -65,6 +65,10 @@ Name       Symbol           Unit   Description
 ``Delta``  :math:`\Delta`   μs⁻¹   Static Gaussian field-distribution width.
 =========  ===============  =====  ===========================================
 
+.. image:: /_generated/screenshots/static_kt_component_help.png
+   :alt: Static Gaussian KT component help defining the component width and angular-average tail
+   :width: 100%
+
 A good seed follows directly from the data: the dip sits at
 :math:`t_{\min} = \sqrt{3}/\Delta`. For :math:`\Delta t\ll1` it agrees to leading
 order with ``Gaussian`` at
@@ -80,10 +84,10 @@ available in the ``MODELS`` registry.
 
 **References**
 
-- R. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
-  R. Blinc (North-Holland, Amsterdam, 1967), p. 810.
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- R\. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
+  R\. Blinc (North-Holland, Amsterdam, 1967), p. 810.
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
 
 .. _fit-lf-kubo-toyabe:
 
@@ -91,12 +95,12 @@ LongitudinalFieldKT
 -------------------
 
 .. image:: /_generated/screenshots/lf_kt_series_plot.png
-   :alt: Overlay of five Ag LF Kubo–Toyabe runs spanning the decoupling regime
+   :alt: Overlay of five generic LF Kubo–Toyabe runs spanning the decoupling regime
    :width: 100%
 
-*Synthetic Ag polycrystal LF series with Δ ≈ 0.39 μs⁻¹ and B_L = 0, 5, 10,
+*Synthetic Gaussian-field LF series with Δ ≈ 0.39 μs⁻¹ and B_L = 0, 5, 10,
 25, 50 G. The 0 G run shows the characteristic 1/3 tail; as B_L grows the
-muon spins decouple from the nuclear dipolar field and the polarisation
+muon spins decouple from the imposed static Gaussian fields and the polarisation
 recovers toward unity.*
 
 .. math::
@@ -115,8 +119,10 @@ the experiment sweeps :math:`B_L` through the decoupling crossover
 :math:`\gamma_\mu B_L \sim \Delta` to extract :math:`\Delta`. The
 :math:`B_L \to 0` limit recovers ``StaticGKT_ZF`` exactly; at large
 :math:`B_L` the polarisation decouples toward unity. If the polarisation does
-not recover with field, the local field is dynamic — use
-``DynamicGaussianKT`` or ``Keren``.
+not recover over the measured field range, consider dynamics as well as
+insufficient field, misalignment, background, and additional components.
+``DynamicGaussianKT`` or ``Keren`` are candidate dynamic models within their
+respective regimes. Recovery alone also permits slow fluctuations.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -188,9 +194,9 @@ A standalone ``LFKuboToyabe`` model is available in the ``MODELS`` registry.
 
 **References**
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
-- A. D. Hillier and R. Cywinski, Appl. Magn. Reson. **13**, 95 (1997).
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
+- A\. D. Hillier and R. Cywinski, Appl. Magn. Reson. **13**, 95 (1997).
 
 .. _fit-dynamic-gaussian-kt:
 
@@ -198,12 +204,12 @@ DynamicGaussianKT
 -----------------
 
 .. image:: /_generated/screenshots/dynamic_kt_rate_series.png
-   :alt: Synthetic Gaussian strong-collision rate sweep at the Ag nuclear-field width
+   :alt: Synthetic Gaussian strong-collision rate sweep at the illustrative Gaussian-field width
    :width: 100%
 
 *An imposed rate sweep at Δ = 0.39 μs⁻¹: ν = 0, 0.1, 0.5, 2, and 20 MHz.
 Intermediate fluctuations relax the tail; fast fluctuations narrow the decay.
-These rates illustrate the model, rather than measured Ag diffusion.*
+These rates illustrate the model, rather than measured diffusion in any material.*
 
 
 The strong-collision (Markovian) dynamic generalisation of the Gaussian
@@ -271,8 +277,8 @@ convergence or statistical coverage.
 
 **References**
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
 
 .. _fit-dynamic-lorentzian-kt:
 
@@ -363,7 +369,7 @@ registry.
 
 **References**
 
-- Y. J. Uemura, T. Yamazaki, D. R. Harshman, M. Senba, and E. J. Ansaldo,
+- Y\. J. Uemura, T. Yamazaki, D. R. Harshman, M. Senba, and E. J. Ansaldo,
   Phys. Rev. B **31**, 546 (1985).
 
 .. _fit-gaussian-broadened-kt:
@@ -415,9 +421,9 @@ the dip and soften the tail, and a single spectrum rarely distinguishes them
    :alt: Synthetic Gaussian-width distributions at zero and longitudinal field
    :width: 100%
 
-   *Synthetic width distributions at the Ag nuclear-field scale. The imposed
+   *Synthetic width distributions at the illustrative Gaussian-field scale. The imposed
    broadening illustrates a distribution of static widths, rather than a
-   measurement of disorder in Ag.*
+   measurement of disorder in a material.*
 
 The numerical target is absolute error :math:`\leq10^{-5}` in normalised
 polarisation. Sampled checks cover :math:`0\leq w_\Delta\leq1`,
@@ -538,4 +544,4 @@ minimum step. No native WiMDA dynamic comparison is asserted.
   <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#the-theory-block>`_.
 - `Mantid DynamicKuboToyabe documentation
   <https://docs.mantidproject.org/v6.10.0/fitting/fitfunctions/DynamicKuboToyabe.html>`_.
-- D. R. Noakes and G. M. Kalvius, Phys. Rev. B **56**, 2352 (1997).
+- D\. R. Noakes and G. M. Kalvius, Phys. Rev. B **56**, 2352 (1997).

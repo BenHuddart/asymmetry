@@ -3,6 +3,8 @@
 Alpha calibration
 =================
 
+.. index:: !alpha calibration
+
 The measured forward/backward asymmetry
 
 .. math::
@@ -747,14 +749,14 @@ acquired physical alpha truth, a universal default, or uncertainty coverage.
 - `musrfit Single Histograms tutorial
   <https://musruser.psi.ch/Tutorial/Tutorial2.html>`_, global histogram
   calibration and shared geometric parameters.
-- S. Baker and R. D. Cousins, Nucl. Instrum. Methods Phys. Res. **221**, 437 (1984),
+- S\. Baker and R. D. Cousins, Nucl. Instrum. Methods Phys. Res. **221**, 437 (1984),
   `doi:10.1016/0167-5087(84)90016-4 <https://doi.org/10.1016/0167-5087(84)90016-4>`_.
 - `CERN Minuit2 manual <https://root.cern.ch/root/htmldoc/guides/minuit2/Minuit2.html>`_,
   function normalisation, HESSE, and MINOS.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-- F. L. Pratt, Physica B **289–290**, 710 (2000).
-- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+- F\. L. Pratt, Physica B **289–290**, 710 (2000).
+- A\. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance: Applications to Condensed Matter* (Oxford University Press,
   Oxford, 2011).
 
@@ -767,11 +769,11 @@ acquired physical alpha truth, a universal default, or uncertainty coverage.
    <https://scikit-hep.org/iminuit/notebooks/hesse_and_minos.html>`_,
    curvature, profile intervals, and asymptotic coverage.
 
-.. [simulation] T. P. Morris, I. R. White, and M. J. Crowther,
+.. [simulation] T\. P. Morris, I. R. White, and M. J. Crowther,
    Stat. Med. **38**, 2074 (2019),
    `doi:10.1002/sim.8086 <https://doi.org/10.1002/sim.8086>`_.
 
-.. [roundoff] N. J. Higham, *Accuracy and Stability of Numerical Algorithms*,
+.. [roundoff] N\. J. Higham, *Accuracy and Stability of Numerical Algorithms*,
    2nd ed. (SIAM, Philadelphia, 2002), Sec. 3.1.
 
 Stored calibration meaning
@@ -792,11 +794,13 @@ Explicit workflow and CLI calibration
 -------------------------------------
 
 Scripts can choose calibration count packing independently of science reduction
-through ``CalibrationOptions.count_packing``:
+through ``CalibrationOptions.count_packing``. This example requires your own
+``calibration.nxs`` and ``science.nxs`` files, the appropriate reader extras,
+and a transverse-field calibration signal:
 
 .. code-block:: python
 
-   from asymmetry import load
+   from asymmetry.core.io import load
    from asymmetry.core.workflow import (
        CalibrationOptions, ReductionSettings, calibrate_run, reduce_run,
    )
@@ -812,7 +816,7 @@ through ``CalibrationOptions.count_packing``:
    )
    # Apply the captured joint coefficients to a separate science run.
    from dataclasses import replace
-   science = load("science.nxs")
+   science = load("science.nxs", period=1)
    reduced = reduce_run(science.run, replace(science_settings, alpha=calibration.record))
 
 The factor must be a positive integer; booleans and non-integral values are

@@ -428,15 +428,15 @@ Worked example — α from a TF calibration run
 References
 ----------
 
-* S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+* S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford,
   2022) —
   the count equation N(t) = N₀·e^(−t/τ)(1 + A·P(t)) + B, the detector-balance
   parameter α, and the Poisson nature of detector counts.
-* A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, the
+* A\. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, the
   single-histogram (*fittype 0*) count fit and its cost options.
 
-.. [Knoll] G. F. Knoll, *Radiation Detection and Measurement*, 4th ed.
+.. [Knoll] G\. F. Knoll, *Radiation Detection and Measurement*, 4th ed.
    (Wiley, 2010), Chapter 4, “Dead Time”.
 
 Compared with other programs
@@ -490,6 +490,6 @@ twice. F/B fits explicitly evaluate HESSE before optional MINOS. The fixed/free
 beta TF calibration API is described in :doc:`data_reduction/alpha_calibration`
 and :doc:`/api/fitting/calibration`.
 
-.. [baker_cousins] S. Baker and R. D. Cousins, Nuclear Instruments and Methods
+.. [baker_cousins] S\. Baker and R. D. Cousins, Nuclear Instruments and Methods
    **221**, 437–442 (1984), `doi:10.1016/0167-5087(84)90016-4
    <https://doi.org/10.1016/0167-5087(84)90016-4>`_.

@@ -385,6 +385,7 @@ def _import_scenarios() -> None:
         run_info_provenance,
         sc_gap_component_info,
         scalar_rrf_magnitude,
+        scientific_component_help,
         signed_deadtime,
         simulate_dialog,
         single_fit_saved_fits,

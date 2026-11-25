@@ -64,7 +64,8 @@ reject Sphinx warnings (`-W --keep-going`), preserve process/extension failure
 exits, and check every output HTML page against the 600 KB budget. Missing
 logos, static images, downloads, unknown generated names, malformed RST,
 ambiguous or broken authored local/API references, and unknown/untyped warnings
-are errors. No warning category or historical warning count is exempted.
+are errors. The gate also rejects literal math roles in prose and alphabetic
+lists in footnotes and citations, where unescaped author initials can become list markers. No warning category or historical warning count is exempted.
 
 ### Offline references and API rendering
 
@@ -93,6 +94,58 @@ return descriptions, including their types and units, render as readable fields
 rather than generated type-link lists. Authored cross-reference roles remain strict.
 The gate checks authored references, not the completeness of annotation targets.
 An offline HTML build does not bundle the browser-side MathJax CDN resource.
+
+### Source identity and page layout
+
+The sidebar identifies the imported checkout. A clean checkout at its matching
+release tag displays the release number; other clean commits display
+``development`` and the commit identifier. API source links use that exact commit,
+with line numbers from the imported files. A modified checkout or a source archive
+without Git identity is labelled explicitly and has no API source links. Build
+from a clean checkout to verify links intended for publication.
+
+Local image dimensions are read from the built assets and written into HTML so
+browsers can reserve the correct aspect ratio before loading them. Percentage
+widths remain responsive. The sidebar logo loads eagerly; content figures load
+lazily. Tables wrap explanatory text within the theme's scrolling containers.
+Review narrow viewports and enlarged text whenever a table or figure changes.
+
+### Browser checks and search relevance
+
+After a publishing build, serve the HTML and measure it with Node.js 22 or newer
+and Chrome/Chromium installed:
+
+```bash
+python3 -m http.server 8000 --directory docs/_build/html
+# In another terminal:
+node tools/docs_browser.mjs --base-url http://127.0.0.1:8000/ --check --output browser.json
+```
+
+Use the published site URL to measure hosted behaviour. ``--chrome chromium``
+selects another browser executable; ``--page reference/fourier_analysis.html``
+limits a run to a page and may be repeated. The default is three cold/warm pairs
+per page in a fresh browser profile, at 1440 × 1000 and 390 × 844 CSS pixels. Cold clears the HTTP cache;
+warm immediately repeats the URL with caching enabled. CPU and network are
+unthrottled, so record the machine and connection separately when comparing runs.
+
+The JSON report separates HTML transfer and encoded body size, DOM readiness, paint, initiated requests,
+startup layout shifts, font/mathematics readiness, and first/finished search
+results. Layout-shift and paint observations end 250 ms after content readiness;
+they do not describe later scrolling or interaction. A null load time means the
+browser's load event has not completed. A command deadline is a measurement
+failure, not evidence of a site-rendering delay; partial reports are retained and
+marked incomplete. Hosted transfer and local rendering measurements are not
+interchangeable. Compare repeated medians under matching conditions, without
+promising a universal loading time.
+
+``--check`` rejects page overflow, visible math-role syntax, MathJax errors,
+incomplete font/mathematics preparation, and misplaced practical search results.
+``--expect-revision <commit>`` also checks the published source identity. Ordinary
+main index entries in the owning reference pages make ``deadtime``, ``grouping``,
+and ``alpha calibration`` searches lead to guidance. Exact dotted API queries
+retain access to API material. Search results show titles and section headings;
+they do not fetch full matching pages to generate snippets. The search regression executes Sphinx's emitted
+engine and index, rather than reproducing its scoring rules.
 
 ### Development builds and other formats
 
@@ -165,7 +218,7 @@ A scenario is a small `Scenario` subclass (see `screenshots/scenarios/_base.py`)
 registered in `capture.py::_import_scenarios()`. House rules:
 
 - **Deterministic**: seed every RNG; build synthetic data from
-  `screenshots/data/archetypes.py` (physically grounded presets — EuO, Ag,
+  `screenshots/data/archetypes.py` (material-inspired and generic presets — EuO, Gaussian fields,
   MgB₂, YBCO, PbF₂) so the physics in the figure is defensible.
 - **Cropped**: frame the panel or dialog the prose discusses, not the whole
   main window, and never ship a figure with large empty regions — an empty
@@ -244,7 +297,7 @@ Code example:
 
 .. code-block:: python
 
-   from asymmetry import load
+   from asymmetry.core.io import load
    dataset = load("data.nxs")
 ```
 
@@ -332,7 +385,7 @@ The documentation uses:
 
 - `sphinx.ext.autodoc` - Auto-generate API docs from docstrings
 - `sphinx.ext.napoleon` - Support NumPy/Google style docstrings
-- `sphinx.ext.linkcode` - Point `[source]` links at the released source on GitHub
+- `sphinx.ext.linkcode` - Point `[source]` links at the matching source revision on GitHub
   (replaced `sphinx.ext.viewcode`, whose self-hosted `_modules/` pages added
   ~15 MB of very slow-rendering HTML)
 - `sphinx.ext.intersphinx` - Link to other project docs

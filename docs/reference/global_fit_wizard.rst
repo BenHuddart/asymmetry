@@ -126,7 +126,7 @@ Scope: review the series and choose scope
    :alt: Global Fit Wizard Scope step — series overview, the model family picker with a Longitudinal answer, and the Run screening button
    :width: 100%
 
-*The Scope step on a four-field Ag longitudinal-field decoupling series. The*
+*The Scope step on a four-field generic longitudinal-field decoupling series. The*
 *Series table lists each run as soon as the context arrives; the classification*
 *columns stay* ``—`` *until screening runs. Below it, the Scope section holds the*
 *model family picker: the files record no field direction, so the series was*
@@ -257,7 +257,7 @@ the step shows the family leaderboard.
    :alt: Global Fit Wizard Screen step — the family leaderboard with per-run reduced chi-squared cells beside a preview of the leading family's fits
    :width: 100%
 
-*The Screen step after screening the Ag decoupling series with three*
+*The Screen step after screening the generic decoupling series with three*
 *Kubo–Toyabe models and the generic relaxation families in scope. Only three*
 *families survive to be scored. Longitudinal-field KT + Constant leads with every*
 *run's χ²ᵣ graded good. The dynamic and broadened KT families trail by about*
@@ -439,7 +439,7 @@ Best statistical fit: the role splits
    :width: 100%
 
 *The Compare step under* **Best statistical fit** *after a coupled optimisation*
-*of Longitudinal-field KT + Constant on an Ag decoupling series at 0, 5, 10*
+*of Longitudinal-field KT + Constant on a generic decoupling series at 0, 5, 10*
 *and 25 G. A is the recommended split, with Δ shared and* :math:`B_L` *per run.*
 *B, pinned dashed, frees Δ per run as well. It fits every run as closely by eye*
 *and passes every check, but its three extra parameters buy nothing: it scores*
@@ -1232,12 +1232,12 @@ establish an equivalent global model-search algorithm. See
 References
 ----------
 
-* R. Killick, P. Fearnhead, and I. A. Eckley, J. Am. Stat. Assoc. **107**,
+* R\. Killick, P. Fearnhead, and I. A. Eckley, J. Am. Stat. Assoc. **107**,
   1590 (2012) — optimal partitioning of a series with a penalised cost, the
   basis of the penalty path.
-* N. R. Zhang and D. O. Siegmund, Biometrics **63**, 22 (2007) — a
+* N\. R. Zhang and D. O. Siegmund, Biometrics **63**, 22 (2007) — a
   BIC-type criterion for choosing the number of change points.
-* K. P. Burnham and D. R. Anderson, *Model Selection and Multimodel
+* K\. P. Burnham and D. R. Anderson, *Model Selection and Multimodel
   Inference: A Practical Information-Theoretic Approach*, 2nd ed. (Springer,
   New York, 2002) — Akaike weights and the rule of thumb that a model more
   than 10 information units behind the best has essentially no support.

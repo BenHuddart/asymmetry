@@ -1,6 +1,18 @@
 F–µ–F entangled states: measuring a bond length with muons
 ==========================================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own zero-field fluoride spectra with sufficient time resolution to
+   resolve the beating, plus an instrument calibration. The PTFE run numbers and
+   bond-length fits below identify the demonstration. Check that an F–µ–F model
+   is appropriate for your sample, then choose the time window and additional
+   relaxation or background terms from your own data.
+
 Most muon-spin experiments read out a *field* — the internal field of a magnet,
 the width of a nuclear-dipolar distribution, the penetration depth of a
 superconductor. This chapter does something different: it reads out a *distance*.
@@ -57,7 +69,7 @@ dipolar coupling frequency* — and hence :math:`r_{\mu F}`.
 The runs
 --------
 
-The corpus example ships 30 MuSR runs collected on 22–23 April 2008 on a Teflon
+The corpus example contains 30 MuSR runs collected on 22–23 April 2008 on a Teflon
 sample. One is a transverse-field calibration run; the rest are a zero-field
 temperature scan.
 
@@ -289,20 +301,20 @@ Assumptions and limitations
 References
 ----------
 
-- J. H. Brewer, S. R. Kreitzman, D. R. Noakes, E. J. Ansaldo, D. R. Harshman, and
-  R. Keitel, Phys. Rev. B **33**, 7813 (1986) — the discovery of the F–µ–F
+- J\. H. Brewer, S. R. Kreitzman, D. R. Noakes, E. J. Ansaldo, D. R. Harshman, and
+  R\. Keitel, Phys. Rev. B **33**, 7813 (1986) — the discovery of the F–µ–F
   "hydrogen-bonded" centre in ionic fluorides, and the collinear three-spin
   polarisation function used here (:math:`r_{\mu F} = 1.172` Å in CaF₂).
-- T. Lancaster, F. L. Pratt, S. J. Blundell, I. McKenzie, and H. E. Assender, J.
+- T\. Lancaster, F. L. Pratt, S. J. Blundell, I. McKenzie, and H. E. Assender, J.
   Phys.: Condens. Matter **21**, 346004 (2009) — muon–fluorine entanglement in
   fluoropolymers, the modern treatment of the F–µ–F state in PTFE and related
   materials.
-- F. L. Pratt, S. J. Blundell, I. M. Marshall, T. Lancaster, A. Husmann, C.
+- F\. L. Pratt, S. J. Blundell, I. M. Marshall, T. Lancaster, A. Husmann, C.
   Steer, W. Hayes, C. Fischmeister, R. E. Martin, and A. B. Holmes, Physica B
   **326**, 34 (2003) — µSR in polymers.
-- K. Nishiyama, S. W. Nishiyama, and W. Higemoto, Physica B **326**, 41 (2003) —
+- K\. Nishiyama, S. W. Nishiyama, and W. Higemoto, Physica B **326**, 41 (2003) —
   the asymmetric F–µ–F interaction in polyfluorocarbons.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
   An Introduction* (Oxford University Press, Oxford, 2022) — nuclear dipolar
   coupling and F–µ–F states.
 

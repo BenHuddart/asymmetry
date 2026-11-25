@@ -166,18 +166,19 @@ keywords, without hand-building a new :class:`~asymmetry.core.simulate.Instrumen
 The archetype gallery
 ---------------------
 
-**When to use this.** A one-click route to a physically realistic dataset for
-a named material, for teaching or for a sanity check that the analysis chain
+**When to use this.** A one-click route to an idealised dataset illustrating
+a model or material-inspired behaviour, for teaching or for a sanity check that the analysis chain
 reproduces textbook behaviour. **File → Simulate Preset** lists each
 archetype; choosing one generates a badged synthetic run (or a whole scan)
 from a fixed seed, so the same preset always yields the same data.
 
 The presets and the physics they carry:
 
-* **Ag — ZF Gaussian Kubo–Toyabe.** The canonical static nuclear-dipolar
-  reference, :math:`\Delta = 0.39` μs\ :sup:`-1`.
-* **Ag — LF decoupling series.** The same Kubo–Toyabe in longitudinal fields
-  of 0, 10, 25 and 50 G, the textbook test that the dipolar fields are static.
+* **Generic — ZF Gaussian Kubo–Toyabe.** Static isotropic Gaussian local
+  fields with an illustrative :math:`\Delta = 0.39` μs\ :sup:`-1`.
+* **Generic — LF decoupling series.** The same static field distribution in
+  longitudinal fields of 0, 10, 25, and 50 G. The suppression of relaxation
+  illustrates static-model decoupling; it is not a material measurement.
 * **EuO — ferromagnet through T**\ :sub:`c`. A zero-field temperature scan
   across :math:`T_c = 69` K: below it the muon precesses at a frequency that
   tracks the magnetic order parameter :math:`(1 - T/T_c)^\beta`; above it the
@@ -188,11 +189,16 @@ The presets and the physics they carry:
   a 200 G transverse field.
 
 Because each preset is a real synthetic run, you can refit it and recover the
-input physics. Fitting the Ag preset, for instance, returns
+input physics. Fitting the generic ZF preset, for instance, returns
 :math:`\Delta = 0.389(1)` μs\ :sup:`-1`, and the F-μ-F preset returns
 :math:`r_{\mu\mathrm{F}} = 1.170(1)` Å — the generating values, within the
-counting errors. The parameter values follow Blundell *et al.* (see the
-references); the preset tooltips name the relevant chapter.
+counting errors. The KT width is a teaching choice, with no material attribution.
+:math:`\Delta = \gamma_\mu B_{\mathrm{rms},i}` uses the standard deviation of
+one Cartesian field component and the angular gyromagnetic ratio (see
+:doc:`fit_functions/kubo_toyabe`). The references describe the model physics;
+they do not establish every chosen numerical parameter as a measured value.
+The stable script identifiers ``ag_zf_kt`` and ``ag_lf_decoupling`` select
+these generic presets; their spelling does not specify a sample composition.
 
 Multi-group simulation
 ----------------------
@@ -446,7 +452,7 @@ scan family), badged and ready to plot or fit:
 
    from asymmetry.core.simulate_presets import build_preset_runs
 
-   ag = build_preset_runs("ag_zf_kt")[0]          # single run
+   generic = build_preset_runs("ag_zf_kt")[0]          # single run
    euo_scan = build_preset_runs("euo_tscan")      # five temperatures
 
 Count-mode and two-period synthesis have their own entry points. Count-mode
@@ -523,13 +529,13 @@ above.
 References
 ----------
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford,
   2022), Chs. 14–15.
-- F. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose Simulate
+- F\. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose Simulate
   and Degrade Statistics tools this feature parallels.
 
-.. [pdg-pulls] G. Cowan and L. Lista, Particle Data Group, *Statistics* (2025),
+.. [pdg-pulls] G\. Cowan and L. Lista, Particle Data Group, *Statistics* (2025),
    Secs. 40.2 and 40.4,
    `PDG review <https://pdg.lbl.gov/2025/reviews/rpp2025-rev-statistics.pdf>`_.
 

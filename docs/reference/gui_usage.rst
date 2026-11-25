@@ -1,12 +1,26 @@
 GUI usage
 =========
 
-This chapter is the comprehensive reference for the Asymmetry GUI — menus,
-panels, dialogs, keyboard shortcuts. New users coming from a real
-experiment should normally read :doc:`/workflows/index` first and dip into
-this chapter as a lookup when the case studies reference a specific
-dialog; the section headings below are organised for that kind of
-targeted navigation rather than for cover-to-cover reading.
+Use this page to find a desktop control or a route through the main window.
+For a complete first analysis, follow the :doc:`/getting_started/quickstart`;
+for the scientific choices behind a measurement, use :doc:`/workflows/index`.
+This reference keeps the detailed controls below the common tasks.
+
+Find your task
+--------------
+
+* `Loading data`_ and `Data Browser features`_ — open files, select runs, and
+  organise a series.
+* `Grouping and bunching`_ — reach the grouping controls; the
+  :doc:`grouping walkthrough <grouping_calibration>` explains calibration.
+* `Fitting panel`_ — fit one run or a series; :doc:`assessing_a_fit` explains
+  how to check a result.
+* :doc:`fourier_analysis` — compute and interpret frequency spectra.
+* `Fit Parameters panel`_ — plot fitted values across a scan; use
+  :doc:`parameter_trending` for the trend controls and model choices.
+* `Main plot labels and export`_ and `Exporting data`_ — save a plot or a
+  parameter table.
+* `Saving and reopening projects`_ — keep an analysis with its source files.
 
 Launching the GUI
 -----------------
@@ -44,6 +58,41 @@ The main window has four main areas:
 2. **Plot Panel** (centre): Interactive plot display
 3. **Analysis Panels** (right): Fit and Fourier controls
 4. **Log Panel** (bottom): Status messages and command history
+
+Analysis workflows
+------------------
+
+Basic analysis
+~~~~~~~~~~~~~~
+
+1. Load your files and select a run in the **Data Browser**.
+2. Check metadata, grouping, timing, and corrections with
+   :doc:`grouping_calibration`.
+3. Inspect the plot, fit a model, and check its residuals and uncertainties.
+4. Save the project and keep the source files with it. The
+   :doc:`/getting_started/quickstart` walks through this complete route.
+
+Comparing runs
+~~~~~~~~~~~~~~
+
+1. Filter by temperature or field, then select the runs to compare.
+2. Use **Overlay** or `Waterfall stacking`_ to inspect their differences.
+3. If you need to combine compatible measurements, follow :doc:`run_arithmetic`
+   and its acquisition and calibration requirements.
+
+Temperature series
+~~~~~~~~~~~~~~~~~~
+
+1. Sort by temperature column
+2. Step through runs in order
+3. Filter by field to isolate specific conditions
+
+Field series
+~~~~~~~~~~~~
+
+1. Sort by field column
+2. Step through runs in order
+3. Filter by temperature for isothermal scans
 
 Loading data
 ------------
@@ -521,10 +570,10 @@ Waterfall stacking
 ~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/waterfall_overlay.png
-   :alt: Waterfall-stacked time-domain overlay of an Ag LF decoupling series
+   :alt: Waterfall-stacked time-domain overlay of a generic LF decoupling series
    :width: 100%
 
-*The same five-field Ag LF Kubo–Toyabe decoupling series as the*
+*The same five-field generic LF Kubo–Toyabe decoupling series as the*
 :doc:`LF decoupling walkthrough </workflows/lf_decoupling_dynamics>`, *now with*
 **Waterfall** *enabled: each field's trace is shifted onto its own baseline*
 *instead of sharing one axis with the rest.*
@@ -910,20 +959,19 @@ compiler is used. Generation and compilation run in the background; **Close**
 cancels an active export. Without GLE, the script and sidecars are still saved.
 
 .. image:: /_generated/screenshots/gle_plot_preview.png
-   :alt: Zoomable vector preview of a synthetic ZF Ag plot
+   :alt: Zoomable vector preview of a synthetic ZF generic plot
    :width: 100%
 
 Fitting panel
 -------------
 
 .. image:: /_generated/screenshots/fit_wizard_gkt.png
-   :alt: Single-dataset fit with a converged Gaussian Kubo–Toyabe model on Ag
+   :alt: Single-dataset fit with a converged Gaussian Kubo–Toyabe model on generic fields
    :width: 100%
 
-*Converged static Gaussian Kubo–Toyabe fit on a synthetic ZF Ag polycrystal*
-*dataset (Δ ≈ 0.39 μs⁻¹). Ag is the canonical nuclear-dipolar reference*
-*sample at every μSR facility; the GKT function (Kubo & Toyabe, 1966) is*
-*derived in Blundell et al. Ch 5.2.*
+*Converged static Gaussian Kubo–Toyabe fit on a synthetic ZF Gaussian-field*
+*dataset with an illustrative Δ ≈ 0.39 μs⁻¹. The model assumes static,*
+*isotropically distributed Gaussian local fields; no material is specified.*
 
 The fitting panel provides an interactive interface for fitting models to your data.
 It is located in the right dock area next to the plot panel, with a **Single**
@@ -1108,7 +1156,7 @@ them.
       saved fits window ranking three fits of one run by AICc
    :width: 100%
 
-*Three saved fits of one synthetic ZF Ag run (Δ ≈ 0.39 μs⁻¹). Left: the*
+*Three saved fits of one synthetic ZF generic run (Δ ≈ 0.39 μs⁻¹). Left: the*
 *Single tab's* **Saved fits** *row, naming the open fit. Right: the Compare*
 *window, which ranks the two fits over 0.05–8 μs against each other and lists*
 *the Kubo–Toyabe fit over 0.5–6 μs without a Δ, because it saw different data.*
@@ -1429,10 +1477,10 @@ Global parameter fit window
 ---------------------------
 
 .. image:: /_generated/screenshots/global_fit_lfkt.png
-   :alt: Global fit setup for an Ag LF Kubo–Toyabe field-decoupling series
+   :alt: Global fit setup for a generic LF Kubo–Toyabe field-decoupling series
    :width: 100%
 
-*Global-fit setup on a synthetic Ag LF-KT decoupling series, B_L = 0, 15,*
+*Global-fit setup on a synthetic generic LF-KT decoupling series, B_L = 0, 15,*
 *50, and 100 G with shared Δ ≈ 0.39 μs⁻¹. The longitudinal field decouples*
 *the nuclear dipolar broadening as γ_μB_L/Δ grows past unity (Hayano et al.,*
 *Phys. Rev. B 20, 850 (1979); cf. Blundell et al. 2022, Fig. 5.6).*
@@ -1578,39 +1626,6 @@ Both global-fit export buttons use the same foldered layout, so the exported
 Both global and local export dialogs remember the last export directory and use
 it as the default location next time.
 
-Analysis workflows
-------------------
-
-Basic analysis
-~~~~~~~~~~~~~~
-
-1. Load data files
-2. Sort by field or temperature
-3. Select and view different runs
-4. Adjust plot limits for detailed inspection
-5. Apply bunching to reduce noise if needed
-
-Comparing runs
-~~~~~~~~~~~~~~
-
-1. Filter by temperature or field
-2. Click through filtered runs to compare
-3. Use co-adding to average similar runs
-
-Temperature series
-~~~~~~~~~~~~~~~~~~
-
-1. Sort by temperature column
-2. Step through runs in order
-3. Filter by field to isolate specific conditions
-
-Field series
-~~~~~~~~~~~~
-
-1. Sort by field column  
-2. Step through runs in order
-3. Filter by temperature for isothermal scans
-
 UI scale
 --------
 
@@ -1657,9 +1672,10 @@ Tips and tricks
 Saving and reopening projects
 ------------------------------
 
-A *project file* (``.asymp``) saves the complete state of your analysis
-session.  You can close Asymmetry and resume exactly where you left off, or
-maintain several independent analyses side-by-side.
+A project file (``.asymp``) records analysis settings and results while referring
+to external acquisition files. Save it to resume an analysis or keep several
+independent analyses in separate tabs. See :doc:`project_files` for the stored
+content and restoration rules.
 
 Creating and saving
 ~~~~~~~~~~~~~~~~~~~~
@@ -1676,22 +1692,17 @@ Creating and saving
 Unsaved-changes guard
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Hours of grouping, fitting, and trend work live in memory until you save, so
-Asymmetry tracks whether each project tab holds unsaved work and refuses to
-drop it silently. A ``*`` on the tab label, and in the window title for the
-active tab, marks a modified project. Closing that tab — via **File → Close
-Project**, its ``×``, or **File → Exit** — first raises a **Save / Discard /
-Cancel** prompt for it. Choosing **Cancel** aborts the action — for **Exit**,
-this aborts the whole quit and leaves every tab open, including any already
-confirmed; **Save** writes the project (choosing a location if none is set
-yet) before proceeding. The flag is set by every mutating action — data load
-and removal, grouping edits, each fit completion, trend-series rename or
-delete, ALC scan builds, and custom-column edits — and cleared on a successful
-save. **New Project**, **Open Project…**, and **Recent Projects** never raise
-this prompt: they open a new tab (or reuse an untouched, empty one) instead of
-discarding the current project, so opening or starting a project always
-begins from a clean tab without disturbing your other work — see `Working
-with several projects`_ below.
+A ``*`` on a project's tab and window title marks unsaved work, including
+loaded or removed data, changed settings, completed fits, and edited trends.
+Closing that tab with **File → Close Project** or its **×** asks you to
+**Save**, **Discard**, or **Cancel**. **Save** writes the project before
+closing; **Cancel** keeps the tab open.
+
+**File → Exit** asks about each modified project. **Cancel** stops the whole
+exit and leaves every tab open, including those already confirmed.
+**New Project**, **Open Project…**, and **Recent Projects** retain your other
+work by using a new or untouched empty tab. See `Working with several projects`_
+for the tab controls.
 
 Opening a project
 ~~~~~~~~~~~~~~~~~~
@@ -1705,21 +1716,11 @@ Both open the project into the current tab when that tab is an untouched,
 empty project — no datasets loaded, no unsaved changes, never saved — and
 otherwise open it in a new tab, leaving the current tab exactly as it was.
 
-On open, every source data file referenced by the project is reloaded
-from disk.  Asymmetry tries paths in this order:
-
-1. The absolute path stored in the project file
-2. A path relative to the ``.asymp`` file itself (useful when the whole
-   analysis folder is moved together)
-3. If files are still missing, a dialog offers to **locate a directory** —
-   choose the folder where the data files now live, and Asymmetry will match
-   each missing file by filename
-
-This means you can move an entire analysis folder, or just redirect to a
-new data location, without losing your session state.
-
-If a source file cannot be found even after the search, Asymmetry logs a
-warning and skips that dataset — the rest of the session is restored normally.
+Keep the acquisition files and any reference-background files with the project.
+The :doc:`project-file reference <project_files>` explains the source search,
+content-verification, and missing-input rules. It explains **Locate Data
+Directory**, decisions for changed files, and partially restored projects.
+A matching filename alone does not establish that a source is unchanged.
 
 Working with several projects
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1796,8 +1797,6 @@ What is **not** saved
 Schema versioning
 ~~~~~~~~~~~~~~~~~
 
-The ``.asymp`` format uses an integer *schema version* that is independent of
-the Asymmetry package version.  Project files from older releases will be
-migrated automatically when opened in a newer release.  If a project file
-requires a schema version that the installed Asymmetry version does not
-understand, an error dialog is shown and the file is not loaded.
+The :doc:`project-file reference <project_files>` explains the schema compatibility
+rules. Supported older files migrate on opening; a schema newer than the
+installed application is rejected with an error rather than partially read.

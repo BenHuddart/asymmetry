@@ -122,8 +122,34 @@ def generated_images(app, doctree):
         )
 
 
+def rendered_markup(app, doctree):
+    """Reject valid RST that accidentally exposes role syntax or initial lists."""
+    for node in doctree.findall(nodes.Text):
+        if ":math:`" in str(node) and not isinstance(
+            node.parent, (nodes.literal, nodes.literal_block)
+        ):
+            logger.warning(
+                "Literal math role in prose; separate mathematics from emphasis",
+                location=node.parent,
+                type="docs",
+                subtype="markup",
+            )
+    for reference in doctree.findall(
+        lambda node: isinstance(node, (nodes.footnote, nodes.citation))
+    ):
+        for node in reference.findall(nodes.enumerated_list):
+            if node["enumtype"] in ("upperalpha", "loweralpha"):
+                logger.warning(
+                    "Alphabetic list in a reference; escape the first author initial",
+                    location=node,
+                    type="docs",
+                    subtype="markup",
+                )
+
+
 def setup(app):
     app.add_config_value("docs_build_mode", "source", "env", types=[str])
     app.connect("config-inited", configure, priority=100)
     app.connect("doctree-read", generated_images, priority=100)
+    app.connect("doctree-read", rendered_markup)
     return {"parallel_read_safe": True, "parallel_write_safe": True}

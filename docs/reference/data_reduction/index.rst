@@ -5,6 +5,10 @@
 Data reduction
 ==============
 
+Start with the :doc:`interactive counts-to-result guide
+</explanation/reduction_pipeline>` to trace an observable back to its detector
+counts, then use these pages for the exact settings and limits.
+
 These pages document the reduction layer between the raw detector histograms
 and the asymmetry curve: detector balancing (alpha), background handling,
 histogram binning, time-zero determination, detector exclusion and

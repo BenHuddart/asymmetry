@@ -169,19 +169,19 @@ its resonance fitting.
 References
 ----------
 
-.. [1] M. I. Eides, Phys. Lett. B **795**, 113 (2019), eq. (2).
+.. [1] M\. I. Eides, Phys. Lett. B **795**, 113 (2019), eq. (2).
    `doi:10.1016/j.physletb.2019.06.011 <https://doi.org/10.1016/j.physletb.2019.06.011>`_.
 
-.. [2] R. Kadono and T. U. Ito, J. Phys. Soc. Jpn. **94**, 064601 (2025),
+.. [2] R\. Kadono and T. U. Ito, J. Phys. Soc. Jpn. **94**, 064601 (2025),
    eq. (4) with anisotropic and nuclear couplings set to zero.
    `doi:10.7566/JPSJ.94.064601 <https://doi.org/10.7566/JPSJ.94.064601>`_.
 
-- I. McKenzie, Annu. Rep. Prog. Chem. Sect. C **109**, 65 (2013).
-- I. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
-  J. Phys. Chem. B **117**, 13614 (2013).
-- F. L. Pratt, Physica B **289–290**, 710 (2000).
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+- I\. McKenzie, Annu. Rep. Prog. Chem. Sect. C **109**, 65 (2013).
+- I\. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
+  J\. Phys. Chem. B **117**, 13614 (2013).
+- F\. L. Pratt, Physica B **289–290**, 710 (2000).
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-- A. D. Hillier, S. J. Blundell, *et al.*, Nat. Rev. Methods Primers **2**, 4 (2022).
+- A\. D. Hillier, S. J. Blundell, *et al.*, Nat. Rev. Methods Primers **2**, 4 (2022).
 
 .. |muSR| replace:: μSR

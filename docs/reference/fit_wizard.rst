@@ -55,7 +55,7 @@ need to click Analyze again.
    :alt: Fit Wizard result page — answer card with the recommended fit above the Compare candidates section, with the recommendation as A and a second candidate pinned as B
    :width: 100%
 
-*The wizard's result page on a synthetic ZF Ag polycrystal dataset: the answer*
+*The wizard's result page on a synthetic ZF Gaussian-field dataset: the answer*
 *card gives the plain-language verdict, a confidence grade, and the data with*
 *the recommended fit overlaid. Below it, the Compare candidates section ranks*
 *every candidate and sets the recommendation (A) against a pinned alternative*
@@ -113,7 +113,7 @@ run; the same picker drives the :doc:`global_fit_wizard`.
    :alt: Fit Wizard welcome page — the model family picker with a Zero field answer above the Analyze button
    :width: 100%
 
-*The welcome page on the synthetic ZF Ag run. The file records no field*
+*The welcome page on the synthetic ZF generic run. The file records no field*
 *direction, so the direction was answered "Zero field", and the TF- and*
 *LF-only models are listed under their cards as not applying. The details panel*
 *shows the static Gaussian Kubo–Toyabe model, and the footer names the six slow*
@@ -946,17 +946,17 @@ similarly.
 
 .. figure:: /_generated/screenshots/fit_ratio_omissions.png
    :width: 100%
-   :alt: Omission counts and unavailable residual diagnostics for a sparse synthetic Ag fit.
+   :alt: Omission counts and unavailable residual diagnostics for a sparse synthetic generic fit.
 
-   Sparse Ag control with an authored fixed-background sensitivity operation.
+   Sparse generic fields control with an authored fixed-background sensitivity operation.
    The fit keeps usable signed observations; the display retains the full grid.
    Omission counts and unavailable residual diagnostics belong to the core result.
 
-.. [aic_primary] H. Akaike, IEEE Trans. Autom. Control **19**, 716–723 (1974),
+.. [aic_primary] H\. Akaike, IEEE Trans. Autom. Control **19**, 716–723 (1974),
    `doi:10.1109/TAC.1974.1100705 <https://doi.org/10.1109/TAC.1974.1100705>`_.
-.. [aicc_primary] C. M. Hurvich and C.-L. Tsai, Biometrika **76**, 297–307 (1989),
+.. [aicc_primary] C\. M. Hurvich and C.-L. Tsai, Biometrika **76**, 297–307 (1989),
    `doi:10.1093/biomet/76.2.297 <https://doi.org/10.1093/biomet/76.2.297>`_;
-   N. Sugiura, Commun. Stat. Theory Methods **7**, 13–26 (1978),
+   N\. Sugiura, Commun. Stat. Theory Methods **7**, 13–26 (1978),
    `doi:10.1080/03610927808827599 <https://doi.org/10.1080/03610927808827599>`_.
-.. [bic_primary] G. Schwarz, Ann. Statist. **6**, 461–464 (1978),
+.. [bic_primary] G\. Schwarz, Ann. Statist. **6**, 461–464 (1978),
    `doi:10.1214/aos/1176344136 <https://doi.org/10.1214/aos/1176344136>`_.
