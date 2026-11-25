@@ -805,10 +805,14 @@ run; an interior parameter remains eligible. Fixed parameters are not counted
 as fitted bound hits. The partition search uses the same exclusion for
 its surrogate sharing proposals. **Backward elimination** walks from all-local,
 promoting one parameter to ``Global`` at a time — cheapest by the surrogate first — with one
-exact, warm-started coupled fit per step, and stops as soon as a step no
-longer improves the information criterion; a handful of the most promising
-templates race through this together, so a template that falls behind early
-keeps its free all-local score rather than being fitted further for no
+exact, warm-started coupled fit per proposal. A rejected or failed proposal
+leaves the incumbent unchanged, and the next finite surrogate-ranked proposal
+is tried. An accepted improvement starts a new round from that assignment;
+the walk stops when no remaining finite proposal improves the information
+criterion. A mis-converged incumbent is refitted from a better-fitting child
+before the comparison, and subsequent proposals use that improved incumbent.
+A handful of the most promising templates race through this together, so a
+template that falls behind early keeps its free all-local score rather than being fitted further for no
 benefit. Once elimination stops, the winner's single-flip neighbourhood (every
 parameter toggled once from the winning assignment) is fitted too, so the
 per-parameter Global/Local recommendations in the Compare step's **Details** are exact
@@ -820,8 +824,11 @@ you actually see. A *phase* (see :ref:`global-fit-wizard-transitions`)
 is reported at the search resolution instead — every row of the penalty path
 is then scored on the same points, and the fit you apply from a phase seeds
 the Batch tab's own global fit, which runs on the native record. The whole
-search costs on the order of :math:`P` coupled fits per template, where the
-previous exhaustive search cost :math:`2^P`.
+elimination walk attempts at most :math:`P(P+1)/2` assignments per template
+for :math:`P` eligible parameters. Accepting the first proposal each round
+requires only :math:`P` attempts; the exhaustive search considers
+:math:`2^P` assignments. Certificate refits and solver retries can add work
+within an attempt, and the winner's flip-neighbourhood is fitted separately.
 
 Each of those coupled fits is solved by a **sparse least-squares** minimiser
 rather than by Minuit. A coupled node's Jacobian is arrow-shaped — every
