@@ -9579,26 +9579,17 @@ def _separable_backward_elimination(
     search_strategy: str,
     instrumentation: dict[str, object],
 ) -> GlobalCandidateAssessment:
-    """Globalise one parameter at a time, cheapest first, while the IC improves.
+    """Try ranked single-parameter sharing proposals until an exact IC improves.
 
-    The incumbent starts at all-local. Each round asks the surrogate which single
-    remaining parameter is cheapest to share, fits *that* assignment exactly, and
-    keeps it only when the exact IC beats the incumbent. The first rejection ends
-    the walk.
-
-    A parameter resting on a bound in any run is never proposed: its curvature is
-    not the curvature of an interior minimum, so the collapse would be modelling
-    numerical noise rather than the parameter's spread.
+    Bound hits cannot supply interior curvature and are excluded. Each accepted
+    addition starts a new round; only exhausting its finite proposals ends it.
+    For P eligible parameters, at most P(P + 1)/2 assignments are attempted.
     """
 
-    # The walk's incumbent is the current node of the *chain*, which starts at
-    # all-local — not ``state.best_assessment``, which may already hold phase 1's
-    # adopted screening node from somewhere else in the assignment lattice.
+    # The chain starts at all-local, independently of an adopted screening node.
     incumbent = state.anchor_assessment
     shared: tuple[str, ...] = ()
-    at_bound: set[str] = set()
-    for estimate in estimates:
-        at_bound |= estimate.at_bound
+    at_bound = set().union(*(estimate.at_bound for estimate in estimates))
 
     while True:
         candidates = [
@@ -9606,61 +9597,61 @@ def _separable_backward_elimination(
         ]
         if not candidates:
             return incumbent
-
         scored = sorted(
             (surrogate_ic(estimates, (*shared, name), metric), name) for name in candidates
         )
-        predicted_ic, best_name = scored[0]
-        if not math.isfinite(predicted_ic):
-            # Every remaining single addition has an unusable pooled weight, so
-            # the surrogate can no longer say which parameter to share next.
-            _record_counter(instrumentation, "separable_surrogate_exhausted")
-            return incumbent
+        for predicted_ic, best_name in scored:
+            if not math.isfinite(predicted_ic):
+                _record_counter(instrumentation, "separable_surrogate_exhausted")
+                continue
 
-        candidate_shared = tuple(
-            name for name in state.free_param_names if name in {*shared, best_name}
-        )
-        local_names = _local_names_for(
-            state.free_param_names,
-            set(state.free_param_names) - set(candidate_shared),
-        )
-        _record_counter(instrumentation, "separable_steps")
-        escalations_before = _counter_value(instrumentation, "warm_only_escalations")
-        candidate = _fit_separable_assignment(
-            datasets,
-            state,
-            local_names,
-            estimates=estimates,
-            warm_start_source=incumbent,
-            axis_key=axis_key,
-            metric=metric,
-            search_strategy=search_strategy,
-            instrumentation=instrumentation,
-        )
-        if _counter_value(instrumentation, "warm_only_escalations") > escalations_before:
-            _record_counter(instrumentation, "separable_escalations")
-        if not candidate.is_successful:
-            # The warm fit failed and the multi-start battery behind it failed
-            # too. Sharing yet more parameters would only start from a worse
-            # seed, so the walk ends at the incumbent.
-            return incumbent
-
-        if _assessment_chi2(candidate) < _assessment_chi2(incumbent) - _WARM_CERTIFICATE_EPSILON:
-            incumbent = _refit_certificate_violating_parent(
+            candidate_shared = tuple(
+                name for name in state.free_param_names if name in {*shared, best_name}
+            )
+            local_names = _local_names_for(
+                state.free_param_names,
+                set(state.free_param_names) - set(candidate_shared),
+            )
+            _record_counter(instrumentation, "separable_steps")
+            escalations_before = _counter_value(instrumentation, "warm_only_escalations")
+            candidate = _fit_separable_assignment(
                 datasets,
                 state,
-                incumbent,
-                candidate,
+                local_names,
+                estimates=estimates,
+                warm_start_source=incumbent,
                 axis_key=axis_key,
                 metric=metric,
                 search_strategy=search_strategy,
                 instrumentation=instrumentation,
             )
+            if _counter_value(instrumentation, "warm_only_escalations") > escalations_before:
+                _record_counter(instrumentation, "separable_escalations")
+            if not candidate.is_successful:
+                continue
 
-        if _assessment_sort_key(candidate, metric) >= _assessment_sort_key(incumbent, metric):
+            if (
+                _assessment_chi2(candidate)
+                < _assessment_chi2(incumbent) - _WARM_CERTIFICATE_EPSILON
+            ):
+                incumbent = _refit_certificate_violating_parent(
+                    datasets,
+                    state,
+                    incumbent,
+                    candidate,
+                    axis_key=axis_key,
+                    metric=metric,
+                    search_strategy=search_strategy,
+                    instrumentation=instrumentation,
+                )
+
+            if _assessment_sort_key(candidate, metric) >= _assessment_sort_key(incumbent, metric):
+                continue
+            incumbent = candidate
+            shared = candidate_shared
+            break
+        else:
             return incumbent
-        incumbent = candidate
-        shared = candidate_shared
 
 
 def _separable_flip_targets(
@@ -9672,7 +9663,7 @@ def _separable_flip_targets(
     ``_build_parameter_recommendations_from_exact_cache`` justifies each
     parameter's role by comparing the winner against exactly these neighbours, so
     without them the verdict layer is starved. Elimination visits only the
-    accepted chain plus its one rejected step, so most flips land here.
+    accepted chain and its rejected proposals, so other flips land here.
 
     Yields ``(local_names, global_names)`` pairs, in free-parameter order.
     """
@@ -9893,19 +9884,13 @@ def _fit_separable_flip_neighbourhoods(
 ) -> None:
     """Fit every raced template's winner flip-neighbourhood across the pool.
 
-    Backward elimination is a chain and holds one worker per template, so with a
-    handful of templates raced the pool sits mostly idle through the stage that
-    costs the most — and on a wide template the flips are the larger half of a
-    phase's coupled fits. They are also the half that parallelises perfectly:
-    every flip warm-starts from the same winner and none of them reads another's
-    result, so each is a task of its own and the pool runs them all at once.
+    Backward elimination holds one worker per template. Every flip warm-starts
+    from the same winner and none reads another's result, so each is a separate
+    task and the pool can run them concurrently.
 
-    The flips are centred on the template's best converged node, not on the
-    elimination's last incumbent: the walk stops at the first rejection, and a
-    node it rejected (or an adopted screening fit) may still be the best one in
-    the cache. A template only reaches elimination once its all-local anchor
-    converged, and that anchor is what sets ``best_assessment`` in the first
-    place, so there is always a node here.
+    An adopted screening fit or certificate refit may leave a better cached node
+    than the chain's final incumbent, so flips use ``best_assessment``. The
+    converged all-local anchor guarantees that this node exists.
 
     Tasks are ordered template-major, so a tripped budget costs the later
     templates their flips rather than leaving every template half-justified.
