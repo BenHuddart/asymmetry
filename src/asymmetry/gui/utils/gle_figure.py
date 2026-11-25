@@ -13,9 +13,10 @@ def gle_figure(glp, **kwargs):
     return glp.Figure(**kwargs)
 
 
-def save_gle_figure(figure, path):
-    """Keep GLE's default font unless transparency requires a Cairo-safe face."""
-    cairo = figure.requires_cairo()
+def save_gle_figure(figure, path, *, output_format="pdf", preserve_alpha=False):
+    """Use a white native backdrop when independent fills cannot overlap."""
+    figure.style.opaque_backdrop = None if output_format == "svg" or preserve_alpha else "white"
+    cairo = output_format == "svg" or figure.requires_cairo()
     if cairo:
         # Cairo rejects GLE's PostScript default; this face preserves ASCII glyphs.
         figure.style.font = "texcmtt"

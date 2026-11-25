@@ -293,7 +293,11 @@ FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
 plot workspace. Spectra draw as **solid lines** — the convention of every
 reference muSR package — with a shaded ±1σ band when the spectrum carries
 per-point errors (enable ``Average errors`` to compute them), rather than the
-time domain's error-bar points. When the run's applied field is known, a
+time domain's error-bar points. GLE PDF and EPS exports draw a single spectrum's
+uncertainty band as an opaque tint over white using the native renderer.
+Multiple uncertainty bands on the same plot retain true transparency with Cairo,
+as do SVG exports and their PDF preview companions. The scientific sidecars
+retain the original values and uncertainties. When the run's applied field is known, a
 subtle dashed marker sits at the expected Larmor position γ\ :sub:`μ`\ ·B on
 the single-run view, answering "am I looking at the right place?" at a
 glance; it is omitted on multi-run overlays and the correlation axis, and it

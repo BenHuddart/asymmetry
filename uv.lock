@@ -86,7 +86,7 @@ root = [
 requires-dist = [
     { name = "asymmetry", extras = ["gui", "gle", "hdf5", "hdf4", "root", "agent", "dev"], marker = "extra == 'all'" },
     { name = "cupy-cuda13x", extras = ["ctk"], marker = "extra == 'gpu'", specifier = ">=13.0" },
-    { name = "gleplot", marker = "extra == 'gle'", specifier = "==6.0.0" },
+    { name = "gleplot", marker = "extra == 'gle'", specifier = "==6.1.1" },
     { name = "h5py", marker = "extra == 'agent'", specifier = ">=3.8,<4" },
     { name = "h5py", marker = "extra == 'hdf5'", specifier = ">=3.8,<4" },
     { name = "iminuit", specifier = ">=2.0,<3" },
@@ -730,14 +730,14 @@ wheels = [
 
 [[package]]
 name = "gleplot"
-version = "6.0.0"
+version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/bf/d895f500cde399dcb63c56f18a4506de8b2c9d931c39e9606819410019d0/gleplot-6.0.0.tar.gz", hash = "sha256:8edf27a323c77ca30842c61b23920bcaab895c1ee0945b98c8210ff0a64a97d3", size = 541693, upload-time = "2026-11-22T13:50:07.524Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/77/c54c3bb123f3ea45aaf30aa7760193755e2d5fc0089101f5aeea76a3da34/gleplot-6.1.1.tar.gz", hash = "sha256:cd9f61ba62ba17238dd2bcfa4bf924f47a7e2661cd3ef01a7aaa1586f205703c", size = 545894, upload-time = "2026-11-25T12:58:54.521Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/b2/a2d63b59253bd16705c0fc458c106b42ae2c4b638ce99013c4a90a25fc63/gleplot-6.0.0-py3-none-any.whl", hash = "sha256:286859ff373446773d56bc19fc81c2639ef6400cb04037a91ef050a5b9ddbabc", size = 554336, upload-time = "2026-11-22T13:50:05.895Z" },
+    { url = "https://files.pythonhosted.org/packages/45/f7/8f1bea94ee7c5d17d6bff962f774cd307886673cb3c585e3417ec2742737/gleplot-6.1.1-py3-none-any.whl", hash = "sha256:029fa6b898a68475bd96df442e18e144bf9b54ebe270e6151f293f3352baf5e3", size = 558772, upload-time = "2026-11-25T12:58:53.21Z" },
 ]
 
 [[package]]

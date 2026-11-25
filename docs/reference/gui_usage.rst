@@ -941,14 +941,20 @@ Compilation behaviour:
 * If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry
   rewrites the metadata-rich sidecars afterwards so those headers are retained.
 
-Exports use gleplot 6.0.0. Curves join samples with straight segments rather
-than spline smoothing. Opaque figures use GLE's native renderer and keep its
-default font. Translucent fills require Cairo, which cannot draw GLE's default
-PostScript font. Those figures use the compatible Computer Modern Typewriter
-font (``texcmtt``), preserving literal punctuation such as ``|F|``. Phase bands
-and boundary lines span the full plot height,
+Exports use gleplot 6.1.1. Curves join samples with straight segments rather
+than spline smoothing. PDF, EPS, PNG and JPG exports draw a single uncertainty
+band or a single model's component stack as opaque colours over white. These
+figures use GLE's native renderer and default font. Phase shading sits behind
+fills and data, with bands and boundary lines spanning the full plot height,
 including logarithmic and dual-y plots, without setting the y-axis range.
-EPS cannot retain transparency; Cairo may rasterise translucent regions.
+
+Independent uncertainty bands or component stacks sharing a plot retain true
+transparency because their fills can overlap. SVG also retains transparency,
+including its PDF preview companion. Figures requiring transparency use Cairo
+and the compatible Computer Modern Typewriter font (``texcmtt``), preserving
+literal punctuation such as ``|F|``. EPS cannot retain true transparency;
+Cairo may rasterise those translucent regions. Script-only exports use the
+same backdrop policy as the selected format.
 
 The **GLE Plot Preview** window displays the compiled vector figure. Use
 **Fit to window**, **Zoom in**, **Zoom out**, and **100%** to inspect the plot.
@@ -1616,7 +1622,7 @@ units.
 
    Install GLE from source or from http://glx.sourceforge.io/ to enable
    automatic compilation. The ``gleplot`` Python package is required for
-   script generation (``pip install gleplot==6.0.0``).
+   script generation (``pip install gleplot==6.1.1``).
 
 Global-fit GLE exports
 ~~~~~~~~~~~~~~~~~~~~~~

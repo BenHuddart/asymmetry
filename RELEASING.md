@@ -61,7 +61,7 @@ remains in the changelog even though no GitHub release was published.
 
 `packaging/release/tools.json` selects CPython (including patch version),
 supported target identities, and Inno Setup. The two platform requirements files
-install the complete selected desktop dependencies, including gleplot 6.0.0 from
+install the complete selected desktop dependencies, including gleplot 6.1.1 from
 PyPI, and backend/packaging tools as exact, SHA256-checked wheels. They are release
 inputs; `constraints.txt` and the library's flexible source-install ranges retain
 their separate role. Linux core-wheel CI is also a separate required check.
