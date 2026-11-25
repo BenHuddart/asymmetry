@@ -23,4 +23,4 @@ runs:
     - name: Install reviewed Inno Setup
       if: inputs.target == 'windows-x64'
       shell: pwsh
-      run: choco install innosetup --version=${{ steps.tools.outputs.inno }} --allow-downgrade --force -y
+      run: choco install innosetup --version=${{ steps.tools.outputs.inno }} --allow-downgrade -y

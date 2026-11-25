@@ -69,6 +69,21 @@ def test_no_status_function_bypasses_the_gate(filename: str) -> None:
                 assert entry["if"] == "always()" and entry["uses"] == "actions/upload-artifact@v7"
                 assert entry["with"]["path"] == "${{ runner.temp }}/native-science-result.json"
                 continue
+            if entry.get("name") == "Retain Python build diagnostics":
+                assert filename == "release.yml" and job_name == "build-python"
+                assert entry["if"] == "always()" and entry["uses"] == "actions/upload-artifact@v7"
+                assert entry["with"]["name"] == "python-build-evidence"
+                assert entry["with"]["path"].splitlines() == [
+                    "${{ runner.temp }}/python-build/*.log",
+                    "${{ runner.temp }}/python-build/manifest.json",
+                    "${{ runner.temp }}/python-build/README.html",
+                ]
+                continue
+            if entry.get("name") == "Retain candidate installation evidence":
+                assert filename == "release.yml" and job_name == "install-python"
+                assert entry["if"] == "always()" and entry["uses"] == "actions/upload-artifact@v7"
+                assert entry["with"]["if-no-files-found"] == "error"
+                continue
             assert not re.search(r"\b(always|cancelled|failure)\s*\(", str(entry.get("if", "")))
 
 
@@ -351,7 +366,7 @@ def test_required_ci_rejects_missing_core_wheel_success(tmp_path: Path, smoke_re
 def test_native_consumers_share_replay_and_verify_before_freezing(filename: str) -> None:
     jobs = _workflow(filename)["jobs"]
     for name, job in jobs.items():
-        if not name.startswith("build-"):
+        if name not in ("build-macos-arm", "build-windows"):
             continue
         steps = job["steps"]
         replay = next(
@@ -389,6 +404,8 @@ def test_shared_bootstrap_selects_reviewed_python_and_compiler() -> None:
     assert setup["with"]["python-version"] == "${{ steps.tools.outputs.python }}"
     install = next(step for step in steps if step.get("name") == "Install reviewed Inno Setup")
     assert "--version=${{ steps.tools.outputs.inno }}" in install["run"]
+    assert "--force" not in shlex.split(install["run"])
+    assert "--allow-downgrade" in shlex.split(install["run"])
     assert install["if"] == "inputs.target == 'windows-x64'"
 
 
@@ -430,7 +447,7 @@ def test_downloaded_artifacts_are_verified_on_dispatch_and_before_publication() 
 )
 def test_native_records_follow_assembly_and_share_packaging_owner(filename: str) -> None:
     for name, job in _workflow(filename)["jobs"].items():
-        if not name.startswith("build-"):
+        if name not in ("build-macos-arm", "build-windows"):
             continue
         steps = job["steps"]
         commands = [s.get("run", "") for s in steps]

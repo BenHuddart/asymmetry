@@ -298,15 +298,18 @@ def test_source_wheel_build_is_offline_without_resolution(
         "src/asymmetry/injected.pyd",
     ],
 )
+@pytest.mark.parametrize("metadata_name", ["asymmetry.egg-info", "Asymmetry.egg-info"])
 def test_source_guard_rejects_untracked_and_ignored_packaged_files(
-    tmp_path: Path, filename: str
+    tmp_path: Path, filename: str, metadata_name: str
 ) -> None:
     import subprocess
 
     source = tmp_path / "src/asymmetry"
     source.mkdir(parents=True)
     (source / "__init__.py").write_text("", encoding="utf-8")
-    (tmp_path / ".gitignore").write_text("*.so\n*.pyd\n__pycache__/\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(
+        "*.so\n*.pyd\n__pycache__/\n*.egg-info/\n", encoding="utf-8"
+    )
     for arguments in (
         ["init"],
         ["add", "."],
@@ -326,6 +329,10 @@ def test_source_guard_rejects_untracked_and_ignored_packaged_files(
     cache = source / "__pycache__"
     cache.mkdir()
     (cache / "__init__.cpython-312.pyc").write_bytes(b"cache")
+    assert release.verify_source(tmp_path) == commit
+    metadata = tmp_path / "src" / metadata_name
+    metadata.mkdir()
+    (metadata / "PKG-INFO").write_text("generated distribution metadata")
     assert release.verify_source(tmp_path) == commit
     added = tmp_path / filename
     added.parent.mkdir(parents=True, exist_ok=True)

@@ -147,6 +147,7 @@ def installed_probe(
         "lmfit",
         "ruff",
         "sphinx",
+        "readme_renderer",
         "cupy",
     ) + tuple(name for name in optional if name not in required_modules)
     for name in blocked:
@@ -391,6 +392,8 @@ def smoke(
     interpreters: list[str],
     profiles: list[str],
     resolution: str,
+    artifacts: Path | None = None,
+    build_only: bool = False,
 ) -> None:
     """Build once and reuse the exact wheel across independently created targets."""
     source = source.resolve()
@@ -398,8 +401,9 @@ def smoke(
     assert not output.is_relative_to(source), "output must be outside checkout"
     output.mkdir(parents=True, exist_ok=False)
     env = clean_environment(output)
-    distributions = output / "dist"
-    distributions.mkdir()
+    distributions = artifacts.resolve() if artifacts is not None else output / "dist"
+    if artifacts is None:
+        distributions.mkdir()
     import importlib.metadata
 
     tracked = (
@@ -426,42 +430,45 @@ def smoke(
         "resolution": resolution,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    run_logged(
-        [
-            sys.executable,
-            "-m",
-            "build",
-            "-v",
-            "--sdist",
-            "--outdir",
-            str(distributions),
-            str(source),
-        ],
-        output,
-        env,
-        output / "sdist.log",
-    )
+    if artifacts is None:
+        run_logged(
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "-v",
+                "--sdist",
+                "--outdir",
+                str(distributions),
+                str(source),
+            ],
+            output,
+            env,
+            output / "sdist.log",
+        )
+        (sdist,) = distributions.glob("*.tar.gz")
+        unpacked = output / "sdist-source"
+        with tarfile.open(sdist) as archive:
+            archive.extractall(unpacked, filter="data")
+        (extracted,) = unpacked.iterdir()
+        run_logged(
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "-v",
+                "--wheel",
+                "--outdir",
+                str(distributions),
+                str(extracted),
+            ],
+            output,
+            env,
+            output / "wheel.log",
+        )
     (sdist,) = distributions.glob("*.tar.gz")
-    unpacked = output / "sdist-source"
-    with tarfile.open(sdist) as archive:
-        archive.extractall(unpacked, filter="data")
-    (extracted,) = unpacked.iterdir()
-    run_logged(
-        [
-            sys.executable,
-            "-m",
-            "build",
-            "-v",
-            "--wheel",
-            "--outdir",
-            str(distributions),
-            str(extracted),
-        ],
-        output,
-        env,
-        output / "wheel.log",
-    )
     (wheel,) = distributions.glob("*.whl")
+    assert set(distributions.iterdir()) == {sdist, wheel}, "unexpected candidate files"
     contract = artifact_contract(source, sdist, wheel)
     manifest.update(
         contract=contract,
@@ -482,7 +489,8 @@ def smoke(
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
     import itertools
 
-    for index, (interpreter, profile) in enumerate(itertools.product(interpreters, profiles)):
+    targets = () if build_only else itertools.product(interpreters, profiles)
+    for index, (interpreter, profile) in enumerate(targets):
         extras, required_modules = INSTALL_PROFILES[profile]
         work = output / f"{profile}-{index}"
         work.mkdir()
@@ -522,6 +530,17 @@ def smoke(
             + ")))\n"
         )
         run_logged([str(python), "-I", "-c", probe], work, env, work / "probe.log")
+        readme_code = (
+            (source / "README.md")
+            .read_text(encoding="utf-8")
+            .split("```python\n", 1)[1]
+            .split("```", 1)[0]
+        )
+        readme_probe = (
+            readme_code
+            + "\nassert result.success\nassert abs(result.parameters['Lambda'].value - 0.3) < 0.02\n"
+        )
+        run_logged([str(python), "-I", "-c", readme_probe], work, env, work / "readme.log")
         if required_modules:
             feature_probe = (
                 inspect.getsource(exercise_optional_features)
@@ -554,6 +573,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--artifacts", type=Path, help="Probe these existing sdist/wheel bytes")
+    parser.add_argument("--build-only", action="store_true", help="Build without target installs")
     parser.add_argument("--python", action="append", default=[])
     parser.add_argument("--profile", choices=INSTALL_PROFILES, action="append", default=[])
     parser.add_argument(
@@ -567,4 +588,6 @@ if __name__ == "__main__":
         args.python or [sys.executable],
         args.profile or ["core"],
         args.resolution,
+        args.artifacts,
+        args.build_only,
     )

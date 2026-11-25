@@ -28,6 +28,9 @@ jobs:
   verify-version:
     name: Verify version and changelog
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       python: ${{ steps.native-tools.outputs.python }}
@@ -55,6 +58,16 @@ jobs:
               ;;
           esac
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify publishing environment protections
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/publisher"
+          gh api repos/BenHuddart/asymmetry/environments/pypi > "$RUNNER_TEMP/publisher/environment.json"
+          gh api repos/BenHuddart/asymmetry/environments/pypi/deployment-branch-policies > "$RUNNER_TEMP/publisher/policies.json"
+          python3 tools/pypi_release.py environment --packet "$RUNNER_TEMP/publisher"
 
       - name: Read native acceptance interpreter
         id: native-tools
@@ -346,6 +359,147 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-python:
+    name: Build Python release candidate
+    needs: verify-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install candidate verification tools
+        run: python -m pip install build pip twine "readme-renderer[md]"
+      - name: Build sdist and wheel from sdist
+        run: python tools/distribution_smoke.py --build-only --output "$RUNNER_TEMP/python-build"
+      - name: Check and record release candidate
+        run: |
+          python -m twine check --strict "$RUNNER_TEMP/python-build/dist/"*
+          python tools/pypi_release.py record --packet "$RUNNER_TEMP/python-build" --commit "$GITHUB_SHA"
+      - name: Retain Python build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-build-evidence
+          path: |
+            ${{ runner.temp }}/python-build/*.log
+            ${{ runner.temp }}/python-build/manifest.json
+            ${{ runner.temp }}/python-build/README.html
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Retain Python candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-candidate
+          path: |
+            ${{ runner.temp }}/python-build/dist
+            ${{ runner.temp }}/python-build/python-release.json
+            ${{ runner.temp }}/python-build/SHA256SUMS
+            ${{ runner.temp }}/python-build/README.html
+          if-no-files-found: error
+          retention-days: 1
+
+  install-python:
+    name: Candidate installs (${{ matrix.python }}, ${{ matrix.resolution }})
+    needs: build-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        resolution: [constrained, unconstrained]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-candidate
+          path: ${{ runner.temp }}/python-candidate
+      - name: Install isolated probe tools and Qt runtime
+        run: |
+          python -m pip install build pip
+          sudo apt-get update -q && sudo apt-get install -y libegl1
+      - name: Install the delivered candidate in fresh environments
+        run: |
+          python tools/distribution_smoke.py --artifacts "$RUNNER_TEMP/python-candidate/dist" --output "$RUNNER_TEMP/python-installs" --profile core --profile gui --profile agent --profile all --resolution ${{ matrix.resolution }}
+      - name: Retain candidate installation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-installs-${{ matrix.python }}-${{ matrix.resolution }}
+          path: |
+            ${{ runner.temp }}/python-installs/manifest.json
+            ${{ runner.temp }}/python-installs/**/*.log
+          if-no-files-found: error
+          retention-days: 1
+
+  verify-python:
+    name: Verify exact Python candidate and installation matrix
+    needs: [build-python, install-python]
+    runs-on: ubuntu-latest
+    outputs:
+      checksums: ${{ steps.identity.outputs.checksums }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-candidate
+          path: ${{ runner.temp }}/python-candidate
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: python-installs-*
+          path: ${{ runner.temp }}/python-reports
+      - name: Bind downloaded files and all installations to this commit
+        id: identity
+        run: |
+          python tools/pypi_release.py verify --packet "$RUNNER_TEMP/python-candidate" --commit "$GITHUB_SHA" --reports "$RUNNER_TEMP/python-reports"
+          echo "checksums=$(sha256sum "$RUNNER_TEMP/python-candidate/SHA256SUMS" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Retain verified publication packet
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-verified
+          path: ${{ runner.temp }}/python-candidate
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-pypi:
+    name: Publish Python distributions to PyPI
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'BenHuddart/asymmetry'
+    needs: [verify-version, validate, verify-artifacts, accept-native, verify-python]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/Asymmetry
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-verified
+          path: candidate
+      - name: Check delivered publication bytes
+        env:
+          EXPECTED_CHECKSUMS: ${{ needs.verify-python.outputs.checksums }}
+        run: |
+          printf '%s  %s\n' "$EXPECTED_CHECKSUMS" candidate/SHA256SUMS | sha256sum --check --strict
+          (cd candidate && sha256sum --check --strict SHA256SUMS)
+          test "$(find candidate/dist -mindepth 1 -maxdepth 1 | wc -l)" -eq 2
+          test "$(find candidate/dist -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 2
+      - name: Publish with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: candidate/dist/
+          attestations: true
+          skip-existing: false
+
   release:
     if: github.event_name == 'push'
     name: Create GitHub release
@@ -357,6 +511,7 @@ jobs:
       - build-windows
       - verify-artifacts
       - accept-native
+      - publish-pypi
     permissions:
       actions: write
       contents: write
@@ -377,6 +532,14 @@ jobs:
             python3 -I tools/release_artifacts.py verify --target "$target" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/release-assets/asymmetry-$target"
           done
 
+      - name: Download verified Python candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: python-verified
+          path: ${{ runner.temp }}/python-candidate
+      - name: Recheck Python release files
+        run: python3 tools/pypi_release.py verify --packet "$RUNNER_TEMP/python-candidate" --commit "$GITHUB_SHA"
+
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v3
         with:
@@ -384,6 +547,9 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
+            ${{ runner.temp }}/python-candidate/dist/*
+            ${{ runner.temp }}/python-candidate/python-release.json
+            ${{ runner.temp }}/python-candidate/SHA256SUMS
             ${{ runner.temp }}/release-assets/asymmetry-macos-arm64/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg
             ${{ runner.temp }}/release-assets/asymmetry-windows-x64/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe
             ${{ runner.temp }}/release-assets/asymmetry-macos-arm64/macos-arm64-build-components.json
@@ -392,6 +558,11 @@ jobs:
             ${{ runner.temp }}/release-assets/asymmetry-windows-x64/windows-x64-build-components.json
             ${{ runner.temp }}/release-assets/asymmetry-windows-x64/windows-x64-artifact.json
             ${{ runner.temp }}/release-assets/asymmetry-windows-x64/windows-x64-SHA256SUMS
+
+      - name: Dispatch documentation after publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs-pages.yml --ref "$GITHUB_REF_NAME"
 
       - name: Delete workflow artifacts
         uses: actions/github-script@v8

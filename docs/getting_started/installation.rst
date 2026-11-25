@@ -276,6 +276,17 @@ Build verification for maintainers
 The following checks describe release verification; they are not steps needed
 to start the application or follow the quickstart.
 
+Python distributions
+~~~~~~~~~~~~~~~~~~~~
+
+The Python release candidate contains a source distribution and a wheel built
+from that source distribution. Metadata and the shared README are checked before
+the same wheel is installed across the Python versions and feature profiles
+described above. Candidate checks include the README fit and installed launchers.
+Publication requires the full test suite, Python installation matrix, and native
+desktop acceptance checks. This packaging evidence does not certify every
+scientific model, instrument default, optional runtime, or platform.
+
 Desktop build dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

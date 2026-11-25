@@ -1,13 +1,10 @@
 name: Docs Build and Deploy
 
 on:
-  # Full generation + Pages deploy happens for releases (version tags) and for
-  # pushes to main that touch the docs or the GUI code (screenshots are captured
-  # from the live GUI, so `src/**` changes can alter the published images). The
-  # `paths` filter is not evaluated for tag pushes, so releases always deploy.
+  # Releases dispatch this workflow at their tag after PyPI and GitHub publication.
+  # Main updates also deploy; availability-qualified install instructions remain
+  # accurate before a version is published on PyPI.
   push:
-    tags:
-      - "v*"
     branches:
       - main
     paths:
@@ -101,8 +98,8 @@ jobs:
         run: python3 tools/harness.py docs --mode source
 
   # Full build: regenerate GUI screenshots, build HTML, and (below) deploy to
-  # Pages. Runs on a version tag, a docs-affecting push to main, or a manual
-  # dispatch.
+  # Pages. Runs on a docs-affecting push to main or a manual dispatch, including
+  # the release workflow dispatch at its published tag.
   build-docs:
     name: Build Sphinx docs
     if: github.event_name != 'pull_request'
@@ -251,9 +248,8 @@ jobs:
     timeout-minutes: 25
     runs-on: ubuntu-latest
     needs: build-docs
-    # Deploy for releases (version tag), pushes to main, or a deliberate manual
-    # dispatch. Mirrors the `push` trigger above; PR events never reach here
-    # because build-docs is skipped for them.
+    # Deploy main updates and deliberate dispatches, including published release
+    # tags. PR events cannot reach here because build-docs is skipped for them.
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       github.ref == 'refs/heads/main' ||

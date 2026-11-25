@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reuse the selected Inno Setup version when it is already installed.
+
+- Preserve reviewed artwork when generating native installer icons.
+
+- Prepare checked Python distributions and protected PyPI publication alongside
+  desktop releases, with a non-publishing installation and native rehearsal.
+
 - Keep the README title rule below the right-aligned logo.
 
 - Use a red-and-blue vector logo throughout the app, Windows and macOS icons,

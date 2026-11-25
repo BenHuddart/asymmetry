@@ -109,3 +109,17 @@ def test_check_mode_rejects_output_modes_without_writing(monkeypatch, tmp_path, 
         branding.main(["--check", "--platform", platform])
     assert error.value.code == 2
     assert not list(tmp_path.rglob("*"))
+
+
+@pytest.mark.parametrize("platform", ["windows", "macos"])
+def test_installer_generation_preserves_reviewed_artwork(monkeypatch, tmp_path, platform):
+    monkeypatch.setattr(branding, "ROOT", tmp_path)
+    asset = tmp_path / "reviewed-logo.png"
+    asset.write_bytes(b"reviewed raster bytes")
+    monkeypatch.setattr(
+        branding, "generated_assets", lambda: iter(((asset, b"platform-dependent raster bytes"),))
+    )
+    assert branding.main(["--platform", platform]) == 0
+    assert asset.read_bytes() == b"reviewed raster bytes"
+    suffix = "ico" if platform == "windows" else "icns"
+    assert (tmp_path / f"build/icons/Asymmetry.{suffix}").is_file()
