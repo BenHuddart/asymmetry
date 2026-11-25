@@ -517,3 +517,33 @@ def test_release_command_nonzero_status_remains_failure(tmp_path):
         release.run([sys.executable, "-c", "print('failure');raise SystemExit(7)"], tmp_path)
     assert caught.value.returncode == 7
     assert caught.value.output.strip() == "failure"
+
+
+@pytest.mark.parametrize(
+    "script, succeeds",
+    [
+        ("import atexit\ndef fail(): raise RuntimeError('shutdown')\natexit.register(fail)", False),
+        ("class Broken:\n def __del__(self): raise RuntimeError('unraisable')\nBroken()", False),
+        ("print('This plugin does not support propagateSizeHints()')", True),
+        ("print('Error calling Python override: Traceback (most recent call last):')", False),
+    ],
+)
+def test_packaged_smoke_rejects_zero_exit_python_diagnostics(tmp_path, script, succeeds):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(ROOT / "tools/release_environment.py"),
+            "--smoke",
+            sys.executable,
+            "-I",
+            "-c",
+            script,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert (result.returncode == 0) is succeeds, result.stdout + result.stderr
+    assert ("Packaged smoke completed" in result.stdout) is succeeds

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
+from shiboken6 import isValid
 
 from ..data import make_euo_tf_tscan
 from ._base import Scenario, register
@@ -28,6 +29,7 @@ class MainWindowScenario(Scenario):
 
         # Through the shell so the hero shot shows the project tab strip.
         shell = ProjectShell()
+        shell.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         window = shell.add_project()
         # Surface the fit dock so the full WiMDA-style layout is visible.
         window._on_fit()
@@ -48,6 +50,7 @@ class MainWindowScenario(Scenario):
         for page in widget.pages():
             page._dirty = False
         super().teardown(widget)
+        assert not isValid(widget), "Accepted close must destroy the shell during Qt teardown."
 
 
 register(MainWindowScenario())
