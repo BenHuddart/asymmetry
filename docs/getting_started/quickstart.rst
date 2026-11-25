@@ -14,7 +14,7 @@ Launch Asymmetry
 
 Install Asymmetry using :doc:`installation`. Open **Asymmetry** from the Windows
 Start menu or macOS Applications folder. For a Python installation, install the
-``gui`` and ``hdf5`` extras described there, then run:
+``all`` extra, or the ``gui,hdf5,root`` combination described there, then run:
 
 .. code-block:: bash
 

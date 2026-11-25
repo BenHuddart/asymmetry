@@ -1477,21 +1477,24 @@ MaxEnt's inner loop regenerates and projects through the time–frequency design
 matrix every outer cycle, and that cost grows with both the time-bin count and
 the spectrum resolution — a large joint reconstruction (many detector groups,
 a fine frequency grid, an unbinned time window) can take a while on the CPU.
-From a repository checkout (see :doc:`/getting_started/installation`),
+For a published release (see :doc:`/getting_started/installation`),
 installing the optional ``gpu`` extra lets the same kernels run on an NVIDIA
 GPU through `CuPy <https://cupy.dev/>`_:
 
 .. code-block:: bash
 
-   python -m pip install ".[gpu]"
+   python -m pip install "asymmetry[gpu]"
 
 This installs the CUDA-13 wheel (``cupy-cuda13x``); on a CUDA-12 system,
-install ``cupy-cuda12x`` instead — the runtime only ever imports plain
-``cupy``, so either wheel satisfies it. CuPy is imported lazily on first use,
+install Asymmetry without ``gpu`` and select ``cupy-cuda12x[ctk]>=13.0``
+instead. Choose one CUDA variant; do not install both CuPy distributions.
+See :ref:`external-programs-and-runtimes` for the commands and
+`CuPy's installation guide <https://docs.cupy.dev/en/stable/install.html>`__
+for hardware and driver requirements. CuPy is imported lazily on first use,
 so the core package stays importable with no GPU, no CuPy, and no CUDA driver
 present.
 
-Select the backend with the new ``backend`` field on ``MaxEntConfig``:
+Select the backend with the ``backend`` field on ``MaxEntConfig``:
 
 .. code-block:: python
 
@@ -1504,7 +1507,7 @@ Select the backend with the new ``backend`` field on ``MaxEntConfig``:
    )
    result = maxent(dataset.run, config, cycles=10)
 
-* ``"numpy"`` (the default) is the historical CPU path, unchanged.
+* ``"numpy"`` (the default) runs on the CPU.
 * ``"cuda"`` requires a working GPU: if CuPy is missing or no CUDA device is
   found, ``maxent()`` raises ``MaxEntBackendError`` naming the ``gpu`` extra
   and the driver requirement.

@@ -1,27 +1,29 @@
 Asymmetry
 =========
 
-**Asymmetry** is a Python toolkit and desktop application for muon-spin
-spectroscopy (μSR): loading raw or reduced data, applying detector grouping and
-asymmetry transforms, fitting time- and frequency-domain signals, trending
-fitted parameters, and saving complete analysis sessions for later reuse.
+**Asymmetry** is a Python library, command-line tool, and desktop application
+for muon-spin spectroscopy (μSR). It provides tools for reducing, analysing,
+and visualising data: detector grouping and calibration, time- and
+frequency-domain fitting, Fourier and maximum-entropy analysis, parameter
+trends, and saving analysis sessions for reuse.
 
-.. warning::
+.. note::
 
-   **Verify the physics in this documentation against trusted sources.**
+   **Asymmetry is beta software under active development.** Its code and
+   documentation have been written by AI coding agents (Claude Code and
+   Codex). Throughout development, numerical behaviour has been checked
+   through automated tests, independent mathematical references, and
+   comparisons with established μSR software. See the
+   :doc:`software comparisons <explanation/comparison>` for tested cases,
+   agreement, and known limitations.
 
-   Asymmetry is in **beta development**, and this
-   documentation is written alongside it. These pages describe μSR data,
-   fitting-function forms, and analysis workflows to help you use the
-   software — but they are **not a substitute for the primary literature or
-   established analysis tools**. Statements about μSR data, the meaning and
-   parameterisation of fitting models, and the correctness of a given
-   workflow may be incomplete, simplified, or in error.
+   Check scientific claims and model definitions against primary literature
+   and other trusted sources, and validate results for your analysis before
+   relying on them for publication. APIs may change between releases.
 
-   Before relying on any physical interpretation, model definition, or
-   procedure described here, **confirm it against peer-reviewed references
-   and an established μSR tool** (for example WiMDA, Musrfit, or Mantid).
-   Please report anything you find to be inaccurate.
+Projects saved by released versions remain loadable. The
+:doc:`numerical accuracy guide <explanation/numerical_accuracy>` explains
+evaluation targets and their scientific scope.
 
 Where to start
 --------------
