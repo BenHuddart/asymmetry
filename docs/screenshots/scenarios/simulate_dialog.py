@@ -84,3 +84,35 @@ def _pump_events(milliseconds: int) -> None:
 
 
 register(SimulateDialogScenario())
+
+
+class SyntheticSaveMenuScenario(Scenario):
+    name = "synthetic_save_menu"
+    description = (
+        "A memory-only Gaussian-field run offers verified Save as NeXus in its context menu."
+    )
+    size = (270, 105)
+
+    def build(self):
+        from asymmetry.gui.panels.data_browser import DataBrowserPanel
+
+        from asymmetry.core.simulate import reduce_run_to_dataset
+        from asymmetry.core.simulate_presets import build_preset_runs
+
+        self.browser = DataBrowserPanel()
+        dataset = reduce_run_to_dataset(build_preset_runs("ag_zf_kt", seed=23)[0])
+        self.browser.add_dataset(dataset)
+        self.browser.select_runs({dataset.run_number})
+        menu = self.browser._create_table_context_menu()
+        assert menu is not None
+        assert "Save as NeXus…" in [action.text() for action in menu.actions()]
+        return menu
+
+    def teardown(self, widget):
+        super().teardown(widget)
+        self.browser.shutdown_workers()
+        self.browser.close()
+        self.browser.deleteLater()
+
+
+register(SyntheticSaveMenuScenario())

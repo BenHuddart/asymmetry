@@ -15762,22 +15762,14 @@ class MainWindow(QMainWindow):
         return path
 
     def _unsaved_synthetic_run_labels(self) -> list[str]:
-        """Labels of synthetic/degraded runs with no backing file.
+        """Labels whose memory-only acquisition has no captured file source."""
+        from asymmetry.core.io.persist_run import needs_histogram_file
 
-        Synthetic and degraded runs live only in memory until saved as NeXus
-        (study decision 2: projects reference data files, not histograms), so a
-        project that references one cannot re-load it. These are the runs whose
-        ``run.source_file`` is empty.
-        """
-        labels: list[str] = []
-        for dataset in self._data_browser.all_datasets():
-            run = getattr(dataset, "run", None)
-            if run is None:
-                continue
-            is_derived = bool(run.metadata.get("synthetic")) or bool(run.metadata.get("degraded"))
-            if is_derived and not run.source_file:
-                labels.append(str(getattr(dataset, "run_label", run.run_number)))
-        return labels
+        return [
+            dataset.run_label
+            for dataset in self._data_browser.all_datasets()
+            if dataset.run is not None and needs_histogram_file(dataset.run)
+        ]
 
     def _confirm_save_with_unsaved_synthetic_runs(self) -> bool:
         """Warn if the project references unsaved synthetic runs; return proceed."""
