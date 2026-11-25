@@ -404,6 +404,8 @@ def test_shared_bootstrap_selects_reviewed_python_and_compiler() -> None:
     assert setup["with"]["python-version"] == "${{ steps.tools.outputs.python }}"
     install = next(step for step in steps if step.get("name") == "Install reviewed Inno Setup")
     assert "--version=${{ steps.tools.outputs.inno }}" in install["run"]
+    assert "--force" not in shlex.split(install["run"])
+    assert "--allow-downgrade" in shlex.split(install["run"])
     assert install["if"] == "inputs.target == 'windows-x64'"
 
 

@@ -223,8 +223,9 @@ Platform icon generation writes only installer assets under `build/icons/`.
 It preserves the committed runtime and documentation artwork so platform-specific
 Qt rasterisation cannot change the reviewed source after its identity is recorded.
 
-Windows installs the selected Chocolatey Inno package, then invokes the compiler
-by its explicit installation path. `--inno` first compiles a small output-disabled
+Windows requests the selected Chocolatey Inno package without forcing a reinstall
+when that version is already installed, then invokes the compiler by its explicit
+installation path. `--inno` first compiles a small output-disabled
 probe and checks the actual compiler-engine version before compiling the installer.
 It records the compiler executable and engine DLL hashes. The platform replay
 records runner image, OS, and, on macOS, Xcode/SDK identities. The hosted OS image,
