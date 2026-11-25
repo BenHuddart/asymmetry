@@ -207,7 +207,7 @@ def test_frequency_band_present_with_positive_errors(qapp, tmp_path):
         # The line colour at quarter opacity keeps the band behind the spectrum.
         assert "fill d" in gle
         band_fills = [ln for ln in gle.splitlines() if ln.strip().startswith("fill d")]
-        assert band_fills and all("rgba255(0,0,0,64)" in ln for ln in band_fills)
+        assert band_fills and all("rgb255(191,191,191)" in ln for ln in band_fills)
         assert "fill d1,d2 color BLACK" not in gle
         # The spectrum line itself stays piecewise-linear (no GLE spline).
         series_lines = [ln for ln in gle.splitlines() if " line " in ln and "key" in ln]
@@ -314,3 +314,23 @@ def test_frequency_correlation_axis_exports_metadata_label_and_mhz(qapp, tmp_pat
     finally:
         panel.close()
         panel.deleteLater()
+
+
+@pytest.mark.parametrize("errors", [(0.02,), (0.02, 0.03), (0.02, np.inf), (0.0, 0.0)])
+def test_independent_frequency_bands_preserve_overlap_alpha(tmp_path, errors):
+    from asymmetry.gui.utils.plot_gle import PlotGleSnapshot
+
+    payloads = [
+        {
+            "domain": "frequency",
+            "label": str(index),
+            "data": {"t": [1.0, 2.0], "y": [0.2, 0.3], "err": [error, error]},
+        }
+        for index, error in enumerate(errors)
+    ]
+    snapshot = PlotGleSnapshot(axes=((None, payloads, ""),), y_limits={None: (0, 1)})
+    script = tmp_path / "bands.gle"
+    result = snapshot.build(glp, script, tmp_path)
+    overlaps = bool(sum(np.isfinite(error) and error > 0 for error in errors) > 1)
+    assert result.cairo is overlaps
+    assert ("rgba255" in script.read_text()) is overlaps

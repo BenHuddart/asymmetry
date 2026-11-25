@@ -262,7 +262,13 @@ def run_gle_export(
             raise RuntimeError("Install gleplot to export GLE plots.") from exc
         export_dir.mkdir(parents=True, exist_ok=True)
         check_task_cancelled(worker)
-        result = build(glp, gle_path, export_dir, cancelled=worker.is_cancelled)
+        result = build(
+            glp,
+            gle_path,
+            export_dir,
+            cancelled=worker.is_cancelled,
+            output_format=output_format,
+        )
         if result is None:
             return None
         check_task_cancelled(worker)

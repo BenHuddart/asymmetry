@@ -229,7 +229,7 @@ def test_allowlisted_observation_drops_nested_private_metadata(build, private):
     artifacts.prepare(replay, "windows-x64", commit)
     public = (root / "build/build-environment.json").read_text()
     assert json.dumps(private) not in public
-    assert "gleplot-6.0.0-py3-none-any.whl" in public
+    assert "gleplot-6.1.1-py3-none-any.whl" in public
     assert "direct_sources" not in public
 
 
@@ -491,7 +491,7 @@ def test_every_public_write_projects_mutable_build_metadata(build, stage, privat
         artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
     public = (root / "dist/windows-x64-build-components.json").read_text()
     assert json.dumps(private) not in public
-    assert "gleplot-6.0.0-py3-none-any.whl" in public
+    assert "gleplot-6.1.1-py3-none-any.whl" in public
     assert "direct_sources" not in public
 
 

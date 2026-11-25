@@ -71,22 +71,28 @@ class GlobalGleSnapshot(GlobalExportData):
                 va="top",
             )
 
-    def build_fits(self, glp, gle_path, export_dir, *, cancelled=None):
+    def build_fits(self, glp, gle_path, export_dir, *, cancelled=None, output_format="pdf"):
         snapshot = replace(self, cancelled=cancelled)
         snapshot.check_cancelled()
         return snapshot.save(
-            snapshot._build_fit_subplot_gle_figure(glp, gle_path), gle_path, export_dir
+            snapshot._build_fit_subplot_gle_figure(glp, gle_path),
+            gle_path,
+            export_dir,
+            output_format=output_format,
         )
 
-    def build_local(self, glp, gle_path, export_dir, *, cancelled=None):
+    def build_local(self, glp, gle_path, export_dir, *, cancelled=None, output_format="pdf"):
         snapshot = replace(self, cancelled=cancelled)
         snapshot.check_cancelled()
         return snapshot.save(
-            snapshot._build_local_parameter_gle_figure(glp, gle_path), gle_path, export_dir
+            snapshot._build_local_parameter_gle_figure(glp, gle_path),
+            gle_path,
+            export_dir,
+            output_format=output_format,
         )
 
-    def save(self, figure, gle_path, export_dir):
-        cairo = save_gle_figure(figure, gle_path)
+    def save(self, figure, gle_path, export_dir, *, output_format="pdf"):
+        cairo = save_gle_figure(figure, gle_path, output_format=output_format)
         return GleExportBuild(
             files=[
                 gle_path,

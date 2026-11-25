@@ -27,12 +27,12 @@ class PlotGleSnapshot(PlotExportData):
     stacked: bool = False
     connect_points: bool = field(default=False, kw_only=True)
 
-    def build(self, glp, gle_path, export_dir, *, cancelled=None):
+    def build(self, glp, gle_path, export_dir, *, cancelled=None, output_format="pdf"):
         snapshot = replace(self, cancelled=cancelled)
         snapshot.check_cancelled()
-        return snapshot.build_figure(glp, gle_path, export_dir)
+        return snapshot.build_figure(glp, gle_path, export_dir, output_format=output_format)
 
-    def build_figure(self, glp, gle_path, export_dir):
+    def build_figure(self, glp, gle_path, export_dir, *, output_format="pdf"):
         if self.stacked:
             fig, subplot_axes = gle_subplots(
                 glp, nrows=len(self.axes), ncols=1, figsize=self.figsize, sharex=True
@@ -91,7 +91,20 @@ class PlotGleSnapshot(PlotExportData):
             )
         if self.stacked:
             fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
-        cairo = save_gle_figure(fig, gle_path)
+        # Independent frequency bands can overlap even on offset curves.
+        preserve_alpha = any(
+            sum(
+                p.get("domain") == "frequency"
+                and p.get("data", {}).get("err") is not None
+                and bool(np.any(np.isfinite(p["data"]["err"]) & (np.asarray(p["data"]["err"]) > 0)))
+                for p in payloads
+            )
+            > 1
+            for _, payloads, _ in self.axes
+        )
+        cairo = save_gle_figure(
+            fig, gle_path, output_format=output_format, preserve_alpha=preserve_alpha
+        )
         for path, payload, label, axis_key in dat_writes:
             self._write_data_file(
                 path,

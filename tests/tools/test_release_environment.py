@@ -27,7 +27,7 @@ def observation() -> dict:
             "platform": "win32",
             "machine": "AMD64",
         },
-        "distributions": {"pip": "25.3", "gleplot": "6.0.0", "asymmetry": "0.28.0"},
+        "distributions": {"pip": "25.3", "gleplot": "6.1.1", "asymmetry": "0.28.0"},
         "origins": {
             "asymmetry": {
                 "url": "file:///private/wheels/asymmetry.whl",
@@ -46,7 +46,7 @@ def verify(actual: dict) -> dict:
             "platform": "win32",
             "machine": "AMD64",
         },
-        {"pip": "25.3", "gleplot": "6.0.0", "asymmetry": "0.28.0"},
+        {"pip": "25.3", "gleplot": "6.1.1", "asymmetry": "0.28.0"},
         {"asymmetry": "b" * 64},
     )
 

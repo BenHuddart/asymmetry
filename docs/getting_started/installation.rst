@@ -154,17 +154,19 @@ skill:
 
 For GLE export support:
 
-* gleplot 6.0.0 from PyPI, installed by the ``gle`` extra:
+* gleplot 6.1.1 from PyPI, installed by the ``gle`` extra:
 
    .. code-block:: bash
 
        python -m pip install ".[gle]"
 
-  To install the script generator separately, use ``pip install gleplot==6.0.0``.
+  To install the script generator separately, use ``pip install gleplot==6.1.1``.
 
 * The GLE compiler itself (``gle``) needs to be on ``PATH`` for ``.gle``
   scripts to be compiled to PDF or EPS at export time. Use a build with Cairo
-  support for translucent uncertainty bands, component fills and phase shading.
+  support for SVG and potentially overlapping uncertainty bands or component
+  stacks. Single bands, single component stacks, and phase shading use opaque
+  colours over white with the native renderer for PDF and EPS.
   GLE's include library (``gleinc``, supplied by its release packages) supports
   native reference lines and spans. Without the compiler, the
   scripts and sidecar data files are still written and can be compiled
