@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Remove unused deadtime planning metadata from the source distribution.
+
 - Put common grouping, Fourier, and parameter-trend tasks before specialist
   reference details, with direct routes from the reference index.
 
