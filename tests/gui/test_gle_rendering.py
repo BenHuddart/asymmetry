@@ -150,6 +150,11 @@ def test_filled_export_compiles_and_displays_vector_preview(
         script = destination / "filled.gle"
         assert "rgba255" in script.read_text()
         if surface == "components":
+            import re
+
+            limits = re.search(r"yaxis min (\S+) max (\S+)", script.read_text())
+            assert limits is not None
+            assert float(limits[2]) >= 0.41
             image = preview.document.render(0, QSize(900, 700))
             assert not image.isNull()
             assert all(

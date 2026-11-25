@@ -53,6 +53,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import CONTEXT_CHIP_OBJECT_NAME
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
+from asymmetry.gui.utils.gle_bounds import GleBounds
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.windows.fit_results_window import FitResultsWindow
 from tests._qt_helpers import wait_for
@@ -83,6 +84,7 @@ def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
 
 
 from tests.gui.gle_helpers import (
+    GleAxisLimits,
     OpaqueGleFigure,
     recording_factories,
     wait_for_gle,
@@ -979,8 +981,9 @@ def test_background_labels_use_subscript_formatting() -> None:
     assert _format_gle_legend_label("A_bg") == "{\\it A}_{bg}"
 
 
-class _FakeAxis:
+class _FakeAxis(GleAxisLimits):
     def __init__(self) -> None:
+        super().__init__()
         self.calls: list[dict[str, object]] = []
         self.line_calls: list[dict[str, object]] = []
         self.xscale_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -998,15 +1001,12 @@ class _FakeAxis:
 
     def set_ylabel(self, *_args, **_kwargs) -> None:
         self.ylabel_calls.append((_args, _kwargs))
-        return
 
     def set_xscale(self, *_args, **_kwargs) -> None:
         self.xscale_calls.append((_args, _kwargs))
-        return
 
     def set_yscale(self, *_args, **_kwargs) -> None:
         self.yscale_calls.append((_args, _kwargs))
-        return
 
     def legend(self, *_args, **_kwargs) -> None:
         return
@@ -1122,7 +1122,6 @@ def test_export_gle_saves_to_resolved_gle_path(
 
     assert fig.requested_paths == [str(gle_path)]
     assert str(gle_path) in fig.saved_paths
-    # Synchronous "no GLE binary" path: no task/compile involved.
     preview = wait_for_gle(panel)
     assert "saved" in preview.status.text()
 
@@ -1380,7 +1379,7 @@ def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(
     axis = _FakeAxis()
 
     panel._gle_snapshot()._add_gle_model_overlay(
-        axis, "A_bg", color="red", include_labels=True, fit_file_map=fit_map
+        axis, "A_bg", color="red", include_labels=True, fit_file_map=fit_map, bounds=GleBounds()
     )
 
     assert len(axis.line_calls) == 2

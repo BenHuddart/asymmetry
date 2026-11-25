@@ -69,16 +69,12 @@ AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
     GUI_ROOT / "panels" / "plot_panel.py": frozenset({"_apply_limits"}),
     GUI_ROOT / "panels" / "alc_panel.py": frozenset({"_apply_axis_limits"}),
 }
-# Surfaces that are not axis-limit-policy plots at all (a fit-parameter chart,
-# the detector schematic, the suggestion-overlay band, the grouping preview
-# pane, the user-function-authoring preview, the fit wizards' series preview
-# with its fixed ±4σ residual strips), so any `set_xlim(`/`set_ylim(` there is
-# exempt outright.
+# Surfaces outside AxisLimitPolicy, including independent file-export axes.
 AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset(
     {
         GUI_ROOT / "panels" / "fit_parameters_panel.py",
-        # File exports apply captured limits to independent GLE axes.
-        GUI_ROOT / "utils" / "parameter_gle.py",
+        # File exports apply captured or resolved limits to independent GLE axes.
+        GUI_ROOT / "utils" / "gle_bounds.py",
         GUI_ROOT / "utils" / "plot_gle.py",
         GUI_ROOT / "widgets" / "detector_schematic.py",
         GUI_ROOT / "widgets" / "series_fit_canvas.py",
