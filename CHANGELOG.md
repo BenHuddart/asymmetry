@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-25
+
 - Reuse the selected Inno Setup version when it is already installed.
 
 - Preserve reviewed artwork when generating native installer icons.
