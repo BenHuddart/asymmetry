@@ -47,7 +47,17 @@ bank orientation. Explicit tables and saved/custom groups retain precedence.
 A valid single-group table retains its raw counts, per-detector timing, good
 windows, exposure and deadtime. Its independent F/B quick look is unavailable;
 choose an appropriate preset or edit groups in **Grouping** to create a valid pair.
-Present empty, short or malformed tables are errors, not missing declarations.
+Present empty, short, all-zero, or malformed tables are errors, not missing
+declarations.
+
+NeXus V1 grouping indexes histogram numbers, including switching-state doubling
+(S. Cottrell, `NeXus Instrument Definitions for Muon Data, Version 2, Revision 8
+<https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_,
+V1 definition, notes 4 and 6, pp. 14–16). A grouping declaration may contain one
+integer per detector shared by all periods, a flat period-major vector with one
+integer per histogram, or an exact ``(periods, detectors)`` table. Every period
+must declare at least one positive group; no row is truncated or replaced by
+another period's membership.
 
 Acquisition shape and alignment
 -------------------------------
@@ -154,9 +164,10 @@ ISIS Muon NeXus (.nxs, .nexus)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Asymmetry supports ISIS muon NeXus files (legacy V1 and modern V2), including
-multi-period runs. Without explicit period selection, single-period and
-two-period files return one ``MuonDataset``; files with three or more periods
-return a list. See :ref:`selecting-periods` for uniform single-period selection.
+multi-period runs. Without explicit period selection, single-period files and
+two-period files with identical group memberships and F/B legs return one
+``MuonDataset``. Other multi-period files return a list. See
+:ref:`selecting-periods` for uniform single-period selection.
 Scalar sample temperature is read from the NeXus sample header. NXlog-style
 temperature groups with ``time`` plus ``value``/``values`` datasets are also
 summarised in Get Info; the Data Browser keeps the scalar header temperature
@@ -917,10 +928,14 @@ And with MusrRoot/LEM ROOT files:
 
       dataset = load("lem15_his_2994.root")
 
-Without an explicit ``period``, single-period and two-period files return one
-``MuonDataset``; the two-period object retains both acquired periods for
-selection or difference reduction. Files with three or more periods return a
-list of datasets. Use ``load(path, period=1)`` or ``select_period`` to obtain
+Without an explicit ``period``, single-period files and two-period files with
+identical group memberships and F/B legs return one ``MuonDataset``; the
+two-period object retains both acquired periods for selection or difference
+reduction. Files with three or more periods return a
+list of datasets, as do two-period files with different declared memberships.
+Author a common grouping explicitly before mapping such periods; mapping
+incompatible memberships or F/B legs raises an actionable error.
+Use ``load(path, period=1)`` or ``select_period`` to obtain
 one dataset uniformly.
 
 A returned ``MuonDataset`` contains:

@@ -39,6 +39,12 @@ and overlapping manual RF groups; :doc:`MuSR <instruments/isis_musr>` records
 the longitudinal sign and manual transverse memberships.
 
 
+NeXus period-major grouping tables retain each period's declared membership.
+Two periods with different memberships load as separate datasets; select a
+period or explicitly author a common grouping before combining them. Shared
+tables and identical period declarations retain the combined red/green view.
+An all-zero declared table is invalid and does not authorise a preset fallback.
+
 Scripted preset application
 ---------------------------
 

@@ -10,7 +10,7 @@ from asymmetry.core.fitting.field_scan import fit_rf_resonance
 from asymmetry.core.fitting.muon_proton import rf_resonance_mup
 from asymmetry.core.io.periods import build_rf_difference_scan
 from asymmetry.core.utils.constants import PeriodMode
-from tests.corpus import corpus_path, requires_corpus
+from tests.corpus import authored_grouping_copy, corpus_path, requires_corpus
 
 # --- synthetic fixtures -------------------------------------------------------
 
@@ -162,8 +162,9 @@ def test_fit_recovers_input_couplings_on_synthetic_scan() -> None:
 _RF_DIR = corpus_path("Chemistry/Muon spectroscopy of benzene/data/RF resonance")
 
 
+@pytest.mark.io
 @requires_corpus(_RF_DIR)
-def test_benzene_rf_count_integrals_match_workflow() -> None:
+def test_benzene_rf_count_integrals_match_workflow(tmp_path) -> None:
     """Matched raw observations test the changed operation, without fitted truth."""
     from dataclasses import replace
 
@@ -174,7 +175,9 @@ def test_benzene_rf_count_integrals_match_workflow() -> None:
     assert _RF_DIR is not None
     runs = []
     for number in (56426, 56435, 56450, 56462):
-        dataset = load(str(_RF_DIR / f"{number}.nxs"))
+        dataset = load(
+            authored_grouping_copy(_RF_DIR / f"{number}.nxs", tmp_path, [1] * 16 + [2] * 16)
+        )
         grouping = dict(
             dataset.run.grouping,
             alpha=1.0,

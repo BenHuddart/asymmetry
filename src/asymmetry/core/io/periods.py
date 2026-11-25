@@ -668,6 +668,13 @@ def combine_mapped_periods(
             "select original acquired periods or ignore the nonunit input."
         )
 
+    from asymmetry.core.io.nexus_grouping import grouping_membership
+
+    if len({grouping_membership(runs[number - 1].grouping) for number in selected}) > 1:
+        raise ValueError(
+            "Author a common grouping before mapping periods with different memberships or F/B legs"
+        )
+
     red_periods = _periods_for_target(normalised, "red")
     green_periods = _periods_for_target(normalised, "green")
 
