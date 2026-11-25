@@ -54,7 +54,7 @@ def test_unsaved_synthetic_run_is_flagged(win, qapp) -> None:
     assert any("90001" in label for label in labels)
 
 
-def test_run_with_backing_file_not_flagged(win, qapp) -> None:
+def test_run_with_backing_file_not_flagged(win, qapp, tmp_path) -> None:
     run = simulate_run(
         build_builtin_template("ideal_pulsed_fb"),
         lambda t, a0=20.0: a0 * np.ones_like(t),
@@ -62,7 +62,9 @@ def test_run_with_backing_file_not_flagged(win, qapp) -> None:
         seed=1,
         run_number=90002,
     )
-    run.source_file = "/data/SIM90002.nxs"  # pretend it was saved as NeXus
+    from asymmetry.core.io.persist_run import persist_histogram_run
+
+    run = persist_histogram_run(run, tmp_path / "SIM90002.nxs")
     win._data_browser.add_dataset(reduce_run_to_dataset(run))
     assert win._unsaved_synthetic_run_labels() == []
 

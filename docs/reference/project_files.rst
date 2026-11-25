@@ -40,6 +40,17 @@ raw data when sending an analysis to a collaborator, or to archive
 alongside paper supplementary material so that readers can reproduce
 every fit shown in the figures.
 
+For a memory-only synthetic preset or degraded single-period run, right-click its
+Data Browser row and choose **Save as NeXus…** before saving the project.
+**Saving and verifying NeXus…** writes and checks the raw counts in the background;
+**Cancel** leaves the live source unchanged. A successful save attaches the
+verified source file while keeping the run's grouping settings and fit history.
+The project can then reopen both the run and its saved fits. Historical recipes
+retain their recorded identities; a new file does not certify an earlier
+in-memory fit. A path without a captured acquisition still receives the
+**Unsaved synthetic runs** warning. See :doc:`simulation` for supported inputs
+and the separate dialog export route.
+
 Opening safely
 --------------
 
