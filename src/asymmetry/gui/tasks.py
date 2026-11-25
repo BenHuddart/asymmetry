@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
+from PySide6.QtCore import QCoreApplication, QObject, Qt, QThread, Signal, Slot
 
 
 class TaskCancelledError(Exception):
@@ -55,8 +55,9 @@ class _OrphanThreadReaper(QObject):
 
     def adopt(self, thread: QThread, worker: object | None) -> None:
         self._threads.append((thread, worker))
-        thread.finished.connect(self._reap)
+        thread.finished.connect(self._reap, Qt.ConnectionType.QueuedConnection)
 
+    @Slot()
     def _reap(self) -> None:
         # sender() can return None in queued cross-thread connections on some
         # PySide6 builds, leaving stale entries in _threads. Scan all entries
@@ -76,6 +77,8 @@ class _OrphanThreadReaper(QObject):
             if running:
                 remaining.append((t, w))
             else:
+                if isinstance(w, TaskWorker):
+                    w.deleteLater()
                 t.deleteLater()
         self._threads = remaining
 
@@ -206,6 +209,7 @@ def _retire_running_threads(live: list[tuple[QThread, TaskWorker]]) -> None:
 class TaskWorker(QObject):
     """Runs one callable off the GUI thread and emits exactly one terminal signal.
 
+    The QObject stays GUI-affine; only ``run`` executes on the task thread.
     The callable receives this worker as its only argument and may use
     ``worker.progress.emit(current, total, message)`` and
     ``worker.is_cancelled()`` — the same shapes the core engines accept as
@@ -230,12 +234,6 @@ class TaskWorker(QObject):
             TaskCancelledError,
             *cancel_exceptions,
         )
-        # The thread this worker is born on (the GUI thread — ``start`` runs
-        # there) is where it MUST be destroyed. ``run`` moves affinity back here
-        # before returning so its ``deleteLater`` is processed on the GUI thread,
-        # never on the worker thread. See ``run`` and ``TaskRunner.start`` for the
-        # GIL <-> connection-mutex deadlock this avoids.
-        self._home_thread = QThread.currentThread()
 
     def cancel(self) -> None:
         """Request cooperative cancellation (safe from any thread)."""
@@ -244,6 +242,7 @@ class TaskWorker(QObject):
     def is_cancelled(self) -> bool:
         return self._cancel_requested
 
+    @Slot()
     def run(self) -> None:
         try:
             result = self._fn(self)
@@ -253,22 +252,6 @@ class TaskWorker(QObject):
             self.error.emit(str(exc))
         else:
             self.finished.emit(result)
-        finally:
-            # Move this worker back to its home (GUI) thread so it is DESTROYED
-            # there, not on the worker thread. Destroying a Python-subclassed
-            # QObject runs shiboken's ``disconnectNotify`` override lookup, which
-            # takes the GIL, *while* ``~QObject`` holds Qt's signal-connection
-            # mutex(es). If that happens on the worker thread while the GUI thread
-            # holds the GIL and enters ``connectImpl`` (e.g. ``QLabel.setText``
-            # lazily building a ``QWidgetTextControl``) wanting the same mutex, the
-            # two deadlock (GIL <-> connection-mutex ABBA); see GUI_GUIDELINES.md.
-            #
-            # This runs on the worker thread (``run`` is invoked via a direct
-            # ``started`` connection, before ``exec()``), so moving to the home
-            # thread is legal (moveToThread must be called from the object's
-            # current thread). The terminal signal above is already emitted, so
-            # its queued delivery to the GUI-thread relay is unaffected.
-            self.moveToThread(self._home_thread)
 
 
 class _TaskRelay(QObject):
@@ -296,18 +279,22 @@ class _TaskRelay(QObject):
         self._on_cancelled = on_cancelled
         self._on_progress = on_progress
 
+    @Slot(object)
     def finished(self, result: object) -> None:
         if self._on_finished is not None:
             self._on_finished(result)
 
+    @Slot(str)
     def error(self, message: str) -> None:
         if self._on_error is not None:
             self._on_error(message)
 
+    @Slot()
     def cancelled(self) -> None:
         if self._on_cancelled is not None:
             self._on_cancelled()
 
+    @Slot(int, int, str)
     def progress(self, current: int, total: int, message: str) -> None:
         if self._on_progress is not None:
             self._on_progress(current, total, message)
@@ -359,8 +346,9 @@ class TaskRunner(QObject):
         """Start *fn* on a fresh worker thread and return its worker handle."""
         thread = QThread(self)
         worker = TaskWorker(fn, cancel_exceptions=cancel_exceptions)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
+        # Keep QObject affinity and destruction on the GUI thread. Only run()
+        # executes on the background thread; it uses Python state and emits signals.
+        thread.started.connect(worker.run, Qt.ConnectionType.DirectConnection)
 
         # All caller callbacks go through a GUI-thread relay: connecting a
         # plain callable directly would run it on the worker thread.
@@ -371,43 +359,27 @@ class TaskRunner(QObject):
             on_cancelled=on_cancelled,
             on_progress=on_progress,
         )
-        worker.progress.connect(relay.progress)
-        worker.finished.connect(relay.finished)
-        worker.error.connect(relay.error)
-        worker.cancelled.connect(relay.cancelled)
+        worker.progress.connect(relay.progress, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(relay.finished, Qt.ConnectionType.QueuedConnection)
+        worker.error.connect(relay.error, Qt.ConnectionType.QueuedConnection)
+        worker.cancelled.connect(relay.cancelled, Qt.ConnectionType.QueuedConnection)
 
         for terminal in (worker.finished, worker.error, worker.cancelled):
-            terminal.connect(thread.quit)
-        # The worker is NOT deleted from the worker thread. It moves itself back
-        # to the home (GUI) thread in ``run``'s ``finally`` and is deleteLater'd
-        # from ``_on_thread_finished`` once the thread has finished — so its
-        # ~QObject runs on the GUI thread. Deleting it on the worker thread
-        # deadlocks (GIL <-> Qt connection-mutex ABBA; see ``TaskWorker.run``).
-        # Routing deletion through the GUI event loop this way also serialises it,
-        # so the old concurrent-emit segfault (two workers deleteLater'ing inline)
-        # cannot occur either.
-        thread.finished.connect(relay.deleteLater)
-        # Bound-method slot on a GUI-thread QObject => queued connection, so
-        # bookkeeping never mutates _live from the worker thread.
-        thread.finished.connect(self._on_thread_finished)
+            terminal.connect(thread.quit, Qt.ConnectionType.QueuedConnection)
+        # GUI-thread bookkeeping owns worker deletion after computation ends.
+        thread.finished.connect(relay.deleteLater, Qt.ConnectionType.QueuedConnection)
+        thread.finished.connect(self._on_thread_finished, Qt.ConnectionType.QueuedConnection)
 
         self._live.append((thread, worker))
         thread.start()
         return worker
 
+    @Slot()
     def _on_thread_finished(self) -> None:
         thread = self.sender()
-        # Delete the worker HERE, on the GUI thread — not from the worker thread.
-        # By now the thread has finished and the worker has moved its affinity
-        # back to this (home) thread in run()'s finally, so deleteLater posts its
-        # DeferredDelete to the GUI event loop and ~QObject runs here. See
-        # TaskWorker.run for the deadlock this avoids.
-        for _t, w in self._live:
-            if _t is thread and w is not None:
-                try:
-                    w.deleteLater()
-                except RuntimeError:
-                    pass  # C++ side already gone (e.g. deleted via shutdown)
+        for t, worker in self._live:
+            if t is thread:
+                worker.deleteLater()
                 break
         # Mutate _live IN PLACE (never rebind): the destroyed-safety-net slot in
         # __init__ captures this exact list object, so reassigning self._live
@@ -432,16 +404,7 @@ class TaskRunner(QObject):
         for thread, worker in list(self._live):
             thread.quit()
             if thread.wait(timeout_ms):
-                # Finished within the wait: the worker has already moved itself
-                # back to this (GUI) thread in run()'s finally, so delete it here
-                # on the GUI thread. We cannot rely on _on_thread_finished for
-                # this — it reads _live, which the clear() below empties before
-                # sendPostedEvents flushes that queued slot — and destroying the
-                # worker on the worker thread is the very deadlock we avoid.
-                try:
-                    worker.deleteLater()
-                except RuntimeError:
-                    pass  # C++ side already gone (terminal fired, bookkeeping ran)
+                worker.deleteLater()
             else:
                 # Still inside the task (e.g. a long numpy call between cancel
                 # polls). Unparent it from this runner and hand it to the

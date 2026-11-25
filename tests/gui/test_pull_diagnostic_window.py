@@ -6,7 +6,7 @@ import threading
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -131,7 +131,7 @@ def test_close_with_queued_terminal_does_not_publish_and_reopens(qapp, terminal)
     window._seeds_spin.setValue(1)
     window._run_button.click()
     signal = window._worker.finished if terminal == "finished" else window._worker.error
-    signal.connect(lambda *args: terminal_sent.set())
+    signal.connect(lambda *args: terminal_sent.set(), Qt.ConnectionType.DirectConnection)
     release.set()
     # Terminal is emitted while the GUI event loop is held, guaranteeing queueing.
     assert terminal_sent.wait(5)
