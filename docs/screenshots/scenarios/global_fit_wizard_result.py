@@ -8,11 +8,12 @@ holds optimised role splits.
 
 The scope is restricted to the longitudinal-field Kubo–Toyabe family, so the
 build completes in seconds. Only ``lf_kt_constant`` goes through the coupled
-role search, and it yields eight role splits of the one template. A is the
+role search. The capture checks that rejected sharing proposals do not
+prevent the search from reaching the shared-width assignment. A is the
 recommendation: Δ shared, B_L local, the textbook decoupling model (Hayano
 et al., Phys. Rev. B **20**, 850 (1979)). B is pinned to the runner-up split,
 which frees Δ per run as well. It fits every run as well by eye and passes
-every check, but its three extra parameters buy nothing: +4 AICc. The trend
+every check, but its extra parameters increase AICc. The trend
 plot follows Δ: A's shared value is one line across the series, and B's
 per-run values sit on it within their errors. The capture shows why sharing a
 parameter is the better answer when the data allow it.
@@ -92,6 +93,10 @@ class GlobalFitWizardResultScenario(Scenario):
             selected_template_keys=("lf_kt_constant",),
             objective=SelectionObjective.STATISTICAL,
         )
+
+        winner = recommendation.sorted_optimized_assessments()[0]
+        assert set(winner.global_param_names) == {"A_1", "Delta", "A_bg"}
+        assert winner.local_param_names == ("B_L",)
 
         window = GlobalFitWizardWindow()
         window.set_analysis_context(datasets)

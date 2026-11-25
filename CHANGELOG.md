@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Continue the Global Fit Wizard's sharing search after a rejected or failed
+  proposal, recovering shared widths in longitudinal-field decoupling series.
+
 - Load valid NeXus period-major grouping declarations without discarding each
   period’s memberships; differing two-period groups remain separately selectable.
 
