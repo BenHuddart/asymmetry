@@ -438,8 +438,10 @@ after their evidence is recorded; failed targets remain available for diagnosis.
 sdist and wheel, with no rebuild. The release workflow uses one candidate across
 its six Python/resolution jobs, then rejects missing profiles or evidence for
 another commit or artifact hash. Each fresh installation also executes the
-README's seeded fit. Release upload authority is confined to a separate,
-maintainer-reviewed OIDC job after Python, full-suite, and native gates succeed.
+API cookbook's `fit_arrays.py` example. The distribution contract verifies
+that the source archive contains the same script. Release upload authority is
+confined to a separate, maintainer-reviewed OIDC job after Python, full-suite,
+and native gates succeed.
 Manual release rehearsals exercise those gates without uploading to PyPI or
 publishing a GitHub release. `RELEASING.md` defines retained evidence and recovery.
 The contributor `dev` extra includes the Markdown renderer needed by the

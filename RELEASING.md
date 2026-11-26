@@ -109,7 +109,7 @@ for review. This includes the public logo URL used by the shared README.
 Six fresh Linux jobs use those exact downloaded files: Python 3.11, 3.12, and
 3.13, each with constrained and ordinary dependency resolution. Each exercises
 core, `gui,hdf5,root`, `agent`, and `all` in separate outside-checkout environments.
-The probes check installed bytes and resources, the README fit, CLI help,
+The probes check installed bytes and resources, the API cookbook's array fit, CLI help,
 requested readers/plots/GLE generation, and installed GUI startup. They do not
 exercise CUDA or the external GLE compiler. Native installers are independently
 built from the same commit and retain their existing reviewed inputs and final
