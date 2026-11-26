@@ -234,6 +234,11 @@ def fit_result_summary(
     return {
         "success": bool(fit_result.success),
         "computation_revision": fit_result.computation_revision,
+        **(
+            {"producing_version": fit_result.producing_version}
+            if fit_result.producing_version is not None
+            else {}
+        ),
         "input_attribution": fit_result.input_attribution,
         "spectral_residual_attribution": fit_result.spectral_residual_attribution,
         "observation_report": fit_result.observation_report.to_dict()

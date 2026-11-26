@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core import computation
 from asymmetry.core.fitting.engine import FitResult, _minuit_status_message
 from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.likelihood import GaussianObservations, Objective, PoissonCounts
@@ -260,8 +259,7 @@ def _result_from_minuit(
     nfree = len(free_names)
     residuals = np.asarray(counts, dtype=float) - np.asarray(model_values, dtype=float)
     chi2 = float(m.fval) if chi_squared is None else float(chi_squared)
-    return FitResult(
-        computation_revision=computation.COMPUTATION_REVISION,
+    return FitResult.from_computation(
         objective=objective,
         success=bool(m.valid) and invalid_model is None,
         minimum_expected_count=float(np.min(model_values))

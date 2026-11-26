@@ -10,6 +10,7 @@ from unittest.mock import patch
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialogButtonBox, QFileDialog
 
+import asymmetry
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.shell import ProjectShell
 
@@ -68,6 +69,7 @@ def fit_quickstart(source: Path) -> ProjectShell:
     assert single_tab.wait_for_fit(timeout_ms=60_000), "Quickstart fit timed out"
     ((_, record),) = page._collect_latest_fit_records()
     assert record["success"] and record["model_name"] == _MODEL
+    assert record["producing_version"] == asymmetry.__version__
     return shell
 
 

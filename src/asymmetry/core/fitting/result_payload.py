@@ -68,6 +68,11 @@ def _serialize_fit_result(
         "success": bool(result.success),
         "computation_revision": result.computation_revision,
         **(
+            {"producing_version": result.producing_version}
+            if result.producing_version is not None
+            else {}
+        ),
+        **(
             {"parameter_history": result.parameter_history}
             if result.parameter_history is not None
             else {}
@@ -132,6 +137,7 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
     return FitResult(
         objective=Objective.GAUSSIAN,
         computation_revision=payload.get("computation_revision"),
+        producing_version=payload.get("producing_version"),
         parameter_history=payload.get("parameter_history"),
         minos_errors=None
         if payload.get("uncertainties_asymmetric") is None

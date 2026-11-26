@@ -63,11 +63,11 @@ def test_format_record_flags_non_convergence():
 
 
 def test_format_report_joins_multiple_records():
-    records = [_record(), {"parameters": {"x": 1.0}}]
+    records = [_record() | {"producing_version": "0.29.0"}, {"parameters": {"x": 1.0}}]
     report = FitLog().format_report(records, header="Latest fits", titles=["Run A", "Run B"])
     assert report.startswith("Latest fits")
-    assert "=== Run A ===" in report
-    assert "=== Run B ===" in report
+    assert "=== Run A ===\nAsymmetry version: 0.29.0\n" in report
+    assert "=== Run B ===\nAsymmetry version: unknown\n" in report
     assert report.endswith("\n")
 
 

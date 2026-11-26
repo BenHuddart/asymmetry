@@ -169,6 +169,14 @@ series. This holds what WiMDA's ``.fit``/``.bfit`` files hold, but inside the
 ``.asymp`` project with the full provenance (the quality verdict and, when run,
 the MINOS intervals) rather than in a side file.
 
+The stored fit includes the Asymmetry version that performed it. In a fit
+report, this appears as::
+
+   Asymmetry version: 0.30.0
+
+Saving or reopening a project preserves the recorded version. A fit with no
+recorded producer shows ``Asymmetry version: unknown``.
+
 When you want that record outside the project — to paste into a logbook or grep
 across runs — **Analysis ▸ Export fit report…** writes a human-readable block per
 saved single fit and spectral series member, titled with its run, view, and

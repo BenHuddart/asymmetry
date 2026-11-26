@@ -12,6 +12,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox
 
+import asymmetry
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.simulate import (
@@ -79,19 +80,21 @@ def test_side_row_visible_only_for_single_group_target(qapp, fb_dataset):
     assert window._side_combo.isHidden()
 
 
-def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
+def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset, monkeypatch):
     window = MultiGroupFitWindow()
     window.set_dataset(fb_dataset)
     window._target_combo.setCurrentIndex(1)  # fb
 
     captured = []
     window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
+    monkeypatch.setattr(asymmetry, "__version__", "0.29.0")
     window._single_fit_tab._run_count_domain_fit()
     assert window._single_fit_tab.wait_for_fit()
 
     assert len(captured) == 1
     result = captured[0]
     assert result.success
+    assert {fit.producing_version for fit in result.group_results.values()} == {"0.29.0"}
     alpha = result.group_results[1].parameters["alpha"].value
     assert alpha == pytest.approx(1.25, abs=0.05)
     # Sparse tail bins suppress the χ² verdict without hiding the deviance.

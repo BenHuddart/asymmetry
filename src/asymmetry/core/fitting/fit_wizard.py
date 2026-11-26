@@ -4338,8 +4338,7 @@ def _assess_candidate_template(
                         cancel_callback=cancel_callback,
                     )
             except EvaluationWorkLimitError as exc:
-                result = FitResult(
-                    computation_revision=computation.COMPUTATION_REVISION,
+                result = FitResult.from_computation(
                     objective=Objective.GAUSSIAN,
                     parameters=_clone_parameter_set(parameters),
                     success=False,
@@ -5662,8 +5661,7 @@ def _scipy_fit_fallback(
     try:
         from scipy.optimize import least_squares
     except ImportError:
-        return FitResult(
-            computation_revision=computation.COMPUTATION_REVISION,
+        return FitResult.from_computation(
             objective=Objective.GAUSSIAN,
             success=False,
             message="SciPy fallback unavailable and iminuit fit backend could not be imported.",
@@ -5739,8 +5737,7 @@ def _scipy_fit_fallback(
     residuals = observations.values - np.asarray(fitted, dtype=float)
     chi_squared = float(np.sum(np.square(residuals / safe_errors)))
     dof = len(observations.time) - len(free)
-    return FitResult(
-        computation_revision=computation.COMPUTATION_REVISION,
+    return FitResult.from_computation(
         objective=Objective.GAUSSIAN,
         success=bool(result.success),
         chi_squared=chi_squared,
