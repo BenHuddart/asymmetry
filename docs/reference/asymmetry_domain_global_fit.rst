@@ -235,17 +235,25 @@ bounds can invalidate symmetric intervals; see `iminuit's HESSE and MINOS guide
 <https://scikit-hep.org/iminuit/notebooks/hesse_and_minos.html>`_. When the profiled
 or sparse strategy uses coupled member-curvature blocks, it omits errors and
 covariance when curvature is singular, ill-conditioned, nonfinite, numerically
-unstable, too close to a bound, or the solution is invalid. Such fits retain
-central estimates where available, set
+unstable, or the solution is invalid or at an active parameter bound. A value
+just inside a bound also counts as active if the combined objective has a
+numerically resolved downhill direction at the bound in the local quadratic
+approximation. Such fits retain central estimates where available, set
 ``covariance_accurate=False``, and record ``Marginal covariance unavailable:``
 with the reason in fit warnings. They never substitute conditional local errors.
 When no global is free and there are no grouped local ties, each member instead
 uses the ordinary single-fit route, including its boundary-error behaviour.
 
-For those coupled blocks, Asymmetry also checks numerical stability at two
-derivative step sizes. Both curvature and propagated covariance must agree to 0.2 % when each matrix element
-is scaled by the geometric mean of its diagonal entries. Up to four bounded
-step refinements seek a stable local estimate; the tolerance is unchanged.
+For an interior solution, Asymmetry uses centred differences where the parameter
+bounds allow a suitable step. When a nearby bound would force a much smaller
+centred step, it samples towards the interior for first, second, and mixed
+derivatives. A narrow allowed interval can still leave too little room to
+resolve curvature.
+
+For the coupled blocks, Asymmetry checks numerical stability at two derivative
+step sizes. Both curvature and propagated covariance must agree to 0.2 % when
+each matrix element is scaled by the geometric mean of its diagonal entries.
+Up to four bounded step refinements seek a stable local estimate.
 Near-null curvature is rejected in dimensionless coordinates; this diagnostic
 concerns the reported errors, and leaves usable observations and central
 estimates available.

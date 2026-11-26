@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Recover marginal errors for coupled global fits with stable curvature at
+  strictly interior parameter values near a bound.
+
 - Keep the splash responsive while analysis dependencies load in the
   background.
 - Show the splash earlier and open the first project window faster by loading
