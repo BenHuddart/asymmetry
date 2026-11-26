@@ -1,11 +1,10 @@
 ALC field scan in TCNQ
 ======================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for the
+   TCNQ and corannulene scans.
 
    Use a field-stepped series at a controlled temperature, with applied-field
    metadata and the calibration for your instrument. The TCNQ run numbers, field
@@ -19,7 +18,7 @@ the applied longitudinal field through a resonance and watches a single reduced
 number — the time-integral asymmetry — dip as the field crosses the level
 anticrossing. The dip field pins a hyperfine coupling, and its width and
 temperature dependence report on molecular motion. This chapter builds that scan
-end-to-end on the real muon-school TCNQ data, fits the resonance, and reads the
+end-to-end on the TCNQ runs from the Rigi school data, fits the resonance, and reads the
 muon hyperfine coupling off it; a closing advanced section carries the same
 workflow to a four-resonance corannulene spectrum published to sub-percent
 precision.
@@ -34,7 +33,7 @@ worked walkthrough on real data.
 The runs
 --------
 
-The corpus *Chemistry → ALC resonance in TCNQ* set is a longitudinal-field study
+The Rigi school *Chemistry → ALC resonance in TCNQ* set is a longitudinal-field study
 of a muoniated TCNQ radical — the muonium adduct formed when muonium adds to
 tetracyanoquinodimethane, an organic electron acceptor — measured on EMU at the
 ISIS pulsed muon source. The muon is proposed to sit on the nitrogen of a cyano
@@ -304,23 +303,21 @@ from a script.
 Advanced: a four-resonance µLCR spectrum
 ----------------------------------------
 
-The TCNQ scan has one resonance; the technique scales to several. The corpus
-*Chemistry → Molecular dynamics of corannulene* set is the flagship example — and
-it is paper-graded: the runs are the very data of Gaboardi *et al.*, *Carbon*
-**155**, 432 (2019) (the NeXus headers carry that experiment's beamtime award and
-the paper's own author list). Corannulene, C₂₀H₁₀, is a cup-shaped polycyclic
+The corannulene scans illustrate how to fit several resonances in the same
+spectrum. The Rigi school archive contains the runs analysed by Gaboardi
+*et al.*, *Carbon* **155**, 432 (2019). Corannulene, C₂₀H₁₀, is a cup-shaped polycyclic
 aromatic hydrocarbon — roughly one third of a C₆₀ ball — that chemisorbs muonium
 to form **four** long-lived muoniated-radical adducts, R1–R4, each with its own
 muon hyperfine coupling and so its own µLCR resonance.
 
-The widest scan in the corpus
+The wide corannulene field scan
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The measurement is a **µLCR** (muon level-crossing resonance) field scan on the
 HiFi spectrometer, run at two temperatures whose measured sample values are the
 paper's **40 K** (setpoint 50 K) and **410 K** (setpoint 420 K). The 40 K wide
-scan alone is **158 runs stepped from 0.5 to 3.0 T** — the widest field scan in
-the whole corpus — built in the Integral scan view exactly as the TCNQ scan was.
+scan contains **158 runs stepped from 0.5 to 3.0 T**. Build it in the
+**Integral scan** view using the same steps as the TCNQ scan.
 
 .. figure:: /_generated/corpus_screenshots/corpus_corannulene_ulcr_scan.png
    :width: 100%
@@ -360,9 +357,7 @@ resonance field inverts through the same relation as before,
    coupling off each fitted centre gives :math:`A_\mu = 190 / 418 / 485 / 667`
    MHz for R4 / R3 / R2 / R1 — set against the paper's Table 1 values of
    192(11) / 419(10) / 484(20) / 665(15) MHz, **every one lands inside the
-   published 1σ uncertainty**. That is the flagship precision result of the
-   corpus: four independent hyperfine couplings reproduced to the paper's own
-   error bars from a single reduced scan.
+   published 1σ uncertainty**.
 
 .. tip::
 

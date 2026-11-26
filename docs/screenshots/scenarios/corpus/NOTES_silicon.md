@@ -35,38 +35,13 @@ LF 10 mT).
   relaxation-rate ratios, and 103299 is a separate calibration surface already
   covered by the LLZ/EuO α-calibration scenarios. Noted as an opportunity below.
 
-## Fitted values vs ground-truth targets
+## Fit results
 
-| Quantity | This module | Target (GT §10) | Notes |
-|----------|-------------|-----------------|-------|
-| λ(light-OFF), 103277 | 0.085 µs⁻¹ | 0.068(2) µs⁻¹ (paper Fig 1c) | free-A single exp; same order, slightly high (no baseline term) |
-| λ(light-ON), 103277 (Δn=8.9e13) | **1.270 µs⁻¹** | ~1.29 (digitised Fig 1d) | A₀ fixed, first 1 µs — matches |
-| λ(light-ON), 103282 (Δn=4.7e13) | 0.904 µs⁻¹ | 0.94(2) µs⁻¹ (exact, text) | matches within read-off error |
-| Calibration exponent α | **0.652** | **0.68(4)** (paper Fig 1d) | within ~1σ |
-| Calibration prefactor β | 1.304 µs⁻¹ | 1.46(4) µs⁻¹ | low; the highest-Δn points sit below the paper's curve (GT §10a notes 103277 does too) |
-| **Carrier lifetime τ₀** | **10.75 µs** | **11.1(9) µs** (paper Fig 1e) | within 1σ — the headline reproduces |
-| Δn(0) intercept | 9.77×10¹³ cm⁻³ | 9.4(4)×10¹³ cm⁻³ | consistent |
-
-Full calibration λ vs digitised Fig 1d targets (µs⁻¹):
-
-| Run | Δn (cm⁻³) | λ (module) | λ (digitised) |
-|-----|-----------|-----------|---------------|
-| 103277 | 8.9×10¹³ | 1.270 | ~1.29 |
-| 103278 | 7.9×10¹³ | 1.154 | ~1.28 |
-| 103279 | 7.1×10¹³ | 1.146 | ~1.19 |
-| 103280 | 6.3×10¹³ | 1.061 | ~1.15 |
-| 103281 | 5.6×10¹³ | 1.038 | ~1.06 |
-| 103282 | 4.7×10¹³ | 0.904 | 0.94 (exact) |
-| 103283 | 3.7×10¹³ | 0.713 | ~0.78 |
-| 103284 | 2.7×10¹³ | 0.577 | ~0.65 |
-| 103285 | 1.8×10¹³ | 0.427 | ~0.51 |
-| 103286 | 9.3×10¹² | 0.286 | ~0.35 |
-
-The module's λ sit systematically ~5–15 % below the digitised points at low Δn
-(a pure single exponential with no baseline underestimates the small-λ tail),
-which is why the fitted α (0.65) and β (1.30) come out a touch low. The
-headline τ₀ is insensitive to this — it depends on the *shape* of Δn(ΔT), not
-the calibration normalisation — and lands at 10.75 µs vs the paper's 11.1(9).
+The single-exponential fit to the light-ON period of run 103277 gives
+λ = 1.270 µs⁻¹. The ten calibration runs give a power-law exponent of
+0.652 and a prefactor of 1.304 µs⁻¹. The delay scan gives a carrier
+lifetime of 10.75 µs, within the published 11.1(9) µs uncertainty.
+[Photoexcited Muon Spin Spectroscopy](https://doi.org/10.1103/PhysRevLett.119.226601).
 
 ## Period-mode UX notes (honest)
 

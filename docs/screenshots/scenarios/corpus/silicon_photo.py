@@ -31,7 +31,7 @@ Scenarios registered:
   overlaid: the light-induced extra relaxation, visible by eye.
 * ``corpus_si_lambda_fit`` — single-exponential fit on the light-ON period of
   the highest-Δn run 103277 over the first 1 µs (A₀ fixed at the light-OFF
-  value) → λ ≈ 1.27 µs⁻¹ (digitised target ~1.29, GROUND_TRUTH §10a).
+  value) → λ ≈ 1.27 µs⁻¹.
 * ``corpus_si_lambda_vs_dn`` — Trend 1 calibration: λ vs Δn on log–log across
   the 10 injection runs, with the fitted power law (exponent ≈ α ≈ 0.68).
 * ``corpus_si_tau_decay`` — headline Trend 2: Δn vs ΔT across the delay scan
@@ -249,7 +249,7 @@ class SiLambdaFitScenario(CorpusScenario):
     description = (
         "Single-exponential fit on the light-ON (Red) period of the highest-Δn "
         "silicon run 103277 over the first 1 µs, amplitude A₀ fixed at the "
-        "light-OFF value → λ ≈ 1.27 µs⁻¹ (digitised target ~1.29)."
+        "light-OFF value → λ ≈ 1.27 µs⁻¹."
     )
     example = EXAMPLE
     size = (1500, 920)

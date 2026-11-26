@@ -714,7 +714,7 @@ solutions as the neighbourhood instead of paying for the probe re-fits:
        fit_result,
        model,
        dataset,
-       min_bins_per_e_folding=20.0,      # a rebinned corpus can justify far more
+       min_bins_per_e_folding=20.0,      # rebinned data can justify far more
    )
    if not assessment.is_resolved:
        for reason in assessment.disqualification_reasons():

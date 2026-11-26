@@ -55,13 +55,13 @@ def _write_stub_png(path: Path, name: str) -> None:
     draw.rectangle([0, 0, width - 1, height - 1], outline=(200, 200, 200))
     draw.text(
         (width / 2, height / 2),
-        name,
+        name.removeprefix("corpus_").replace("_", " "),
         fill=STUB_TEXT_COLOUR,
         anchor="mm",
     )
     draw.text(
         (width / 2, height / 2 + 24),
-        "Placeholder: capture unavailable",
+        "Example data capture unavailable",
         fill=STUB_TEXT_COLOUR,
         anchor="mm",
     )

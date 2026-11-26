@@ -1,11 +1,11 @@
 Temperature scan through a magnetic transition
 ==============================================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for EuO and
+   nickel. The :ref:`molecular antiferromagnet <molecular-antiferromagnet>`
+   uses runs from the ISIS DataGateway.
 
    Use your own zero-field temperature series, with measured sample temperatures
    and the instrument calibration. The EuO, nickel, and molecular-magnet runs below
@@ -15,7 +15,7 @@ Temperature scan through a magnetic transition
 
 This chapter is a worked example showing how Asymmetry handles a
 zero-field (ZF) μSR temperature scan through a magnetic ordering
-transition. It runs on the real muon-school EuO dataset — the PSI GPS
+transition. It runs on the EuO runs from the Rigi school data — the PSI GPS
 histograms ``deltat_pta_gps_2923``–``2973`` — which is the same data
 analysed by Blundell *et al.* in their study of the localised
 ferromagnet EuO (*Phys. Rev. B* **81**, 092407 (2010)). Every number and
@@ -67,7 +67,7 @@ The data
 
 The zero-field temperature scan is runs **2923–2960** (the file series
 continues to 2973 with a set of transverse-field 60 G runs, not used
-here). The muon-school folder ships a logbook giving the measured sample
+here). The Rigi school folder includes a logbook giving the measured sample
 temperature of each run; the scan reads from :math:`T = 1.6` K, deep in
 the ordered phase, up through :math:`T_C \approx 69` K into the
 paramagnet at 200 K. Two early runs (2923, 2924) are dropped because
@@ -329,8 +329,8 @@ Variants
 --------
 
 The same load → group → per-run fit → trend workflow carries over to
-other magnets; two contrasting cases from the muon-school corpus show its
-range.
+other magnets. The nickel and molecular antiferromagnet examples span a
+range of precession frequencies.
 
 Ferromagnetic nickel — a metallic ferromagnet
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -380,6 +380,8 @@ intrinsic to the ordered state.
    unaffected by the offset (it cancels in :math:`T_C - T`), but
    :math:`T_C` itself is not.
 
+.. _molecular-antiferromagnet:
+
 A molecular antiferromagnet — the low-frequency contrast
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -388,12 +390,59 @@ antiferromagnet orders in a far weaker internal field and precesses more
 slowly still — a useful reminder that the same model spans three orders of
 magnitude in frequency.
 
+.. dropdown:: Download the ISIS runs
+
+   Select a run to open its file in the ISIS DataGateway.
+   If you use the automated screenshot capture, rename the downloaded
+   files from ``.NXS`` to ``.nxs`` so the scripts can find them.
+
+   .. list-table::
+      :header-rows: 1
+      :class: isis-run-table
+
+      * - MuSR run
+        - Temperature
+        - Field and purpose
+      * - `17094 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022691/dataset/24022190/datafile/24642635>`__
+        - 1.2 K
+        - Zero field
+      * - `17095 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022715/dataset/24022215/datafile/24643149>`__
+        - 2 K
+        - Zero field
+      * - `17096 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022733/dataset/24022233/datafile/24643562>`__
+        - 3 K
+        - Zero field
+      * - `17097 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022744/dataset/24022244/datafile/24643935>`__
+        - 4 K
+        - Zero field
+      * - `17098 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022792/dataset/24022292/datafile/24644645>`__
+        - 5 K
+        - Zero field
+      * - `17099 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022817/dataset/24022317/datafile/24645166>`__
+        - 6 K
+        - Zero field
+      * - `17100 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022831/dataset/24022331/datafile/24645534>`__
+        - 7 K
+        - Zero field
+      * - `17101 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022835/dataset/24022335/datafile/24645677>`__
+        - 8 K
+        - Zero field
+      * - `17102 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022843/dataset/24022343/datafile/24645850>`__
+        - 9 K
+        - Zero field
+      * - `17103 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022846/dataset/24022346/datafile/24645895>`__
+        - 10 K
+        - Zero field
+      * - `17104 <https://data.isis.stfc.ac.uk/browse/instrument/9/facilityCycle/48/investigation/24022852/dataset/24022352/datafile/24645999>`__
+        - 10 K
+        - 20 G transverse field (calibration)
+
 .. figure:: /_generated/corpus_screenshots/corpus_molafm_zf_fit.png
    :alt: Slow zero-field precession in a molecular antiferromagnet at 1.2 K
    :width: 100%
 
    The base-temperature (1.2 K) zero-field run of a molecular
-   antiferromagnet from the MUSR/ISIS corpus, fitted with the same
+   antiferromagnet on ISIS MuSR, fitted with the same
    composite model: :math:`f = 1.56\;\mathrm{MHz}`, a period of ~0.65 μs
    that is visible cycle-by-cycle over several microseconds. The fine
    16 ns time base and low per-run statistics give a high

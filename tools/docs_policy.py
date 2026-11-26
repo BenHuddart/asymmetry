@@ -109,7 +109,7 @@ def generated_images(app, doctree):
             notice = nodes.admonition(classes=["note"])
             notice += nodes.title(text="Optional generated screenshot")
             notice += nodes.paragraph(
-                text=f"Source build: {path.name} is not captured. Publishing requires ordinary GUI captures; corpus figures may use labelled placeholders."
+                text="This screenshot has not been captured for the source build."
             )
             node.replace_self(notice)
             omitted.append(path.name)

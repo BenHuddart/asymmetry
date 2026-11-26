@@ -67,15 +67,15 @@ Update documentation for any new features:
       python3 tools/harness.py docs --mode source
       open docs/_build/html/index.html
 
-Source mode needs no private corpus, capture, or inventory network access.
+Source mode runs offline without example data or screenshot capture.
 Registered missing screenshots appear as **Optional generated screenshot** notices.
 The gate rejects malformed markup, broken or ambiguous authored local/API links,
 unknown images, missing static/download assets, and other Sphinx warnings.
 Named external objects may remain unlinked, and automatic annotation hyperlinks
 are not generated; parameter and return descriptions remain readable.
 
-For publishing, prepare ordinary GUI captures and any permitted labelled corpus
-placeholders, then run ``python3 tools/harness.py docs --mode publish``. This
+For publishing, prepare ordinary GUI captures and labelled placeholders for
+any missing example-data figures, then run ``python3 tools/harness.py docs --mode publish``. This
 uses the same defect gate and also requires complete ordinary GUI assets.
 A limited source build does not certify publishing readiness. Both modes reread
 all sources, preserve build failures, and enforce a 600 KB HTML page budget.

@@ -2,18 +2,14 @@ Analysis workflows
 ==================
 
 Start with :doc:`/getting_started/quickstart` for a complete analysis using
-publicly generated data. These chapters then show how to approach particular
+synthetic data. These chapters then show how to approach particular
 experiments, mainly through the graphical interface, with selected Python
 examples. For scripting recipes, see :doc:`/reference/cookbook` and the
 :doc:`/reference/agent_workflow` command-line workflow.
 
-Most chapters are **demonstrations using private teaching measurements** from
-the WiMDA muon-school collection. Those files are not distributed with
-Asymmetry. The figures, run numbers, and fitted values describe the example
-measurements; use the methods with your own suitable data rather than expecting
-to obtain the same numerical results. Each chapter explains the inputs and
-choices to adapt. The :doc:`knight_shift_angle` chapter and explicitly labelled
-illustrations use synthetic data instead.
+Use :doc:`example_data` to find the raw runs behind the figures and fitted
+values. The :doc:`knight_shift_angle` chapter and illustrations marked as
+synthetic describe their inputs in place.
 
 If you have collected data, :doc:`calibration_grouping_emu` explains grouping
 and calibration before you move to the chapter closest to your experiment.
@@ -22,6 +18,7 @@ The linked reference pages describe the controls and their limits in detail.
 .. toctree::
    :maxdepth: 2
 
+   example_data
    calibration_grouping_emu
    dynamic_kt_copper
    photomusr_silicon_periods

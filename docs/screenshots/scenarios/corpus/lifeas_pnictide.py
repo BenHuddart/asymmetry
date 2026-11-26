@@ -1,14 +1,10 @@
 """Corpus scenarios — penetration depth in the pnictide LiFeAs (Superconductivity).
 
-Worked example ``Superconductivity/LiFeAs`` (WiMDA muon school corpus), driving
-Asymmetry through the transverse-field vortex-lattice **B_rms(T) → penetration
-depth** workflow on the "111" iron-arsenide superconductor LiFeAs. Data are the
-real PSI GPS ``.bin`` runs (``deltat_pta_gps_<run>.bin``), two samples:
-**Sample 1 "LFA"** (runs 3366–3387, T_c = 16 K) and **Sample 2 "LFA_2"** (runs
-3662–3697, T_c ≈ 12 K). The paper is the spec: F. L. Pratt *et al.*, "Enhanced
-superfluid stiffness, lowered superconducting transition temperature, and
-field-induced magnetic state of the pnictide superconductor LiFeAs," Phys. Rev.
-B **79**, 052508 (2009). See the example's ``GROUND_TRUTH.md``.
+The LiFeAs example from the Rigi school data uses the transverse-field
+vortex-lattice linewidth to measure the penetration depth. The
+input is the 40 mT temperature scan of Sample 1 (LFA, PSI GPS runs 3366–3373).
+The original analysis is F. L. Pratt et al., Phys. Rev. B 79, 052508 (2009),
+https://doi.org/10.1103/PhysRevB.79.052508.
 
 Physics. In a transverse field B₀ the sample below T_c admits a vortex lattice,
 whose inhomogeneous field distribution p(B) dephases the muon precession. The
@@ -19,10 +15,10 @@ London limit gives (paper Eq. 3)
 
     B_rms = σ_VL/γ_µ = √0.00371 · φ₀ / (3^{1/4} λ_ab)²
 
-so B_rms(T→0) → λ_ab. Sample 1's low-T plateau B_rms ≈ 1.9 mT ⇒ λ_ab = 195(2)
-nm; Sample 2's ≈ 1.2 mT ⇒ 244(2) nm (GROUND_TRUTH §5/§6/§11).
+The low-temperature B_rms plateau determines λ_ab. Pratt et al. report
+λ_ab = 195(2) nm for Sample 1.
 
-Two corpus-specific data facts drive every scenario here:
+Detector pairing, linewidth convention, and background treatment affect the fits.
 
 * **Detector pairing.** These are spin-rotated ("TF WED") GPS runs: the muon
   spin is rotated transverse, so the precession appears in the **Up/Down**
@@ -51,10 +47,8 @@ Scenarios registered:
 * ``corpus_lifeas_tf_fit`` — converged two-component TF fit on the base-T
   Sample-1 run (3366, 1.5 K, 40 mT), Up/Down pair: σ_VL → B_rms ≈ 1.8 mT
   (λ_ab ≈ 195 nm).
-* ``corpus_lifeas_brms_t`` — **headline**: both samples' B_rms(T) — the Fig. 1
-  digitised paper curves (GROUND_TRUTH §11) with the real Asymmetry Sample-1
-  fits overlaid, plateaus ≈ 1.9 / ≈ 1.2 mT, T_c ≈ 16 / 12 K, and the λ_ab =
-  195/244 nm conversions annotated via Eq. (3).
+* ``corpus_lifeas_brms_t`` — Sample 1 B_rms(T) from the per-run Asymmetry
+  fits, with the transition temperature marked.
 * ``corpus_lifeas_vortex_lineshape`` — normal vs superconducting: time-domain
   overlay of the 1.5 K (broad vortex damping) and 18 K (narrow, normal-state)
   40 mT spectra, the field-distribution broadening in time.
@@ -70,7 +64,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from asymmetry.core.fitting.sc import GaussianWidth
-from asymmetry.core.utils.constants import MAGNETIC_FLUX_QUANTUM_WB
 
 from .._base import CaptureContext
 from ._corpus import CorpusScenario, _process_events_for, register
@@ -80,7 +73,6 @@ _DATA = "Superconductivity/LiFeAs/data/deltat_pta_gps_%d.bin"
 
 # The teaching guide uses γ_µ = 0.8516 µs⁻¹/mT in its field-width conversion.
 _GAMMA = 0.8516  # µs⁻¹ per mT: σ_paper[µs⁻¹] = γ_µ · B_rms[mT]
-_PHI0_WB = float(f"{MAGNETIC_FLUX_QUANTUM_WB:.10g}")  # Wb, flux quantum
 
 # --- Sample-1 (LFA) 40 mT (400 G) temperature scan, ascending T ------------ #
 # Runs 3366–3373 are the 400 G T-scan; 3373 (18 K) is above T_c = 16 K, i.e.
@@ -98,39 +90,11 @@ _SCAN_S1: list[tuple[int, float]] = [
 _S1_BASE = 3366  # 1.5 K, deep in the mixed state (broad vortex line)
 _S1_NORMAL = 3373  # 18 K, above T_c (narrow, nuclear-only line)
 _S1_FREQ = 5.44  # 400 G Larmor line (MHz)
-_S2_BASE = 3663  # Sample 2, 1.5 K, 200 G
 
 # Transverse (Up/Down) detector pair for the spin-rotated GPS runs (0-based
 # histogram indices: 0 Forw, 1 Back, 2 Up, 3 Down, 4 Righ).
 _FWD_IDX = [2]
 _BWD_IDX = [3]
-
-# Digitised Fig. 1 B_rms(T) at B₀ = 40 mT (GROUND_TRUTH §11, 600 dpi). The
-# corpus grading target for the σ(T)/B_rms(T) trend shape and magnitude.
-_FIG1_S1: list[tuple[float, float]] = [
-    (1.6, 1.93),
-    (3.9, 1.77),
-    (7.3, 1.48),
-    (10.4, 1.04),
-    (12.6, 0.74),
-    (14.7, 0.43),
-    (16.9, 0.11),
-    (19.0, 0.02),
-]
-_FIG1_S2: list[tuple[float, float]] = [
-    (1.4, 1.31),
-    (2.9, 1.10),
-    (4.0, 1.01),
-    (5.1, 0.89),
-    (6.1, 0.86),
-    (6.8, 0.73),
-    (8.3, 0.45),
-    (9.3, 0.29),
-    (10.4, 0.17),
-    (11.5, 0.09),
-    (12.6, 0.04),
-    (14.7, 0.02),
-]
 
 # Two-component signal+background TF model:
 #   [A_1·osc·exp(−(σ_2 t)²)] + [A_3·osc·exp(−(σ_4 t)²)] + A_bg
@@ -153,12 +117,6 @@ def _brms_mT(sigma_a: float, sigma_n: float) -> float:  # noqa: N802 (physics sy
     """
     svl_a = np.sqrt(max(sigma_a**2 - sigma_n**2, 0.0))
     return GaussianWidth.GAUSSIAN_COMPONENT.value * svl_a / _GAMMA
-
-
-def _brms_from_lambda(lambda_nm: float) -> float:
-    """Paper Eq. (3): B_rms (mT) for an ab-plane penetration depth λ_ab (nm)."""
-    lam = lambda_nm * 1e-9
-    return (0.00371**0.5) * _PHI0_WB / ((3.0**0.25 * lam) ** 2) * 1e3
 
 
 def _regroup(run: int, rebin: int = 10):
@@ -288,15 +246,13 @@ def _fit_single_sigma(dataset, sigma_seed: float, freq: float) -> float:
     return abs(float({p.name: p.value for p in result.parameters}["sigma"]))
 
 
-def _fit_s1_brms_series():
-    """Fit the Sample-1 40 mT T-scan; return (T, B_rms, keep_mask).
+def _fit_s1_brms_series() -> list[dict]:
+    """Fit the Sample 1 temperature scan and return its trend rows.
 
-    Warm-starts σ downward in temperature. The two-Gaussian model is stable
-    while the VL signal dominates (low T); as the SC signal collapses toward
-    T_c the signal/background split degenerates, so ``keep_mask`` flags the
-    points where the main component still dominates (A_main ≳ A_bg).
+    Near T_c the signal/background split degenerates. The trend includes points
+    where the broad vortex component is resolved and dominates the signal.
     """
-    temps, brms, keep = [], [], []
+    rows = []
     sigma_seed = 1.05
     # Nuclear reference σ_n: the 18 K normal-state run has no vortex broadening,
     # so a *single* Gaussian gives a clean nuclear width (the two-component split
@@ -309,11 +265,19 @@ def _fit_s1_brms_series():
         # Keep points where the broad vortex component is well-defined: its σ
         # clearly exceeds the nuclear width and it still dominates the signal.
         well_defined = (s_main > 1.3 * sigma_n) and (signal_frac > 0.55)
-        temps.append(float(temp))
-        brms.append(_brms_mT(s_main, sigma_n))
-        keep.append(bool(well_defined))
+        rows.append(
+            {
+                "run_number": run,
+                "run_label": f"{temp:g} K",
+                "field": 400.0,
+                "temperature": temp,
+                "values": {"B_rms": _brms_mT(s_main, sigma_n)},
+                "errors": {"B_rms": float("nan")},
+                "include_in_trend": bool(well_defined),
+            }
+        )
         sigma_seed = max(s_main * 0.9, 0.15)
-    return np.array(temps), np.array(brms), np.array(keep, dtype=bool)
+    return rows
 
 
 # --------------------------------------------------------------------------- #
@@ -453,126 +417,49 @@ class LifeasTfFitScenario(CorpusScenario):
 
 
 # --------------------------------------------------------------------------- #
-#  3. Headline — two-sample B_rms(T) with λ_ab conversions.
+#  3. Vortex-lattice field width B_rms(T) for Sample 1.
 # --------------------------------------------------------------------------- #
-def _brms_rows(temps, brms, field, base_run, *, keep=None):
-    """Build trend-panel row dicts for one B_rms(T) series.
-
-    ``keep`` (optional, per-point bool) marks points that stay *in* the trend;
-    a ``False`` entry sets ``include_in_trend=False`` so the panel rings that
-    point in grey (a degenerate signal/background split near T_c). Absent →
-    every point is included (the digitised reference curve).
-    """
-    rows = []
-    for i, (t, b) in enumerate(zip(temps, brms)):
-        rows.append(
-            {
-                "run_number": int(base_run + i),
-                "run_label": f"{float(t):.0f} K",
-                "field": float(field),
-                "temperature": float(t),
-                "values": {"B_rms": float(b)},
-                "errors": {"B_rms": float("nan")},
-                "include_in_trend": True if keep is None else bool(keep[i]),
-            }
-        )
-    return rows
-
-
 class LifeasBrmsTScenario(CorpusScenario):
     name = "corpus_lifeas_brms_t"
     description = (
-        "LiFeAs vortex-lattice field width B_rms(T) at 40 mT for both samples in "
-        "the real Fit-Parameters trend panel (multi-series overlay): Sample 1 (real "
-        "Asymmetry two-Gaussian fits, T_c = 16 K, plateau ≈ 1.9 mT ⇒ λ_ab = 195 nm) "
-        "overlaid on Sample 2 (digitised Pratt 2009 Fig. 1, T_c ≈ 12 K, ≈ 1.2 mT ⇒ "
-        "244 nm). Mixed provenance: real fits vs a digitised reference table."
+        "LiFeAs Sample 1 vortex-lattice field width B_rms(T) at 40 mT from "
+        "two-Gaussian fits to PSI GPS runs 3366–3373."
     )
     example = EXAMPLE
     size = (1240, 820)
     requires_fit = True
 
     def build(self) -> QWidget:
-        # Native overlay of two mixed-provenance series in the real panel (PR-248):
-        #   Sample 1 = genuine per-run Asymmetry two-Gaussian fits (this work),
-        #   Sample 2 = the digitised Pratt-2009 Fig. 1 reference curve.
-        # The two series have completely different T grids and lengths — the panel
-        # assembles each independently, so no shared-x-grid assumption applies.
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
-
-        ft, fb, keep = _fit_s1_brms_series()
-        s2 = np.array(_FIG1_S2)
 
         panel = FitParametersPanel()
         panel.load_representation_series(
-            [
-                (
-                    "lifeas-s1-fit",
-                    "Sample 1 — Asymmetry fit (LFA)",
-                    _brms_rows(ft, fb, 400.0, 3366, keep=keep),
-                ),
-                (
-                    "lifeas-s2-ref",
-                    "Sample 2 — Pratt 2009 Fig. 1 (LFA₂)",
-                    _brms_rows(s2[:, 0], s2[:, 1], 200.0, 3662),
-                ),
-            ],
+            [("lifeas-s1-fit", "Sample 1 (LFA)", _fit_s1_brms_series())],
             select_id="lifeas-s1-fit",
         )
-        # Overlay both via the public PR-248 API (the equivalent of Shift-clicking
-        # the second pill): Sample 1 stays the active series.
-        panel.select_series(["lifeas-s1-fit", "lifeas-s2-ref"])
+        panel._x_combo.setCurrentText("𝑇 (K)")
+        panel._overlay_button.click()
         _process_events_for(milliseconds=80)
         return panel
 
     def settle(self, widget: QWidget) -> None:
         widget._refresh_plot()
         _process_events_for(milliseconds=200)
-        axes = list(widget._figure.axes)
-        if axes:
-            ax = axes[0]
-            ax.set_title(
-                "LiFeAs vortex-lattice linewidth B_rms(T) at B₀ = 40 mT — two samples",
-                fontsize=10,
-            )
-            ax.set_ylabel(r"VL field width  $B_\mathrm{rms}$  (mT)")
-            ax.set_xlim(0.0, 25.0)
-            ax.set_ylim(0.0, 2.15)
-
-            # λ_ab conversions via Eq. (3): on-plot annotation for an overlaid
-            # series is not a panel feature (legend carries the series *name*
-            # only), so the λ_ab plateau lines are drawn on the axes here.
-            for lam, color, sample in ((195.0, "C0", "1"), (244.0, "C1", "2")):
-                b = _brms_from_lambda(lam)
-                ax.axhline(b, color=color, ls=":", lw=1.0, alpha=0.7)
-                ax.text(
-                    19.6,
-                    b,
-                    f"  λ_ab({sample}) = {lam:.0f} nm",
-                    color=color,
-                    fontsize=8,
-                    va="center",
-                    ha="left",
-                )
-            ax.axvline(16.0, color="C0", ls="--", lw=0.8, alpha=0.5)
-            ax.axvline(12.0, color="C1", ls="--", lw=0.8, alpha=0.5)
-            ax.text(
-                16.0, 2.02, r" $T_\mathrm{c}$=16 K", color="C0", fontsize=8, va="bottom", ha="left"
-            )
-            ax.text(12.0, 2.02, r" 12 K", color="C1", fontsize=8, va="bottom", ha="right")
-            ax.text(
-                0.015,
-                0.03,
-                "Eq. (3):  B_rms = √0.00371·φ₀/(3^{1/4}λ_ab)²   ⇒   195 nm→1.91 mT, 244 nm→1.22 mT.\n"
-                "Sample 1 = real Asymmetry two-Gaussian fits (grey-ringed points near T_c drop out\n"
-                "of the trend as the signal/background split degenerates); Sample 2 = digitised Fig. 1.",
-                transform=ax.transAxes,
-                color="0.35",
-                fontsize=7.5,
-                va="bottom",
-                ha="left",
-            )
-            widget._canvas.draw()
+        ax = widget._figure.axes[0]
+        ax.set_title("LiFeAs Sample 1 at 40 mT")
+        ax.set_ylabel(r"VL field width  $B_\mathrm{rms}$  (mT)")
+        ax.axvline(16.0, color="C0", ls="--", lw=0.8, alpha=0.5)
+        ax.text(
+            16.0,
+            0.95,
+            r" $T_\mathrm{c}$ = 16 K",
+            transform=ax.get_xaxis_transform(),
+            color="C0",
+            fontsize=8,
+            ha="left",
+            va="top",
+        )
+        widget._canvas.draw()
         _process_events_for(milliseconds=120)
 
 
