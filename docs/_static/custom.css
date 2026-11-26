@@ -114,6 +114,13 @@ legend,
     white-space: normal;
 }
 
+/* Stack parameter and return labels above their descriptions at the theme's mobile breakpoint. */
+@media screen and (max-width: 768px) {
+    html.writer-html5 .rst-content dl.field-list {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
 .rst-content code.literal,
 .rst-content code.literal .pre {
     white-space: normal;
