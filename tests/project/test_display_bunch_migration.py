@@ -56,12 +56,13 @@ def test_projects_before_numbered_slots_keep_the_plot_policy_and_bunching():
     assert migrate_to_current(result) == result
 
 
-def test_legacy_active_count_limits_keep_only_recoverable_asymmetry_bounds():
+@pytest.mark.parametrize("schema_version", [42, 44])
+def test_legacy_active_count_limits_keep_only_recoverable_asymmetry_bounds(schema_version):
     asymmetry = {"auto": True, "held": [-10.0, 20.0], "quantity": "fb_asymmetry|False|None"}
     time = {"auto": False, "held": [0.5, 2.5], "quantity": "time"}
     counts = {"auto": False, "held": [400.0, 1800.0], "quantity": "raw_counts|False|None"}
     project = {
-        "schema_version": 42,
+        "schema_version": schema_version,
         "datasets": [],
         "plot_state": {
             "time_view_mode": "raw_counts",
