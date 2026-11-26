@@ -7415,16 +7415,14 @@ class PlotPanel(QWidget):
                 self._fit_components_by_run[run_key] = list(component_curves or [])
             self._fit_curves_by_key[(run_key, axis_key, fit_id)] = (t_fit, y_fit, label)
             self._fit_components_by_key[(run_key, axis_key, fit_id)] = list(component_curves or [])
-            source_factor = grouped_bunch_factors.get(run_key)
-            if fit_result is not None or fit_function or source_factor is not None:
-                self._store_fit_metadata(
-                    run_key,
-                    fit_result,
-                    fit_function=fit_function,
-                    axis_key=axis_key,
-                    fit_id=fit_id,
-                    grouped_bunch_factor=source_factor,
-                )
+            self._store_fit_metadata(
+                run_key,
+                fit_result,
+                fit_function=fit_function,
+                axis_key=axis_key,
+                fit_id=fit_id,
+                grouped_bunch_factor=grouped_bunch_factors.get(run_key),
+            )
         # Clear single fit curve
         self._fit_curve = None
         self._fit_curve_run_number = None

@@ -431,7 +431,7 @@ def test_grouped_export_reports_prepared_deadtime(mainwindow, tmp_path, settings
 
 
 @pytest.mark.parametrize("complete", [False, True], ids=["preview", "completed"])
-def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, complete):
+def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, tmp_path, complete):
     time = np.arange(256) * BIN_WIDTH_US
     field = 200.0
     frequency = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * field
@@ -490,6 +490,9 @@ def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, complete):
         np.testing.assert_allclose(exported["fit"]["t"], centres[covered], atol=1e-15)
         np.testing.assert_allclose(exported["fit"]["y"], prediction[covered])
         assert ("chi_squared" in exported["fit_metadata"]) == complete
+        path = tmp_path / "merged.fit"
+        panel._write_fit_file(path, exported)
+        assert "! Count overlay: linear interpolation at fitted-bin centres" in path.read_text()
 
     mainwindow._view_bunch_spin.setValue(1)
     for exported, (_, (native_t, native_y), _) in zip(
@@ -497,6 +500,22 @@ def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, complete):
     ):
         np.testing.assert_array_equal(exported["fit"]["t"], native_t)
         np.testing.assert_array_equal(exported["fit"]["y"], native_y)
+
+    if complete:
+        mainwindow._view_bunch_spin.setValue(2)
+        replacement = np.full_like(centres, 18000.0)
+        mainwindow._on_count_fit_completed(
+            dataset, {"result": None, "overlays": {1: (centres, replacement)}}
+        )
+        exported = panel.get_current_plot_export_data()[0]
+        assert exported["fit"]["label"] == "Count Fit"
+        assert exported["fit_metadata"] == {}
+        np.testing.assert_array_equal(exported["fit"]["t"], centres)
+        np.testing.assert_array_equal(exported["fit"]["y"], replacement)
+        path = tmp_path / "replacement.fit"
+        panel._write_fit_file(path, exported)
+        assert "! chi_squared:" not in path.read_text()
+        assert "! Count overlay:" not in path.read_text()
 
 
 def test_fb_toolbar_bunch_plot_and_text_export(mainwindow, tmp_path, monkeypatch):

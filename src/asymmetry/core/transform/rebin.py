@@ -72,7 +72,7 @@ def merge_curve_bins(
 def rebin_grouped_fit_curve(
     dataset: MuonDataset, curve: tuple, source_bunch_factor: int | None
 ) -> tuple | None:
-    """Sample a corrected count fit at fitted-bin centres and pack its predictions."""
+    """Interpolate the count fit's drawing curve at fitted-bin centres and pack it."""
     if source_bunch_factor is None or not dataset.metadata.get("grouped_time_domain"):
         return curve
     factor = dataset.metadata["grouped_time_domain_bunch_factor"]

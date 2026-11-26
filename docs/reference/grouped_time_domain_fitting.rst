@@ -188,11 +188,12 @@ once for the display. The plotted points and export tables use the same bin
 centres, summed counts and propagated errors. **Individual groups** scales
 both the sums and errors by :math:`e^{t/\tau_\mu}` at each bin centre.
 Fit previews and completed fit overlays follow the displayed binning. When
-the display combines fitted bins, the overlay samples the fit curve at their
-centres, sums the predictions on the raw count scale, and applies the lifetime
-correction at the displayed centre. The toolbar controls the plot resolution
-independently of the grouped fit's input bins. A fit overlay covers a merged
-bin when the curve covers all contributing fitted-bin centres.
+the display combines fitted bins, the overlay linearly interpolates the drawn
+fit curve at their centres, sums the values on the raw count scale, and
+applies the lifetime correction at the displayed centre. The **Bunch:**
+control changes the plotted and exported overlay independently of the grouped
+fit's input bins. A fit overlay covers a merged bin when the curve covers all
+contributing fitted-bin centres.
 
 .. image:: /_generated/screenshots/grouped_count_bunching.png
    :alt: Raw counts subplots for two detector groups at toolbar Bunch 2.

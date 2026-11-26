@@ -364,6 +364,16 @@ class PlotExportData:
         with open(fit_path, "w", encoding="utf-8") as f:
             f.write(f"! Fit curve for {payload.get('label', 'dataset')}\n")
             f.write(f"! run_number: {payload.get('run_number', '')}\n")
+            source_factor = meta.get("grouped_bunch_factor")
+            display_factor = payload.get("display_bunch_factor")
+            if (
+                source_factor is not None
+                and display_factor is not None
+                and source_factor != display_factor
+            ):
+                f.write(
+                    "! Count overlay: linear interpolation at fitted-bin centres before summing\n"
+                )
             if waterfall_offset:
                 f.write(f"! waterfall offset: {waterfall_offset:.10g}\n")
             fit_function = meta.get("fit_function") or fit.get("label") or "Fit"
