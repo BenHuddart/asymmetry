@@ -139,7 +139,7 @@ def field_decoupling_threshold_gauss(width_per_us: float) -> float:
 
 
 def exponential_relaxation(t: NDArray, A0: float, Lambda: float, baseline: float = 0.0) -> NDArray:
-    """Single-rate relaxation, A0 exp(−Lambda |t|) + baseline in percent.
+    """Single-rate relaxation, ``A0 exp(−Lambda |t|) + baseline`` in percent.
 
     The rate ``Lambda`` is in μs⁻¹. A positive rate gives a decay to ``baseline``
     and zero rate gives the constant ``A0 + baseline``.
@@ -837,7 +837,7 @@ def dynamic_gaussian_kt(
     is A0 G(t) + baseline, with G(t) the normalised polarisation.
 
     Zero rate gives the static Gaussian KT response. At zero field with
-    nu ≫ Delta the polarisation approaches exp(−2 Delta² |t| / nu).
+    nu ≫ Delta the polarisation approaches ``exp(−2 Delta² |t| / nu)``.
     See :ref:`fit-dynamic-gaussian-kt` for conventions and limits.
     """
     nu = _require_rate(nu)
