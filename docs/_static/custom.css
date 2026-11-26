@@ -1,3 +1,25 @@
+/* Use local text fonts while the theme's icon font and MathJax supply their own glyphs. */
+body,
+.btn,
+input[type],
+textarea,
+.rst-versions,
+.wy-side-nav-search > div.switch-menus > div:is(.language-switch, .version-switch) select {
+    font-family: system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+legend,
+.rst-content .toctree-wrapper > p.caption,
+.rst-content .sidebar .sidebar-title {
+    font-family: Georgia, serif;
+}
+
 /* Keep the project status readable against the sidebar background. */
 .asym-status-note {
     margin: 1em 0.8em;
@@ -81,6 +103,15 @@
 .rst-content div.math {
     max-width: 100%;
     overflow-x: auto;
+}
+
+/* The theme sizes signatures as tables. Let long identifiers wrap at min-content width. */
+.rst-content dt.sig {
+    overflow-wrap: anywhere;
+}
+
+.rst-content dt.sig .pre {
+    white-space: normal;
 }
 
 .rst-content code.literal,

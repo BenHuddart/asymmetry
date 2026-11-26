@@ -42,6 +42,7 @@ const apiMathCases = {
 const pages = values.page || [
   'index.html', 'getting_started/quickstart.html', 'explanation/reduction_pipeline.html',
   'reference/fourier_analysis.html', 'reference/parameter_trending.html', 'explanation/comparison.html',
+  'api/index.html', 'api/fitting/models.html', 'api/fitting/sc.html',
   ...searchCases.map(([query]) => `search.html?q=${encodeURIComponent(query)}`),
 ];
 const rows = [];
@@ -174,6 +175,8 @@ for (const page of pages) {
           await new Promise(resolve => setTimeout(resolve, 250));
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const nav = performance.getEntriesByType('navigation')[0];
+          const resources = performance.getEntriesByType('resource');
+          const documentWidth = document.documentElement.scrollWidth;
           const article = document.querySelector('[itemprop="articleBody"]');
           const apiMathFailures = ${JSON.stringify(apiMath)}.flatMap(({anchor, precedingInlineMath, followingParagraph}) => {
             const entry = document.getElementById(anchor)?.nextElementSibling;
@@ -205,10 +208,14 @@ for (const page of pages) {
             revision: document.querySelector('meta[name="asymmetry-source-revision"]')?.content || null,
             networkResponseMs: nav.responseEnd, transferBytes: nav.transferSize, encodedBytes: nav.encodedBodySize,
             domContentLoadedMs: nav.domContentLoadedEventEnd || null,
-            resourceTransferBytes: performance.getEntriesByType('resource').reduce((sum, entry) => sum + entry.transferSize, 0), loadMs: nav.loadEventEnd || null,
+            resourceTransferBytes: resources.reduce((sum, entry) => sum + entry.transferSize, 0),
+            largestRequests: resources.filter(entry => entry.transferSize > 0)
+              .sort((a, b) => b.transferSize - a.transferSize).slice(0, 5)
+              .map(entry => ({url: entry.name, bytes: entry.transferSize})),
+            loadMs: nav.loadEventEnd || null,
             fcpMs: performance.getEntriesByName('first-contentful-paint')[0]?.startTime || null,
             lcpMs: docsMetrics.lcp, contentReadyMs, observationEndMs: performance.now(), cls,
-            fontsReady, mathReady, overflow: document.documentElement.scrollWidth > ${viewport.width},
+            fontsReady, mathReady, documentWidth, overflow: documentWidth > ${viewport.width},
             literalMath: article?.textContent.includes(':math:') || false,
             mathErrors: document.querySelectorAll('mjx-merror').length,
             ...(${apiMath.length} ? {apiMathFailures} : {}),
