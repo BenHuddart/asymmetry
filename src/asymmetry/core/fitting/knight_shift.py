@@ -241,7 +241,8 @@ class ClogstonJaccarinoResult:
 
     ``slope`` is ``dK/dχ`` — proportional to the muon hyperfine coupling at the
     site — and ``intercept`` is the χ-independent (orbital/diamagnetic) shift K0.
-    ``*_err`` are 1σ uncertainties; ``n`` is the number of points used.
+    ``slope_err`` and ``intercept_err`` are 1σ uncertainties and are ``nan``
+    for an unweighted fit with only two points. ``n`` is the number of points used.
     """
 
     slope: float
@@ -256,14 +257,24 @@ def clogston_jaccarino_fit(
     knight: Sequence[float],
     sigma_knight: Sequence[float] | None = None,
 ) -> ClogstonJaccarinoResult:
-    """Weighted linear fit of Knight shift vs susceptibility (API-only).
+    """Linear fit of Knight shift vs susceptibility (API-only).
 
     Fits ``K = slope·χ + intercept`` with temperature as the implicit parameter —
     the Clogston–Jaccarino construction — where the slope ``dK/dχ`` measures the
-    muon hyperfine coupling and the intercept the χ-independent shift. Points with
-    a non-finite χ, K, or σ are dropped; ``sigma_knight`` (if given) weights the
-    fit by ``1/σ²`` (else unit weights). Raises ``ValueError`` with fewer than two
-    points or no spread in χ (the slope is then undetermined).
+    muon hyperfine coupling and the intercept the χ-independent shift.
+
+    Supplied ``sigma_knight`` values are absolute standard errors in the same
+    units as ``knight``. The fit uses inverse-variance weights, and the coefficient
+    errors follow from those weights even with two usable points. Without
+    ``sigma_knight``, the fit uses equal weights and estimates the residual
+    variance as the sum of squared residuals divided by ``n - 2``. With two
+    usable points this variance is unavailable and both coefficient errors are
+    ``nan``. See `NIST's least-squares reference
+    <https://www.itl.nist.gov/div898/handbook/pmd/section4/pmd431.htm>`_.
+
+    The fit drops points with non-finite χ or K, and points with non-finite or
+    non-positive supplied standard errors. It raises ``ValueError`` with fewer
+    than two usable points or no spread in χ.
 
     There is no GUI entry point because the muon experiment does not measure χ;
     pair the trended Knight shift (exported per :ref:`knight-shift`) with an
@@ -288,7 +299,8 @@ def clogston_jaccarino_fit(
 
     mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(w)
     x, y, w = x[mask], y[mask], w[mask]
-    if x.size < 2:
+    n = int(x.size)
+    if n < 2:
         raise ValueError("Clogston–Jaccarino fit needs at least two finite points")
 
     s = float(np.sum(w))
@@ -302,10 +314,18 @@ def clogston_jaccarino_fit(
 
     slope = (s * sxy - sx * sy) / delta
     intercept = (sxx * sy - sx * sxy) / delta
+    if sigma_knight is not None:
+        variance_scale = 1.0
+    elif n == 2:
+        variance_scale = math.nan
+    else:
+        residuals = y - (slope * x + intercept)
+        variance_scale = float(residuals @ residuals) / (n - 2)
+
     return ClogstonJaccarinoResult(
         slope=slope,
         intercept=intercept,
-        slope_err=math.sqrt(s / delta),
-        intercept_err=math.sqrt(sxx / delta),
-        n=int(x.size),
+        slope_err=math.sqrt(variance_scale * (s / delta)),
+        intercept_err=math.sqrt(variance_scale * (sxx / delta)),
+        n=n,
     )

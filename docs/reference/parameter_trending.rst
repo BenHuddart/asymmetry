@@ -2083,7 +2083,19 @@ pair the exported Knight shift with an independent susceptibility:
 
    result = clogston_jaccarino_fit(chi, knight, sigma_knight)  # χ, K, σ_K per T
    print(result.slope, result.slope_err)   # dK/dχ ∝ hyperfine coupling
-   print(result.intercept)                 # χ-independent (orbital) shift
+   print(result.intercept, result.intercept_err)  # χ-independent shift
+
+Supply ``sigma_knight`` as absolute standard errors in the same units as
+``knight``. Inverse-variance weighting then gives coefficient standard errors
+even for two distinct usable points. Without ``sigma_knight``, ordinary least
+squares estimates the common shift variance from the sum of squared residuals
+divided by :math:`n - 2`, where :math:`n` is the number of usable points. Two
+points determine the fitted line but leave no residual degrees of freedom, so
+``slope_err`` and ``intercept_err`` are both ``nan``. For a fixed susceptibility
+unit, expressing the shift in ppm multiplies the slope, intercept, and their
+standard errors by :math:`10^6` relative to expressing it as a fraction.
+See the `NIST least-squares reference
+<https://www.itl.nist.gov/div898/handbook/pmd/section4/pmd431.htm>`_.
 
 *When to use this.* Convert to the Knight shift whenever the quantity of interest
 is the *shift* of a precession frequency from the applied-field value — tracking a

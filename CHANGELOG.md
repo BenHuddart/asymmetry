@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep Knight shifts and composite fit values visible when a required uncertainty
   is unavailable, and use recorded covariance to recover missing marginal errors.
+- Use residual scatter for unweighted Clogston–Jaccarino slope and intercept
+  errors and mark them unavailable when only two usable points determine the line.
 - Explain how the corannulene integral scans give half-recovery fields and
   which independent calibration an absolute muonium fraction requires.
 
