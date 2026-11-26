@@ -1,8 +1,8 @@
 Analysis workflows
 ==================
 
-Start with :doc:`/getting_started/quickstart` for a complete analysis using
-synthetic data. These chapters then show how to approach particular
+Start with :doc:`/getting_started/quickstart` for a complete analysis of one
+ISIS run. These chapters then show how to approach particular
 experiments, mainly through the graphical interface, with selected Python
 examples. For scripting recipes, see :doc:`/reference/cookbook` and the
 :doc:`/reference/agent_workflow` command-line workflow.

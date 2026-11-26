@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fit the public ISIS ARGUS copper run 76935 in the Quickstart, then reopen
+  the saved project and export its fit report.
 - Require acquired-data corpus figures for GitHub Pages and retain labelled
   placeholders for local documentation previews.
 - Restore the EMU dead-time comparison and the HAL high-field FFT and MaxEnt

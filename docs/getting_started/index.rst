@@ -1,9 +1,9 @@
 Getting started
 ===============
 
-New to Asymmetry? Start here. These pages take you from installing the program
-through a complete first analysis with generated data, and introduce the handful
-of concepts that the rest of the documentation assumes.
+Install Asymmetry, then download and fit a copper run from ISIS ARGUS.
+The key concepts explain the runs, datasets, fits, and projects used
+throughout the documentation.
 
 .. toctree::
    :maxdepth: 2

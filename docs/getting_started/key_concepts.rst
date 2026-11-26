@@ -6,7 +6,7 @@ the physics of a muon experiment rather than onto files or windows, and the same
 objects appear whether you drive the program from the graphical interface or
 script against the :mod:`asymmetry.core` API. This page introduces them once, so
 that the rest of the documentation can refer to them without ceremony. For a
-first analysis without measurement files, follow :doc:`quickstart`. For
+first analysis with one ISIS run, follow :doc:`quickstart`. For
 the underlying physics, see :doc:`/explanation/musr_primer`.
 
 Runs and datasets

@@ -1,149 +1,111 @@
 Quickstart
 ==========
 
-Make a synthetic dataset, fit its relaxation, and keep a result you can reopen
-and share. This walkthrough needs no measurement files. You will create three
-files in a folder of your choice:
+Fit one zero-field μSR run from a copper sample on ISIS ARGUS, then save,
+reopen, and export the result. The fit illustrates the characteristic dip and
+recovery of a static Gaussian Kubo–Toyabe curve.
 
-* ``first_run.nxs`` — the generated detector counts;
-* ``first_analysis.asymp`` — the analysis settings and fitted result;
-* ``first_fit.txt`` — a readable report of the fitted parameters.
-
-Launch Asymmetry
+Download the run
 ----------------
 
-Install Asymmetry using :doc:`installation`. Open **Asymmetry** from the Windows
-Start menu or macOS Applications folder. For a Python installation, install the
-``all`` extra, or the ``gui,hdf5,root`` combination described there, then run:
+Open the `ISIS DataGateway page for ARGUS run 76935
+<https://data.isis.stfc.ac.uk/browse/instrument/24/facilityCycle/120415884/investigation/113613069/dataset/117743616/datafile/123013750>`__
+and use its download control to save the single NeXus file
+``ARGUS00076935.nxs`` in your working folder.
+
+Open the data
+-------------
+
+Install Asymmetry using :doc:`installation`. Open **Asymmetry** from the
+Windows Start menu or macOS Applications folder. For a Python installation,
+include the ``gui,hdf5`` extras and run the following command.
 
 .. code-block:: bash
 
    asymmetry-gui
 
 The window opens with an empty **Data Browser** on the left, a plot in the
-centre, and an **Untitled** project tab above them.
+centre, and an **Untitled** project tab. Choose **File → Open Data File(s)…**,
+open ``ARGUS00076935.nxs``, and select run **76935** in the **Data Browser**.
 
-Generate and save the data
---------------------------
+The plot shows asymmetry, the normalised difference between the forward and
+backward detector groups, in percent. Error bars show counting uncertainty.
+Use Asymmetry's default reduction for this run. The
+:doc:`/explanation/reduction_pipeline` explains how the detector counts become
+asymmetry, and :doc:`/reference/grouping_calibration` shows how to check the
+settings for your own measurements.
 
-#. Open **File → Generate Synthetic Run…**.
-#. Keep **Template run** set to **Built-in: Ideal pulsed F/B (ISIS-style)**,
-   **Generation** set to **Forward/backward asymmetry**, and the default
-   **Model A(t)**, an exponential relaxation plus a constant.
-#. Enter these values in the parameter table:
+Fit a model
+-----------
 
-   .. list-table::
-      :header-rows: 1
-      :widths: 35 25 40
+#. Open **Analysis → Fit** and use the **Single** tab.
+#. Click **Edit…**, then **Edit as text**. Replace the expression with
+   ``StaticGKT_ZF + Constant`` and click **OK**.
+#. Leave the initial parameter values and fit range at their defaults and
+   click **Fit**.
 
-      * - Parameter
-        - Value
-        - Meaning
-      * - ``A_1``
-        - 24
-        - Relaxing part of the asymmetry, in percent.
-      * - ``Lambda``
-        - 0.3
-        - Relaxation rate, in μs⁻¹.
-      * - ``A_bg``
-        - 2
-        - Constant part of the asymmetry, in percent.
+``StaticGKT_ZF`` describes the zero-field relaxation expected for a static
+Gaussian distribution of local magnetic fields. ``Constant`` allows a flat
+asymmetry offset. The fitted width ``Delta`` (Δ) is about 0.394 μs⁻¹, with an
+estimated standard uncertainty of about 0.0012 μs⁻¹. Click the **χ²ᵣ**
+indicator beside **Fit** to see the parameter estimates and uncertainties.
+The fit converges and Asymmetry rates it **poor** because the reduced χ² of
+about 1.45 is above the expected band for this fit.
 
-#. Set **Total events** to 40 (40 million events). Leave the detector background
-   at its default, keep **Fixed seed** checked, and set its number to 23. The
-   seed makes this particular random draw repeatable in the same environment.
-#. Click **Generate** and wait for it to finish. Click **Save as NeXus…**,
-   save ``first_run.nxs`` in your chosen folder, then click **Close**.
-
-The generated counts have random counting fluctuations around the chosen model.
-The parameters are teaching choices, with no material attribution. The NeXus
-file keeps the counts; the project you save later will refer to that file.
-
-Open and inspect the saved run
-------------------------------
-
-#. Choose **File → New Project** to open an empty project tab.
-#. Close the earlier **Untitled** tab with its **×**, and choose **Discard**
-   when asked about unsaved changes. Its generated counts are already in
-   ``first_run.nxs``; this discards only the unsaved session.
-#. In the remaining tab, choose **File → Open Data File(s)…** and select
-   ``first_run.nxs``. Select its row in the **Data Browser** if needed.
-
-The central plot shows **asymmetry**: the normalised difference between the
-forward and backward detector groups, displayed in percent. It starts near
-26 % and relaxes towards the 2 % constant component. Error bars describe the
-counting uncertainty of each point. The synthetic file already supplies the
-grouping and calibration needed for this example.
-
-For the route from counts to the plotted signal, explore
-:doc:`/explanation/reduction_pipeline`. For real measurements, grouping and
-calibration need checking against the instrument and experiment;
-:doc:`/reference/grouping_calibration` explains those choices.
-
-Fit and check the result
-------------------------
-
-#. Open **Analysis → Fit**, then click **Wizard…** in the **Single** tab.
-#. If no field direction is recorded, choose **Zero field**. Click **Analyze**
-   and wait for the recommendation.
-#. Check that its expression is an exponential plus a constant. The wizard
-   can label this **Current model**, because it is also the initial model in
-   the fit panel. The recommendation is a starting point for checking the data.
-#. Check **Show residuals** before applying the fit. A residual is the
-   difference between a data point and the fitted curve. Look for fluctuations
-   around zero, rather than a persistent slope or wave: structure can reveal
-   a missing contribution even when a summary statistic looks acceptable.
-#. Click **Apply this fit**, close the wizard, and set the plot's upper **X:**
-   limit to 10 μs to inspect the relaxation.
-
-The fitted ``Lambda`` should be close to the generating value, 0.3 μs⁻¹.
-Counting fluctuations mean the fitted values need not equal the inputs exactly.
-The parameter table includes estimated uncertainties; these describe the fit
-under its model and error assumptions, rather than every possible experimental
-error. Click the fit's χ² indicator for its result summary. A reduced χ² near one
-is expected for this example, but neither convergence nor χ² alone establishes
-that a model is physically appropriate. See :doc:`/reference/assessing_a_fit`
-for the checks to use with your own measurements.
-
-Some late-time bins have too few counts to provide usable asymmetry errors
-and are omitted from this fit. You can still inspect the residual plot. The
-additional residual autocorrelation and FFT checks look for repeating patterns;
-they need an uninterrupted time grid and are unavailable here. Setting the
-plot’s **X:** limit changes the displayed range, not the fitted range.
-
-.. image:: /_generated/screenshots/quickstart_first_fit.png
-   :alt: The saved synthetic first analysis, with an exponential-plus-constant fit
-      over the reloaded data and fitted parameters in the Single tab.
-   :width: 100%
-
-*The walkthrough's generated file, fitted through the wizard and saved as a
-project. Your fitted values should be close to the teaching inputs; the final
-digits depend on the count draw and numerical environment.*
-
-Save the analysis
------------------
-
-Choose **File → Save Project**, enter ``first_analysis.asymp``, and wait for
-saving to finish. Keep ``first_run.nxs`` alongside it. The project records
-settings and fits; it does not embed the detector counts. To return to the
-analysis, choose **File → Open Project…** and select ``first_analysis.asymp``.
-Keep both files when moving the analysis to another machine. Source relocation
-and verification are explained in :doc:`/reference/project_files`.
-
-Export a result
+Inspect the fit
 ---------------
 
-Choose **Analysis → Export fit report…**, save ``first_fit.txt``, and open it in
-a text editor. It lists the model, fitted parameters with their uncertainties,
-and fit statistics. Check that it includes ``Lambda`` close to 0.3 μs⁻¹. This
-readable report complements the project and source file; it is not a reloadable
-analysis on its own.
+Set the plot's upper **X:** limit to 10 μs to see the dip near 4.4 μs and
+the recovery towards the late-time level. The **X:** control changes the
+display range. The **Fit range** in the **Single** tab controls which data
+the fit uses.
+
+A residual is the measured asymmetry minus the fitted value. Compare the
+points with the curve around the dip and along the recovery. The vertical gap
+is positive for a point above the curve and negative below it. Look for
+stretches of points on the same side of the curve and compare the gaps with
+the error bars. If you have two saved fits for the run, **Compare…** in
+**Saved fits** plots their :ref:`normalised residuals <saved-single-fits>`.
+See :doc:`/reference/assessing_a_fit` for more ways to assess a result.
+
+.. figure:: /_generated/corpus_screenshots/corpus_quickstart_first_fit.png
+   :alt: The fitted copper run with its dip and recovery, the Single fit tab,
+      and the fit rating next to the reduced chi-squared.
+   :width: 100%
+
+   ARGUS run 76935 fitted with ``StaticGKT_ZF + Constant``. The plot shows the
+   first 10 μs of the run, and the fit uses the default range.
+
+Save and reopen the analysis
+----------------------------
+
+#. Choose **File → Save Project**, enter ``first_analysis.asymp``, and wait
+   for saving to finish.
+#. Close the project tab. Choose **File → Open Project…** and select
+   ``first_analysis.asymp``. Select run **76935** if needed and check that
+   **Saved fits** in the **Single** tab lists ``StaticGKT_ZF + Constant``.
+   If Asymmetry shows **Historical fit**, the plot may hide the curve,
+   while the fitted parameters and report export remain available.
+
+The project records the analysis settings and fit and refers to the original
+NeXus file for detector counts. Keep ``ARGUS00076935.nxs`` with the project
+when moving the analysis. See :doc:`/reference/project_files` for source
+relocation and verification.
+
+Export a fit report
+-------------------
+
+In the reopened project, choose **Analysis → Export fit report…**, save
+``first_fit.txt``, and open the report in a text editor. Check that the model
+is ``StaticGKT_ZF + Constant`` and that ``A_1``, ``Delta``, and ``A_bg`` are
+listed with their uncertainties. ``Delta`` is about 0.394 μs⁻¹, as in the
+fit panel. The report is a readable record to share alongside the project
+and run file.
 
 Where to go next
 ----------------
 
-* :doc:`key_concepts` — runs, asymmetry, fits, and projects.
-* :doc:`/reference/simulation` — one-click presets and other synthetic signals.
-* :doc:`/reference/fitting` and :doc:`/reference/fit_wizard` — fit controls and
-  model selection.
-* :doc:`/workflows/index` — demonstrations to adapt to your own measurements.
+* :doc:`key_concepts` introduces runs, asymmetry, fits, and projects.
+* :doc:`/reference/fitting` explains fit controls and how to interpret the
+  results.
+* :doc:`/workflows/index` offers examples to adapt to your own measurements.

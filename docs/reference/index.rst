@@ -2,7 +2,7 @@ Reference
 =========
 
 Use this reference to look up a task, its controls, and the assumptions behind
-its result. For a complete first analysis without measurement files, start with
+its result. For a complete first analysis of one ISIS run, start with
 the :doc:`/getting_started/quickstart`. The :doc:`/workflows/index` shows
 specialist demonstrations to adapt to your own measurements, and the
 :doc:`cookbook` provides scripting recipes.

@@ -65,8 +65,8 @@ choices, and results between commands.
 
 For the operations between counts and asymmetry, follow
 :doc:`/explanation/reduction_pipeline`. If μSR analysis is new to you,
-:doc:`/getting_started/quickstart` provides a runnable synthetic GUI example
-before you adapt these commands to measurement files.
+:doc:`/getting_started/quickstart` shows how to download and analyse one ISIS
+run in the GUI.
 
 Other tasks have their own entry points:
 

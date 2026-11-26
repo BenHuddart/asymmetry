@@ -75,7 +75,7 @@ For the GUI with modern NeXus and ROOT readers:
    python -m pip install "asymmetry[gui,hdf5,root]"
    asymmetry-gui
 
-Continue with :doc:`quickstart` to generate data and complete a first analysis.
+Continue with :doc:`quickstart` to download and fit one ISIS run.
 That walkthrough needs the ``gui`` and ``hdf5`` extras, both included in ``all``.
 
 Optional dependencies
