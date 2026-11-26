@@ -241,8 +241,9 @@ If an ideal triangular vortex lattice in the London limit describes the
 sample, the conversion above gives
 :math:`\lambda_L(10\,\mathrm{K})=\sqrt{75780/\sigma_{G,\mathrm{sc}}}
 \approx 255\,\mathrm{nm}`. This estimate assumes the sample dominates the
-precessing signal and uses :math:`\sigma_2=\sqrt{2}\sigma_G` when applying
-Brandt's second-moment relation. The two-field comparison alone leaves the
+precessing signal and the fitted Gaussian approximates the second moment
+of the asymmetric line. Brandt's relation uses the conversion
+:math:`\sigma_2=\sqrt{2}\sigma_G`. The two-field comparison alone leaves the
 lattice structure, anisotropy, and any additional precessing components
 unresolved. Bernhard *et al.* discuss the conditions for relating this
 linewidth to penetration depth in separately measured cuprate samples.
