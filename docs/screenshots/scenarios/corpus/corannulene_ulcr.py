@@ -36,9 +36,8 @@ Scenarios registered:
 * ``corpus_corannulene_temperature``   — 40 K vs 410 K subtracted scans overlaid:
   R4 and R3 **narrow sharply** (Lorentzian, molecular rotation) while R1/R2
   broaden and weaken — the "molecular dynamics" signature (GT §6/§6b).
-* ``corpus_corannulene_repolarisation`` — LF repolarisation P_µ(B) at 40 K and
-  410 K (log field): the muonium step with **B½ ≈ 100 G (40 K) / ≈ 200 G (410 K)**,
-  matching the paper's stated 100–400 G half-polarisation range (GT §6d).
+* ``corpus_corannulene_repolarisation`` — normalised integral asymmetry at 40 K
+  and 410 K with the half-recovery field marked for each scan.
 
 ``requires_fit = True`` where a real iminuit fit runs at capture time.
 """
@@ -477,38 +476,42 @@ class CorannuleneTemperatureScenario(CorpusScenario):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 4. Repolarisation — the muonium step, B½ vs paper
+# 4. Half recovery in the low-field scans
 # ══════════════════════════════════════════════════════════════════════════
+def _normalised_recovery(field: np.ndarray, asymmetry: np.ndarray) -> tuple[np.ndarray, float]:
+    """Scale the field-ordered scan between its empirical references and locate half recovery."""
+    low = np.flatnonzero(field <= 3.0)
+    high = np.flatnonzero((1_000.0 <= field) & (field <= 2_500.0))
+    if low.size == 0 or high.size == 0:
+        raise ValueError("Half recovery requires observations in both reference intervals")
+    low_reference = float(asymmetry[low].mean())
+    step = float(asymmetry[high].mean()) - low_reference
+    if step <= 0.0:
+        raise ValueError("The high-field reference must exceed the low-field reference")
+    recovery = (asymmetry - low_reference) / step
+
+    # Between the references, interpolate only across an observed rising pair.
+    start, stop = low[-1], high[0]
+    rising = recovery[start : stop + 1]
+    crossings = np.flatnonzero((rising[:-1] <= 0.5) & (0.5 < rising[1:]))
+    if crossings.size != 1:
+        raise ValueError(
+            "Half recovery must have one rising bracket between the reference intervals"
+        )
+    index = start + crossings[0]
+    bracket = slice(index, index + 2)
+    half_field = float(np.interp(0.5, recovery[bracket], field[bracket]))
+    return recovery, half_field
+
+
 class CorannuleneRepolarisationScenario(CorpusScenario):
     name = "corpus_corannulene_repolarisation"
     description = (
-        "LF muon repolarisation P_µ(B) at 40 K and 410 K (log field, 0–5000 G): "
-        "the integral asymmetry rises through the muonium step, half-recovered at "
-        "B½ ≈ 100 G (40 K) / ≈ 200 G (410 K) — inside the paper's stated "
-        "100–400 G range and signalling the ≈ 80 % muonium fraction (GT §6d)."
+        "Normalised integral asymmetry versus longitudinal field at 40 K and 410 K, "
+        "with half-recovery fields interpolated between measured points."
     )
     example = EXAMPLE
     size = (1120, 720)
-
-    @staticmethod
-    def _repol(runs):
-        scan = _build_scan_pct(runs)
-        x = np.asarray(scan.x, dtype=float)
-        v = np.asarray(scan.value, dtype=float)
-        order = np.argsort(x)
-        x, v = x[order], v[order]
-        # Plateau anchors: low-field (B→0) and the high-field repolarisation top.
-        lo = float(np.mean(v[x <= 5.0]))
-        hi = float(np.max(v))
-        p = (v - lo) / (hi - lo)  # normalised P_µ: 0 at B→0, 1 at the plateau
-        # B½: where P crosses 0.5 on the monotonic rising branch (up to the
-        # plateau peak); np.interp needs an increasing sample vector, so cut at
-        # the argmax before interpolating.
-        peak = int(np.argmax(v))
-        rise = (x > 5.0) & (np.arange(len(x)) <= peak)
-        xr, pr = x[rise], p[rise]
-        b_half = float(np.interp(0.5, pr, xr))
-        return x, p, b_half, lo, hi
 
     def capture(self, ctx) -> Path:  # noqa: D401
         from asymmetry.gui.widgets.mpl_canvas import create_canvas
@@ -517,29 +520,29 @@ class CorannuleneRepolarisationScenario(CorpusScenario):
         _warm_canvas.draw()
         _pump_events(60)
 
-        x40, p40, bh40, _, _ = self._repol(_REPOL_40K)
-        x41, p41, bh41, _, _ = self._repol(_REPOL_410K)
-
         figure, canvas = create_canvas(layout="tight")
         axes = figure.add_subplot(111)
-        for x, p, bh, temp, colour in (
-            (x40, p40, bh40, "40 K", tokens.TRACE_BLUE),
-            (x41, p41, bh41, "410 K", tokens.TRACE_VERMILLION),
+        for runs, temperature, colour in (
+            (_REPOL_40K, "40 K", tokens.TRACE_BLUE),
+            (_REPOL_410K, "410 K", tokens.TRACE_VERMILLION),
         ):
-            m = x > 0.0  # log axis: drop the true-zero-field point
+            scan = _build_scan_pct(runs)
+            recovery, half_field = _normalised_recovery(scan.x, scan.value)
+            visible = scan.x > 0.0  # Zero field contributes to the reference outside the log plot.
             axes.plot(
-                x[m], p[m], "o-", ms=4.0, lw=1.4, color=colour, label=f"{temp}  (B½ ≈ {bh:.0f} G)"
+                scan.x[visible],
+                recovery[visible],
+                "o",
+                ms=5.0,
+                color=colour,
+                label=f"{temperature} (B½ ≈ {round(half_field, -1):.0f} G)",
             )
-            axes.axvline(bh, color=colour, ls=":", lw=1.1)
+            axes.vlines(half_field, 0.0, 0.5, color=colour, ls=":", lw=1.1)
         axes.axhline(0.5, color=tokens.PLOT_ZERO_LINE, lw=0.8, ls="--")
-        axes.axvspan(
-            100.0, 400.0, color=tokens.TRACE_GREEN, alpha=0.10, label="paper 100–400 G B½ range"
-        )
         axes.set_xscale("log")
         axes.set_xlabel("Longitudinal field B (G, log scale)")
-        axes.set_ylabel("Normalised repolarisation P_µ(B)")
-        axes.set_title("Corannulene LF repolarisation — muonium step (≈ 80 % Mu fraction)")
-        axes.set_xlim(8.0, 2200.0)
+        axes.set_ylabel("Normalised integral asymmetry")
+        axes.set_title("Half recovery in corannulene")
         axes.set_ylim(-0.05, 1.08)
         axes.legend(loc="upper left", fontsize="small", framealpha=0.92)
         axes.grid(True, which="both", color=tokens.PLOT_GRID, linewidth=0.7)

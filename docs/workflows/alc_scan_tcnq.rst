@@ -394,29 +394,54 @@ to the onset of molecular motion.
    coupling lies along it, sharpening R3 and R4, while the less favourably
    oriented R1/R2 sites broaden instead.
 
-A complementary muonium fingerprint: repolarisation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Half recovery in the low-field scans
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The same runs at low field give a second, independent measurement. A
-longitudinal-field **repolarisation** curve plots the recovered muon
-polarisation against field: as the field decouples the muon from its electron,
-the polarisation climbs through a step whose size is the **muonium fraction**.
+Build a separate **Integral scan** for each low-field block (runs
+``118242``–``118259`` at 40 K and ``118204``–``118221`` at 410 K), covering
+0–5000 G. Each point is the integral asymmetry :math:`A(B)` at longitudinal
+field :math:`B`. As the field decouples the muon and electron spins, more of
+the muon polarisation is recovered.
+
+The figure script averages the integral asymmetry over 0–3 G for the low-field
+reference :math:`A_\mathrm{low}` and over 1000–2500 G for the high-field
+reference :math:`A_\mathrm{high}`, using each scan's own measurements. The
+high-field interval samples the shoulder near the top of the recovery. The
+integral asymmetry falls at 3500 and 5000 G in both scans. The script plots
+the normalised recovery
+
+.. math::
+
+   R(B) = \frac{A(B)-A_\mathrm{low}}{A_\mathrm{high}-A_\mathrm{low}}.
+
+To find :math:`B_{1/2}`, the script interpolates linearly in field between
+the two adjacent measurements that bracket :math:`R(B)=0.5` on the rise
+(54–100 G at 40 K and 180–300 G at 410 K). Choosing individual measurements
+within the high-field interval instead of averaging them changes the estimate
+across a span of about 5 G at 40 K and 25 G at 410 K. For fixed reference
+intervals, adding independent Gaussian perturbations with the per-point
+counting errors and recomputing both references gives a counting-only central
+68 % interval with a half-width of about 1 G and 2 G, respectively.
 
 .. figure:: /_generated/corpus_screenshots/corpus_corannulene_repolarisation.png
    :width: 90%
    :align: center
-   :alt: Normalised repolarisation curves P_µ(B) at 40 K and 410 K on a log field
-      axis. Both rise through a muonium step; the half-repolarisation field is
-      about 100 G at 40 K and 233 G at 410 K, both inside the paper's shaded
-      100-400 G band.
+   :alt: Normalised integral asymmetry at 40 K and 410 K on a logarithmic field
+      axis. A horizontal line at 0.5 marks half recovery. Vertical lines mark
+      about 100 G at 40 K and 220 G at 410 K. Both curves decline beyond the
+      high-field shoulder.
 
-   The low-field repolarisation curves at 40 K and 410 K (log field). Both climb
-   through the muonium step that signals ≈ 80 % of implanted muons forming
-   muonium, and the half-repolarisation field :math:`B_{1/2}` — where the curve
-   crosses halfway — moves from **≈ 100 G at 40 K to ≈ 233 G at 410 K**, both
-   inside the paper's stated 100–400 G range (shaded). The shift to higher field
-   on warming means the polarisation is recovered more slowly, a complementary
-   readout of the same hyperfine physics the µLCR dips measure directly.
+   Half of the rise between the reference levels is reached at about **100 G
+   at 40 K** and **220 G at 410 K**. The zero-field measurement contributes
+   to the low-field reference and is omitted from the logarithmic axis.
+
+Rescaling assigns the same unit height and midpoint to steps of the same
+shape even when their original heights differ. Estimating the absolute
+muonium fraction requires an independently calibrated full-polarisation
+sample asymmetry, corrections for detector balance and background, and a
+model of how much polarisation the muonium component recovers between the
+reference fields. The four hyperfine couplings come from the fitted resonance
+centres in the wide-field scan above.
 
 Assumptions and limitations
 ---------------------------
@@ -438,12 +463,9 @@ Assumptions and limitations
   corannulene dip positions are robust to a small over-shoot of the Quartic
   between R1 and R2, but a precise depth or area would not be.
 
-- **Absolute amplitudes are not graded.** The corannulene paper plots µLCR
-  signals in arbitrary units with the two temperatures offset, and the
-  repolarisation step here is normalised to its high-field plateau — so the
-  *positions and widths* (hence the couplings and the narrowing contrast) are the
-  reproduced quantities, not absolute dip depths or the absolute 0.80 muonium
-  fraction.
+- **Resonance amplitudes.** The corannulene paper plots the µLCR spectra in
+  arbitrary units with the two temperatures offset. Compare the fitted
+  centres and the changes in linewidth across temperatures.
 
 - **Field geometry labelling.** These scans are longitudinal-field sweeps, though
   the corannulene NeXus metadata mislabels the field state; the applied-field
@@ -453,9 +475,9 @@ References
 ----------
 
 - M\. Gaboardi, F. L. Pratt, C. Milanese, J. Taylor, J. Siegel, and
-  F\. Fernandez-Alonso, Carbon **155**, 432 (2019) — the published µLCR study of
-  corannulene reproduced in the advanced section: four muoniated-radical
-  hyperfine couplings and their motional narrowing.
+  F\. Fernandez-Alonso, Carbon **155**, 432 (2019) — the study of corannulene's
+  four muoniated-radical hyperfine couplings and their motional narrowing.
+  `DOI <https://doi.org/10.1016/j.carbon.2019.08.087>`__.
 - F\. L. Pratt *et al.*, Magn. Reson. Chem. **38**, S27 (2000) — muonium addition
   to TCNQ and the muoniated radical.
 - R\. M. Macrae, Magn. Reson. Chem. **38**, S33 (2000) — the *ab initio*
