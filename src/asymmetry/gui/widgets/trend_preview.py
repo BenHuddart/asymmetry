@@ -134,6 +134,7 @@ def sample_preview_range(
     error_value: float | None,
     use_x_errors: bool,
     show_residuals: bool,
+    expected: tuple[int, float] | None,
 ) -> PreviewRange:
     """Sample the curve and evaluate residuals at the selected observations."""
     curve_x, curve_y = sample_parameter_model(model, params, x_min, x_max, windows)
@@ -149,7 +150,11 @@ def sample_preview_range(
             x = primary.x[mask]
             xerr = primary.xerr[mask] if use_x_errors and primary.xerr is not None else None
             predict = partial(model.function, **{p.name: p.value for p in params})
-            residuals = (x, trend_residuals(predict, x, primary.y[mask], weights.sigma, xerr))
+            values = trend_residuals(predict, x, primary.y[mask], weights.sigma, xerr)
+            if expected is None or (
+                x.size == expected[0] and np.isclose(np.sum(values**2), expected[1])
+            ):
+                residuals = (x, values)
     return PreviewRange(idx, x_min, x_max, windows, mask, curve_x, curve_y, fitted, residuals)
 
 

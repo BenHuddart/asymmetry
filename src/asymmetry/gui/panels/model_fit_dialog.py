@@ -1166,14 +1166,7 @@ class ModelFitDialog(QDialog):
         return result is not None and bool(getattr(result, "success", False))
 
     def _launch_preview_sample(self) -> None:
-        """Snapshot inputs on the GUI thread and start the off-thread sampler.
-
-        Coalescing: if a sample is already in flight, mark one pending request
-        and return; the ready/error handler drains it. Otherwise snapshot every
-        input as plain data, bump the generation token, and launch the worker.
-        """
-        # A timer event already dequeued before closeEvent stopped the timer
-        # must not spin up a worker on the shut-down runner.
+        """Queue a sample over detached inputs on the fit worker."""
         if self._shutting_down:
             return
         if self._preview_active:
@@ -1185,8 +1178,6 @@ class ModelFitDialog(QDialog):
             return
 
         series = self._preview_series()
-        # Empty when the primary series carries no finite point — nothing to
-        # sample; show the empty state and skip the worker entirely.
         primary = series[0] if series else None
         if primary is None or not np.any(np.isfinite(np.asarray(primary.x, dtype=float))):
             preview.set_state("empty")
@@ -1201,6 +1192,7 @@ class ModelFitDialog(QDialog):
             mode, value, use_x = self._error_mode(), self._error_value(), self._use_x_errors()
             parameters = fit_range.parameters
             show = show_residuals
+            expected = None
             if fitted:
                 mode, value = ErrorMode(result.error_mode), result.error_value
                 use_x = bool(result.uses_effective_variance)
@@ -1213,11 +1205,16 @@ class ModelFitDialog(QDialog):
                             *result.local_parameters.get(gid, ()),
                         ]
                     )
-                    show &= result.per_group_n_points.get(gid, 0) > 0
+                    expected = (
+                        result.per_group_n_points.get(gid, 0),
+                        result.per_group_chi_squared.get(gid, np.nan),
+                    )
                     if mode.uses_column:
                         show &= gid in result.column_error_sources
-                elif mode.uses_column:
-                    show &= result.column_error_source is not None
+                else:
+                    expected = (result.n_points, result.chi_squared)
+                    if mode.uses_column:
+                        show &= result.column_error_source is not None
                 if mode in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE):
                     show &= value is not None
             range_snapshots.append(
@@ -1237,6 +1234,7 @@ class ModelFitDialog(QDialog):
                         error_value=value,
                         use_x_errors=use_x,
                         show_residuals=show,
+                        expected=expected,
                     ),
                 )
             )

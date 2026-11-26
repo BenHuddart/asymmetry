@@ -995,6 +995,12 @@ combine with :math:`\sigma_x`).
        xerr={"g1": nu_errors_g1, "g2": nu_errors_g2},
    )
 
+In the cross-group Results window, **Residuals** displays each group's
+normalised residuals over the fitted observations. Their squared sum is the
+group's contribution to the joint objective. The fitted model shown on each
+original group in Fit Parameters retains its windows and weighting. When
+parameters are shared, assess fit quality for the entire study.
+
 Recursive trending (model-fit results as a series)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

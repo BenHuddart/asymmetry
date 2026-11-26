@@ -105,15 +105,18 @@ def migrate_trend_column_floor(data: dict) -> None:
             return
         for item in value.values():
             walk(item)
-        model_fits = value.get("model_fits")
-        if isinstance(model_fits, dict):
+        for key in ("model_fits", "local_model_fits"):
+            model_fits = value.get(key)
+            if not isinstance(model_fits, dict):
+                continue
             for fit in model_fits.values():
                 if not isinstance(fit, dict) or not isinstance(fit.get("ranges"), list):
                     continue
                 for entry in fit["ranges"]:
                     result = entry.get("result") if isinstance(entry, dict) else None
                     if isinstance(result, dict) and (
-                        result.get("covariance") is not None
+                        key == "local_model_fits"
+                        or result.get("covariance") is not None
                         or (type(result.get("n_points")) is int and result["n_points"] > 0)
                     ):
                         mark(result)

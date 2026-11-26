@@ -3217,25 +3217,18 @@ class CrossGroupFitResult:
     global_uncertainties: dict[str, float] = field(default_factory=dict)
     local_uncertainties: dict[str, dict[str, float]] = field(default_factory=dict)
     message: str = ""
-    #: Requested error mode, retained for refitting.
     error_mode: str = ErrorMode.COLUMN.value
     #: Number of fitted points across all groups (0 if unknown).
     n_points: int = 0
     uses_effective_variance: bool = False
-    #: Per-group costs use the same mask and weighting as the joint objective.
-    #: SCATTER rescales uncertainties, leaving these unit-weight RSS values unchanged.
+    #: Per-group contributions to the joint objective.
     per_group_chi_squared: dict[str, float] = field(default_factory=dict)
-    #: Number of points that entered the fit for each group (post mask/window).
     per_group_n_points: dict[str, int] = field(default_factory=dict)
-    #: ``(names, matrix)`` of free GLOBAL parameter correlations derived from
-    #: the Minuit covariance (``corr_ij = cov_ij / sqrt(cov_ii * cov_jj)``).
-    #: ``None`` when unavailable: fewer than two free global parameters, a
-    #: failed fit, or no covariance from Minuit.
     global_correlations: tuple[list[str], list[list[float]]] | None = None
     input_width_contexts: dict[str, dict] = field(default_factory=dict)
     computation_revision: str | None = None
     column_error_sources: dict[str, ColumnErrorSource] = field(default_factory=dict)
-    column_error_floor_applied: bool | None = None
+    column_error_floored_groups: tuple[str, ...] | None = None
     error_value: float | None = None
 
     def __post_init__(self) -> None:
@@ -3254,6 +3247,12 @@ class CrossGroupFitResult:
         return self.n_points - n_free
 
     @property
+    def column_error_floor_applied(self) -> bool | None:
+        """Whether the floor changed any contributing group's uncertainties."""
+        groups = self.column_error_floored_groups
+        return None if groups is None else bool(groups)
+
+    @property
     def quality_reason(self) -> str | None:
         """Why the joint result lacks a χ² reference law, when applicable."""
         reason = trend_weighting_reason(
@@ -3265,12 +3264,7 @@ class CrossGroupFitResult:
         return quality_inapplicability_reason(self.dof, reason)
 
     def to_dict(self) -> dict:
-        """Canonical, JSON-safe serialization.
-
-        ``ParameterSet``\\ s serialize as lists of ``{name, value, min, max,
-        fixed}`` dicts (see ``asymmetry.core.fitting.parameter_models._parameter_set_to_dicts``), matching the
-        shape already used by the GUI's project-state serializers.
-        """
+        """Serialize the joint result with its per-group statistics."""
         return {
             "input_width_contexts": dict(self.input_width_contexts),
             "success": bool(self.success),
@@ -3278,7 +3272,7 @@ class CrossGroupFitResult:
             "chi_squared": float(self.chi_squared),
             "reduced_chi_squared": recorded_statistic(self.reduced_chi_squared),
             "column_error_sources": dict(self.column_error_sources),
-            "column_error_floor_applied": self.column_error_floor_applied,
+            "column_error_floored_groups": self.column_error_floored_groups,
             "error_value": self.error_value,
             "global_parameters": _parameter_set_to_dicts(self.global_parameters),
             "local_parameters": {
@@ -3395,7 +3389,9 @@ class CrossGroupFitResult:
             input_width_contexts=dict(data.get("input_width_contexts", {})),
             success=success,
             computation_revision=data.get("computation_revision"),
-            column_error_floor_applied=data.get("column_error_floor_applied"),
+            column_error_floored_groups=tuple(data["column_error_floored_groups"])
+            if data.get("column_error_floored_groups") is not None
+            else None,
             error_value=data.get("error_value"),
             column_error_sources={
                 str(group): ColumnErrorSource(source)
@@ -4090,7 +4086,7 @@ def global_fit_parameter_model(
     empty_group_messages = []
     input_width_contexts = {}
     column_error_sources = {}
-    column_error_floor_applied = False
+    column_error_floored_groups = []
     for group in groups:
         x = np.asarray(group.x, dtype=float)
         y = np.asarray(group.y, dtype=float)
@@ -4120,7 +4116,8 @@ def global_fit_parameter_model(
                     computation_revision=computation.COMPUTATION_REVISION,
                 )
             empty_group_messages.append(message)
-        column_error_floor_applied |= weights.floor_applied
+        if weights.floor_applied:
+            column_error_floored_groups.append(group.group_id)
         if error_mode.uses_column and weights.sigma.size:
             column_error_sources[group.group_id] = column_error_source(
                 group.yerr, group.yerr_estimated, mask
@@ -4309,7 +4306,9 @@ def global_fit_parameter_model(
         global_correlations=global_correlations,
         input_width_contexts=input_width_contexts,
         column_error_sources=column_error_sources,
-        column_error_floor_applied=column_error_floor_applied if error_mode.uses_column else None,
+        column_error_floored_groups=tuple(column_error_floored_groups)
+        if error_mode.uses_column
+        else None,
         error_value=error_value,
         computation_revision=computation.COMPUTATION_REVISION,
     )

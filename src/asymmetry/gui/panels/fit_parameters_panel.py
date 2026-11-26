@@ -70,6 +70,7 @@ from asymmetry.core.fitting.composite_parameters import (
     CompositeExpressionError,
     CompositeParameterDefinition,
 )
+from asymmetry.core.fitting.cross_group import project_cross_group_fit
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_APPLIED_FIELD,
@@ -111,7 +112,7 @@ from asymmetry.core.fitting.sc.trend_width import (
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
-from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupDialogOutput, CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -2156,132 +2157,38 @@ class FitParametersPanel(QWidget):
             )
         return copied
 
-    def _build_cross_group_group_model_fit(
-        self,
-        *,
-        parameter_name: str,
-        x_key: str,
-        group_id: str,
-        model: ParameterCompositeModel,
-        fit_result: CrossGroupFitResult,
-        fit_x_min: float,
-        fit_x_max: float,
-    ) -> ParameterModelFit:
-        param_result = ParameterSet()
-        fit_params = ParameterSet()
-        uncertainties: dict[str, float] = {}
-
-        global_params = fit_result.global_parameters
-        local_params = fit_result.local_parameters.get(group_id, ParameterSet())
-        fixed_params = fit_result.fixed_parameters
-
-        for pname in model.param_names:
-            if pname in local_params:
-                src = local_params[pname]
-                err = fit_result.local_uncertainties.get(group_id, {}).get(pname)
-            elif pname in global_params:
-                src = global_params[pname]
-                err = fit_result.global_uncertainties.get(pname)
-            elif pname in fixed_params:
-                src = fixed_params[pname]
-                err = None
-            else:
-                src = Parameter(
-                    name=pname,
-                    value=float(model.param_defaults.get(pname, 0.0)),
-                    fixed=(pname == "shape_factor_a"),
-                )
-                err = None
-
-            fit_param = Parameter(
-                name=src.name,
-                value=float(src.value),
-                min=float(src.min),
-                max=float(src.max),
-                fixed=bool(src.fixed),
-            )
-            fit_params.add(fit_param)
-            param_result.add(
-                Parameter(
-                    name=fit_param.name,
-                    value=fit_param.value,
-                    min=fit_param.min,
-                    max=fit_param.max,
-                    fixed=fit_param.fixed,
-                )
-            )
-            if isinstance(err, (int, float)) and np.isfinite(float(err)):
-                uncertainties[pname] = float(err)
-
-        result = ParameterModelFitResult(
-            success=fit_result.success,
-            computation_revision=fit_result.computation_revision,
-            input_width_context=fit_result.input_width_contexts.get(group_id),
-            chi_squared=float(fit_result.chi_squared),
-            reduced_chi_squared=float(fit_result.reduced_chi_squared),
-            parameters=param_result,
-            uncertainties=uncertainties,
-            message=fit_result.message,
-            error_mode=fit_result.error_mode,
-            error_value=fit_result.error_value,
-            column_error_source=fit_result.column_error_sources.get(group_id),
-            column_error_floor_applied=fit_result.column_error_floor_applied,
-            uses_effective_variance=fit_result.uses_effective_variance,
-        )
-
-        x_min_value: float | None = float(fit_x_min) if np.isfinite(fit_x_min) else None
-        x_max_value: float | None = float(fit_x_max) if np.isfinite(fit_x_max) else None
-
-        model_snapshot = ParameterCompositeModel(
-            component_names=list(model.component_names),
-            operators=list(model.operators),
-        )
-        fit_range = ModelFitRange(
-            x_min=x_min_value,
-            x_max=x_max_value,
-            model=model_snapshot,
-            parameters=fit_params,
-            result=result,
-        )
-        return ParameterModelFit(
-            parameter_name=parameter_name,
-            x_key=x_key,
-            ranges=[fit_range],
-            active=True,
-        )
-
     def _apply_cross_group_fit_to_groups(
         self,
         *,
         parameter_name: str,
         x_key: str,
         selected_groups: list[_GroupFitData],
-        output: object,
+        output: CrossGroupDialogOutput,
     ) -> None:
-        fit_result = getattr(output, "fit_result", None)
-        model = getattr(output, "model", None)
-        fit_x_min = getattr(output, "fit_x_min", float("nan"))
-        fit_x_max = getattr(output, "fit_x_max", float("nan"))
-        if not isinstance(fit_result, CrossGroupFitResult):
-            return
-        if not isinstance(model, ParameterCompositeModel):
-            return
+        fit_result = output.fit_result
         if not fit_result.success:
             return
 
+        windows = parse_fit_windows(output.config.get("windows"))
+        use_x_errors = bool(output.config.get("use_x_errors", False))
         for group in selected_groups:
             existing = self._group_fit_results.get(group.group_id)
-            if existing is None:
+            if existing is None or (
+                fit_result.per_group_n_points
+                and not fit_result.per_group_n_points.get(group.group_id)
+            ):
                 continue
 
-            group_fit = self._build_cross_group_group_model_fit(
+            group_fit = project_cross_group_fit(
                 parameter_name=parameter_name,
                 x_key=x_key,
                 group_id=group.group_id,
-                model=model,
+                model=output.model,
                 fit_result=fit_result,
-                fit_x_min=float(fit_x_min),
-                fit_x_max=float(fit_x_max),
+                fit_x_min=output.fit_x_min,
+                fit_x_max=output.fit_x_max,
+                windows=windows,
+                use_x_errors=use_x_errors,
             )
             next_model_fits = dict(existing.model_fits)
             next_model_fits[parameter_name] = group_fit
@@ -5185,9 +5092,16 @@ class FitParametersPanel(QWidget):
             for name, (x_vals, y_vals, y_err, x_err, fit, width_context) in jobs.items():
                 new_ranges: list[ModelFitRange] = []
                 for rng in fit.ranges:
-                    error_mode = (
-                        rng.result.error_mode if rng.result is not None else ErrorMode.COLUMN.value
+                    previous = rng.result
+                    mode = (
+                        ErrorMode(previous.error_mode) if previous is not None else ErrorMode.COLUMN
                     )
+                    value = previous.error_value if previous is not None else None
+                    if (previous is not None and previous.shares_joint_parameters) or (
+                        mode in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE) and value is None
+                    ):
+                        new_ranges.append(rng)
+                        continue
                     try:
                         result = fit_parameter_model(
                             x=x_vals,
@@ -5197,7 +5111,8 @@ class FitParametersPanel(QWidget):
                             parameters=rng.parameters,
                             x_min=rng.x_min,
                             x_max=rng.x_max,
-                            error_mode=error_mode,
+                            error_mode=mode,
+                            error_value=value,
                             windows=rng.windows,
                             xerr=x_err,
                             width_context=width_context,
@@ -5205,7 +5120,11 @@ class FitParametersPanel(QWidget):
                     except Exception:
                         new_ranges.append(rng)
                         continue
-                    new_ranges.append(replace(rng, parameters=result.parameters, result=result))
+                    new_ranges.append(
+                        replace(rng, parameters=result.parameters, result=result)
+                        if result.success
+                        else rng
+                    )
                 updated[name] = replace(fit, ranges=new_ranges)
             return updated
 

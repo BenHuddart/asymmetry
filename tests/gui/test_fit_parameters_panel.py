@@ -41,6 +41,7 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.trend_result import ColumnErrorSource
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.mainwindow import _inspector_scroll_area
+from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupDialogOutput
 from asymmetry.gui.panels.fit_parameters_panel import (
     FitParametersPanel,
     _FitRow,
@@ -2032,10 +2033,11 @@ def test_cross_group_fit_success_updates_each_group_model_fit(panel: FitParamete
         message="Fit successful",
     )
 
-    output = SimpleNamespace(
+    output = CrossGroupDialogOutput(
         fit_result=fit_result,
         model=model,
         x_key="field",
+        config={},
         fit_x_min=90.0,
         fit_x_max=250.0,
         groups=[
@@ -2065,39 +2067,6 @@ def test_cross_group_fit_success_updates_each_group_model_fit(panel: FitParamete
     assert fit_b.ranges[0].result.parameters["b"].value == pytest.approx(0.23)
     assert fit_a.ranges[0].result.parameters["m"].value == pytest.approx(0.002)
     assert fit_b.ranges[0].result.parameters["m"].value == pytest.approx(0.002)
-
-
-def test_build_cross_group_group_model_fit_defaults_shape_factor_a_to_fixed(
-    panel: FitParametersPanel,
-) -> None:
-    model = ParameterCompositeModel(["SC_PWaveAxial"])
-    fit_result = CrossGroupFitResult(
-        success=True,
-        chi_squared=1.0,
-        reduced_chi_squared=0.5,
-        global_parameters=ParameterSet([Parameter("sigma_0", value=1.0)]),
-        local_parameters={"g1": ParameterSet([Parameter("Tc", value=20.0)])},
-        fixed_parameters=ParameterSet(
-            [
-                Parameter("gap_ratio", value=2.0, fixed=True),
-                Parameter("sigma_bg", value=0.0, fixed=True),
-            ]
-        ),
-    )
-
-    fit = panel._build_cross_group_group_model_fit(
-        parameter_name="Lambda",
-        x_key="temperature",
-        group_id="g1",
-        model=model,
-        fit_result=fit_result,
-        fit_x_min=1.0,
-        fit_x_max=30.0,
-    )
-
-    shape_factor = fit.ranges[0].parameters["shape_factor_a"]
-    assert shape_factor.value == 0.0
-    assert shape_factor.fixed is True
 
 
 def test_set_fit_results_copies_global_params_per_group(panel: FitParametersPanel) -> None:
@@ -2507,11 +2476,14 @@ def test_apply_cross_group_fit_keeps_existing_composite_definitions(
     )
     panel._group_fit_results = {"g1": group}
 
-    output = SimpleNamespace(
+    output = CrossGroupDialogOutput(
         fit_result=fit_result,
         model=model,
         fit_x_min=100.0,
         fit_x_max=200.0,
+        x_key="field",
+        groups=[],
+        config={},
     )
 
     panel._apply_cross_group_fit_to_groups(

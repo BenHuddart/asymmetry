@@ -233,6 +233,7 @@ class ParameterModelFitResult:
     uses_effective_variance: bool | None = None
     error_value: float | None = None
     column_error_floor_applied: bool | None = None
+    shares_joint_parameters: bool = False
 
     def __post_init__(self) -> None:
         dof = self.dof
@@ -258,6 +259,7 @@ class ParameterModelFitResult:
             "error_mode": self.error_mode,
             "error_value": self.error_value,
             "column_error_floor_applied": self.column_error_floor_applied,
+            "shares_joint_parameters": self.shares_joint_parameters,
             "column_error_source": self.column_error_source,
             "uses_effective_variance": self.uses_effective_variance,
             "n_points": self.n_points,
@@ -304,6 +306,7 @@ class ParameterModelFitResult:
             error_value=data.get("error_value"),
             column_error_source=None if source is None else ColumnErrorSource(source),
             column_error_floor_applied=data.get("column_error_floor_applied"),
+            shares_joint_parameters=bool(data.get("shares_joint_parameters", False)),
             uses_effective_variance=data.get("uses_effective_variance"),
             n_points=int(data.get("n_points", 0)),
             parameters=_deserialize_parameter_set(raw_parameters),
@@ -327,7 +330,9 @@ class ParameterModelFitResult:
     @property
     def dof(self) -> int | None:
         """Residual degrees of freedom where the observation count is known."""
-        return self.n_points - len(self.parameters.free_parameters) if self.n_points else None
+        if self.shares_joint_parameters or not self.n_points:
+            return None
+        return self.n_points - len(self.parameters.free_parameters)
 
     @property
     def quality_reason(self) -> str | None:
@@ -336,6 +341,11 @@ class ParameterModelFitResult:
         reason = trend_weighting_reason(
             self.error_mode, sources, self.uses_effective_variance, self.column_error_floor_applied
         )
+        if reason is None and self.shares_joint_parameters:
+            reason = (
+                "This residual χ² is one group's contribution to a fit with shared parameters. "
+                "The quality verdict applies to the joint fit."
+            )
         return quality_inapplicability_reason(self.dof, reason)
 
     def assess_quality(self, confidence: float = 0.95) -> FitQuality | None:
@@ -401,6 +411,7 @@ def trend_fit_statistics(result: ParameterModelFitResult | CrossGroupFitResult) 
     }
     if isinstance(result, ParameterModelFitResult):
         source = result.column_error_source
+        summary["shares_joint_parameters"] = result.shares_joint_parameters
         summary["column_error_source"] = None if source is None else source.value
         summary["effective_y_error_mode"] = result.effective_error_mode
     else:

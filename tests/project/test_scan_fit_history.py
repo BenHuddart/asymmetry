@@ -22,6 +22,7 @@ def test_legacy_column_floor_recovers_known_scan_and_single_series_executions():
             },
             "cross_group_fit_configs": {"groups": {"error_mode": "column"}},
         },
+        "global_fit_windows": {"a": {"local_model_fits": {"c": {"ranges": [{"result": result}]}}}},
         "batches": [
             {"extra": {"fit_history": {"records": [{"kind": "baseline", "result": dict(result)}]}}}
         ],
@@ -34,6 +35,8 @@ def test_legacy_column_floor_recovers_known_scan_and_single_series_executions():
     assert state["model_fits"]["single"]["ranges"][0]["result"] == expected | {"n_points": 3}
     assert state["model_fits"]["ambiguous"]["ranges"][0]["result"] == result
     assert state["cross_group_fit_configs"]["groups"]["error_mode"] == "column"
+    local_fits = migrated["global_fit_windows"]["a"]["local_model_fits"]
+    assert local_fits["c"]["ranges"][0]["result"] == expected
     assert migrated["batches"][0]["extra"]["fit_history"]["records"][0]["result"] == expected
     assert original["fit_parameters_state"]["model_fits"]["single"]["ranges"][0]["result"] == (
         result | {"n_points": 3}

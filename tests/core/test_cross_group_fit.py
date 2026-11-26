@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from asymmetry.core.fitting.cross_group import project_cross_group_fit
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ErrorMode,
@@ -12,6 +13,38 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterGroupData,
     global_fit_parameter_model,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+
+def test_cross_group_projection_defaults_shape_factor_a_to_fixed() -> None:
+    model = ParameterCompositeModel(["SC_PWaveAxial"])
+    fit_result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        global_parameters=ParameterSet([Parameter("sigma_0", value=1.0)]),
+        local_parameters={"g1": ParameterSet([Parameter("Tc", value=20.0)])},
+        fixed_parameters=ParameterSet(
+            [
+                Parameter("gap_ratio", value=2.0, fixed=True),
+                Parameter("sigma_bg", value=0.0, fixed=True),
+            ]
+        ),
+    )
+
+    fit = project_cross_group_fit(
+        parameter_name="Lambda",
+        x_key="temperature",
+        group_id="g1",
+        model=model,
+        fit_result=fit_result,
+        fit_x_min=1.0,
+        fit_x_max=30.0,
+    )
+
+    shape_factor = fit.ranges[0].parameters["shape_factor_a"]
+    assert shape_factor.value == 0.0
+    assert shape_factor.fixed is True
 
 
 @pytest.mark.parametrize(

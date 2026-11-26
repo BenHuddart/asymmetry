@@ -85,6 +85,7 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._x_key = x_key
         self._groups = groups
         self._result: CrossGroupFitResult | None = None
+        self._last_config: dict[str, object] | None = None
         self._fitted_groups: list[ParameterGroupData] = list(groups)
         self._range_roles: list[dict[str, str]] = []
         self._range_results: dict[int, CrossGroupFitResult] = {}
@@ -917,13 +918,8 @@ class CrossGroupFitDialog(ModelFitDialog):
     def output(self) -> CrossGroupDialogOutput | None:
         if self._result is None:
             return None
-        config = getattr(self, "_last_config", self._collect_config())
-        fit_x_min = float("nan")
-        fit_x_max = float("nan")
-        if self._fit.ranges:
-            r = self._fit.ranges[0]
-            fit_x_min = float(r.x_min) if r.x_min is not None else float("nan")
-            fit_x_max = float(r.x_max) if r.x_max is not None else float("nan")
+        config = self._last_config if self._last_config is not None else self._collect_config()
+        lower, upper = config.get("fit_x_min"), config.get("fit_x_max")
         return CrossGroupDialogOutput(
             model=self._fit.ranges[0].model
             if self._fit.ranges
@@ -931,7 +927,7 @@ class CrossGroupFitDialog(ModelFitDialog):
             fit_result=self._result,
             groups=getattr(self, "_fitted_groups", self._groups),
             x_key=self._x_key,
-            fit_x_min=fit_x_min,
-            fit_x_max=fit_x_max,
+            fit_x_min=float(lower) if lower is not None else float("nan"),
+            fit_x_max=float(upper) if upper is not None else float("nan"),
             config=config,
         )

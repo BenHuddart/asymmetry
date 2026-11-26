@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFitResult,
     evaluate_parameter_model_fit,
     parse_fit_windows,
+    windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 from asymmetry.core.fitting.sc.trend_width import (
@@ -50,6 +52,7 @@ from asymmetry.core.fitting.sc.trend_width import (
     WidthSource,
     cross_group_width_sources,
 )
+from asymmetry.core.fitting.trend_result import ErrorMode, resolve_trend_weights, trend_residuals
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import tokens
@@ -192,6 +195,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._batch_id: str | None = None
         self._parameter_name: str | None = None
         self._x_key: str = "run"
+        self._fit_windows: list[tuple[float, float]] | None = None
         self._fit_x_min: float = float("nan")
         self._fit_x_max: float = float("nan")
         #: Study-carried axis labels (Phase 3): when set they override the
@@ -1049,13 +1053,6 @@ class GlobalParameterFitWindow(QMainWindow):
         x_arr = np.asarray(xs, dtype=float)
         y_arr = np.asarray(ys, dtype=float)
         e_arr = np.asarray(es, dtype=float)
-        invalid_err = ~np.isfinite(e_arr) | (e_arr <= 0)
-        if np.any(invalid_err):
-            finite = np.abs(y_arr[np.isfinite(y_arr)])
-            fallback = max(float(np.nanmedian(finite)) * 0.02, 1e-9) if finite.size else 1e-3
-            e_arr = e_arr.copy()
-            e_arr[invalid_err] = fallback
-
         order = np.argsort(x_arr)
         x_arr = x_arr[order]
         y_arr = y_arr[order]
@@ -1110,6 +1107,7 @@ class GlobalParameterFitWindow(QMainWindow):
         batch_id: str | None = None,
         x_label: str | None = None,
         group_variable_label: str | None = None,
+        windows: list[tuple[float, float]] | None = None,
     ) -> None:
         # Decorations belong to the captured fit identified by batch_id.
         if batch_id is not None and batch_id != self._batch_id:
@@ -1124,6 +1122,7 @@ class GlobalParameterFitWindow(QMainWindow):
         self._groups = groups
         self._model = model
         self._result = result
+        self._fit_windows = windows
         self._fit_x_min = float(fit_x_min)
         self._fit_x_max = float(fit_x_max)
         self._x_label_override = x_label or None
@@ -1153,6 +1152,7 @@ class GlobalParameterFitWindow(QMainWindow):
             batch_id=study.study_id,
             x_label=getattr(study, "x_label", None),
             group_variable_label=getattr(study, "group_variable_label", None),
+            windows=parse_fit_windows(study.config.get("windows")),
         )
         self.setWindowTitle(f"Global Parameter Fit — {study.name}")
         self.set_stale(stale, stale_reason)
@@ -1340,6 +1340,7 @@ class GlobalParameterFitWindow(QMainWindow):
         # state that a concurrent set_results may rebind on the GUI thread.
         result = self._result
         model = self._model
+        windows = self._fit_windows
         fit_x_min = self._fit_x_min
         fit_x_max = self._fit_x_max
         x_key = self._x_key
@@ -1353,6 +1354,7 @@ class GlobalParameterFitWindow(QMainWindow):
                     show_components,
                     result=result,
                     model=model,
+                    windows=windows,
                     fit_x_min=fit_x_min,
                     fit_x_max=fit_x_max,
                     x_key=x_key,
@@ -1591,6 +1593,7 @@ class GlobalParameterFitWindow(QMainWindow):
         # Error-mode chip.
         mode_text = {
             "column": "column σ",
+            "column_stabilized": "stabilised column σ",
             "percent": "percent σ",
             "absolute": "absolute σ",
             "none": "no errors",
@@ -1743,20 +1746,9 @@ class GlobalParameterFitWindow(QMainWindow):
         fit_x_min: float,
         fit_x_max: float,
         x_key: str,
+        windows: list[tuple[float, float]] | None,
     ) -> dict | None:
-        """Evaluate one group's cross-group fit curve (and optional components).
-
-        Pure: operates only on the explicitly-passed ``result``/``model``/x-range
-        and the ``show_components`` flag — never ``self`` GUI state, no widget or
-        matplotlib access — so the fit-curve worker can call it off the GUI
-        thread without racing ``set_results`` (which rebinds ``self._result`` /
-        ``self._model`` on the GUI thread). Returns
-        ``{"xx", "yy", "components", "pulls"}`` — where ``pulls`` is the
-        ``(x, pull)`` residual arrays evaluated at the *data* x (always computed,
-        so the Residuals toggle is a cache-backed redraw, never an inline eval) —
-        ``{"error": msg}`` when the model rejects the parameters, or ``None``
-        when there is nothing to draw.
-        """
+        """Sample a captured group curve and its objective residuals off thread."""
         if model is None or result is None:
             return None
         kwargs = self._model_kwargs(result, model, group.group_id)
@@ -1785,35 +1777,31 @@ class GlobalParameterFitWindow(QMainWindow):
                 else None
             )
             yy = np.asarray(model.function(xx, **kwargs), dtype=float)
-            pulls = self._compute_group_pulls(group, model=model, kwargs=kwargs)
+            pulls = self._compute_group_pulls(
+                group, result, partial(model.function, **kwargs), fit_x_min, fit_x_max, windows
+            )
         except KeyError as exc:
             return {"error": str(exc)}
         return {"xx": xx, "yy": yy, "components": components, "pulls": pulls}
 
     @staticmethod
-    def _compute_group_pulls(
-        group: ParameterGroupData, *, model, kwargs: dict[str, float]
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        """Return ``(xs, pulls)`` for ``(data − model)/σ`` at the *data* x, or None.
-
-        Pure — evaluates the model at the group's data x (N points, cheap next to
-        the 800-sample curve) so the residual pulls ride along in the same
-        off-thread worker payload and the Residuals toggle never re-evaluates the
-        model on the GUI thread. May raise ``KeyError`` (caught by the caller,
-        which turns the whole group into an ``{"error": …}`` entry).
-        """
-        x = np.asarray(group.x, dtype=float)
-        y = np.asarray(group.y, dtype=float)
-        e = np.asarray(group.yerr, dtype=float)
-        mask = np.isfinite(x) & np.isfinite(y)
-        if not np.any(mask):
+    def _compute_group_pulls(group, result, predict, fit_x_min, fit_x_max, windows):
+        mode = ErrorMode(result.error_mode)
+        value = result.error_value
+        if mode.uses_column and group.group_id not in result.column_error_sources:
             return None
-        xm = x[mask]
-        ym = y[mask]
-        em = e[mask] if e.shape == y.shape else np.full_like(ym, np.nan)
-        model_y = np.asarray(model.function(xm, **kwargs), dtype=float)
-        sigma = np.where(np.isfinite(em) & (em > 0), em, np.nan)
-        pulls = (ym - model_y) / sigma
+        if mode in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE) and value is None:
+            return None
+        x, y = np.asarray(group.x, dtype=float), np.asarray(group.y, dtype=float)
+        lower = fit_x_min if np.isfinite(fit_x_min) else None
+        upper = fit_x_max if np.isfinite(fit_x_max) else None
+        selected = windows_mask(x, windows, lower, upper)
+        weights = resolve_trend_weights(x, y, group.yerr, selected, mode, value)
+        if not weights.sigma.size:
+            return None
+        mask = weights.mask
+        xe = group.xerr[mask] if result.uses_effective_variance and group.xerr is not None else None
+        xm, pulls = x[mask], trend_residuals(predict, x[mask], y[mask], weights.sigma, xe)
         order = np.argsort(xm)
         return xm[order], pulls[order]
 
