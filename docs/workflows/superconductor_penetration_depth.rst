@@ -291,7 +291,7 @@ nuclear-dipolar background :math:`\sigma_{bg}`, and subtract
 \lambda`.
 
 Cross-reference — LiFeAs at 40 mT
---------------------------------
+-----------------------------------
 
 The LiFeAs Sample 1 scan uses PSI GPS runs 3366–3373, with nominal
 setpoints from 1.5 to 18 K. The setpoints label the runs and figures. The
