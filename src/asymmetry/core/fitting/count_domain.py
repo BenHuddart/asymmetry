@@ -144,15 +144,12 @@ def _guard_beta_collision(model_fn: Callable[..., NDArray]) -> None:
         )
 
 
-# --- cost functions ---------------------------------------------------------
-
-
-def _cost_value(observations, model: NDArray[np.float64]) -> float:
-    if not np.all(np.isfinite(model)):
-        return _INF
+def _cost_value(observations, model: NDArray[np.float64], *, restore_invalid=False) -> float:
     if isinstance(observations, GaussianObservations):
+        if not np.all(np.isfinite(model)):
+            return _INF
         return gaussian_chi2(observations.values, model, observations.sigma)
-    return poisson_deviance(observations.counts, model)
+    return poisson_deviance(observations.counts, model, restore_invalid=restore_invalid)
 
 
 def _validate_cost(cost: str) -> str:
@@ -430,7 +427,7 @@ def fit_single_histogram(
         )
 
     def total_cost(*args) -> float:
-        return _cost_value(observations, predict(args))
+        return _cost_value(observations, predict(args), restore_invalid=True)
 
     m = _solve(free, total_cost, minos=minos, cancel_callback=cancel_callback)
     model_values = predict([m.values[i] for i in range(len(free_names))])
@@ -440,6 +437,7 @@ def fit_single_histogram(
         free_names,
         observations=observations,
         model_values=model_values,
+        chi_squared=_cost_value(observations, model_values),
         followers=followers,
         success_message="Single-histogram count fit successful",
         failure_prefix="Single-histogram count fit failed",
@@ -623,8 +621,8 @@ def _fit_fb_count_groups(
         return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b, g_bwd)
 
     def total_cost(*args) -> float:
-        return _cost_value(observations_f, predict_f(args)) + _cost_value(
-            observations_b, predict_b(args)
+        return _cost_value(observations_f, predict_f(args), restore_invalid=True) + _cost_value(
+            observations_b, predict_b(args), restore_invalid=True
         )
 
     m = _solve(free, total_cost, minos=minos, explicit_hesse=True, cancel_callback=cancel_callback)

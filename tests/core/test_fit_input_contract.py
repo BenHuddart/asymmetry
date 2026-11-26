@@ -1,5 +1,7 @@
 """Likelihood boundaries and independent limiting values for fit objectives."""
 
+from decimal import Decimal, localcontext
+
 import numpy as np
 import pytest
 
@@ -47,9 +49,36 @@ def test_observations_own_read_only_buffers():
         assert not array.flags.writeable
 
 
-@pytest.mark.parametrize("n,mu,expected", [(0, 0, 0), (0, 2.5, 5), (3, 3, 0), (0, -1, 2)])
+@pytest.mark.parametrize("n,mu,expected", [(0, 0, 0), (0, 2.5, 5), (3, 3, 0)])
 def test_poisson_deviance_exact_limits(n, mu, expected):
     assert poisson_deviance(np.array([n]), np.array([mu])) == expected
+
+
+@pytest.mark.parametrize("n,mu", [(0, -1), (1, 0), (1, -1), (1, float("nan")), (1, float("inf"))])
+def test_poisson_deviance_has_no_finite_value_outside_its_domain(n, mu):
+    assert poisson_deviance(np.array([n]), np.array([mu])) == float("inf")
+
+
+@pytest.mark.parametrize(
+    "n,mu",
+    [
+        (1, 1e-12),
+        (1, np.finfo(float).smallest_subnormal),
+        (3, 2e-6),
+        (3, 4e-6),
+        (100_000_000, np.nextafter(1e8, 0.0)),
+        (100_000_000, np.nextafter(1e8, np.inf)),
+        (1.6e308, 5e307),
+    ],
+)
+def test_poisson_deviance_matches_high_precision_formula(n, mu):
+    with localcontext() as context:
+        context.prec = 80
+        count, mean = Decimal(n), Decimal(float(mu))
+        expected = 2 * (mean - count + count * (count.ln() - mean.ln()))
+    assert poisson_deviance(np.array([n], dtype=float), np.array([mu])) == pytest.approx(
+        float(expected), rel=1e-12, abs=0.0
+    )
 
 
 def test_poisson_constant_rate_deviance_matches_analytic_value():
@@ -138,22 +167,24 @@ def test_poisson_constant_rate_mle_and_objective():
     assert result.chi_squared == pytest.approx(9.36426245424844, abs=1e-5)
 
 
-def test_poisson_invalid_optimum_fails_with_bin_context():
+@pytest.mark.parametrize("counts,expectation", [([1, 2], 0.0), ([0, 0], -1.0)])
+def test_poisson_invalid_optimum_fails_with_bin_context(counts, expectation):
     from asymmetry.core.fitting.engine import FitEngine
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-    data = PoissonCounts([0.0, 0.1], [1, 2], CountSource.RAW, run_number=7)
+    data = PoissonCounts([0.0, 0.1], counts, CountSource.RAW, run_number=7)
 
     def constant(t, c):
         return np.full_like(t, c, dtype=float)
 
     result = FitEngine().fit_observations(
-        data, constant, ParameterSet([Parameter("c", -1.0, fixed=True)])
+        data, constant, ParameterSet([Parameter("c", expectation, fixed=True)])
     )
     assert not result.success
     assert "run 7, point 0" in result.message
     assert "bins [0, 1]" in result.message
     assert result.minimum_expected_count is None
+    assert result.chi_squared == float("inf")
 
 
 @pytest.mark.parametrize("strategy", ["joint", "profiled", "least_squares"])
@@ -183,24 +214,6 @@ def test_shared_constant_matches_analytic_weighted_mean(strategy):
     assert sum(result.chi_squared for result in results.values()) == pytest.approx(
         2.2403846153846145, rel=1e-9
     )
-
-
-def test_poisson_trial_continuation_is_smooth_and_restoring():
-    from asymmetry.core.fitting.likelihood import _POISSON_CONTINUATION_FRACTION
-
-    n = np.array([3.0])
-    join = 3 * _POISSON_CONTINUATION_FRACTION
-    step = join * 1e-5
-
-    def cost(mu):
-        return poisson_deviance(n, np.array([mu]))
-
-    left = (cost(join) - cost(join - step)) / step
-    right = (cost(join + step) - cost(join)) / step
-    assert left == pytest.approx(right, rel=3e-5)
-    assert left < 0
-    costs = [cost(mu) for mu in [-1, -0.1, 0, join / 2, join]]
-    assert all(a > b for a, b in zip(costs, costs[1:]))
 
 
 @pytest.mark.parametrize("entry", ["single", "fb", "grouped"])
@@ -247,6 +260,112 @@ def test_count_entries_reject_ineligible_poisson_data(entry, defect):
     if defect == "deadtime":
         assert "deadtime-corrected" in str(error.value)
         assert "DT₀ count-domain model or the Gaussian cost" in str(error.value)
+
+
+@pytest.mark.parametrize("entry", ["single", "fb", "grouped"])
+def test_count_entries_recover_when_only_one_starting_expectation_is_invalid(entry):
+    from asymmetry.core.data.dataset import Histogram
+    from asymmetry.core.fitting.count_domain import fit_fb_alpha, fit_single_histogram
+    from asymmetry.core.fitting.grouped_time_domain import (
+        build_grouped_time_domain_groups,
+        fit_grouped_time_domain,
+    )
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.utils.constants import MUON_LIFETIME_US
+    from tests.core.test_grouped_time_domain_fitting import _grouped_source_dataset
+
+    dataset = _grouped_source_dataset()
+    dataset.run.histograms = [
+        Histogram(np.array(counts, dtype=float), bin_width=0.1, t0_bin=0)
+        for counts in ([1, 10], [0, 0])
+    ]
+    dataset.run.grouping["last_good_bin"] = 1
+    seed = ParameterSet(
+        [
+            Parameter("c", -1.0),
+            Parameter("N0", 2.0, fixed=True),
+            Parameter("background", 0.0, fixed=True),
+        ]
+    )
+
+    def polarization(t, c):
+        expected = np.where(t == 0, c, 1 - c)
+        return np.exp(t / MUON_LIFETIME_US) * expected / 2 - 1
+
+    def percent_polarization(t, c):
+        return 100 * polarization(t, c)
+
+    if entry == "single":
+        member = fit_single_histogram(dataset, 1, percent_polarization, seed)
+    elif entry == "fb":
+        seed.add(Parameter("alpha", 1.0, fixed=True))
+        seed.add(Parameter("background_b", 0.0, fixed=True))
+        result = fit_fb_alpha(dataset, 1, 2, percent_polarization, seed)
+        member = result.group_results[1]
+    else:
+        seed.add(Parameter("amplitude", 1.0, fixed=True))
+        seed.add(Parameter("relative_phase", 0.0, fixed=True))
+        groups = build_grouped_time_domain_groups(dataset, lifetime_corrected=False)
+        result = fit_grouped_time_domain(groups, polarization, ["c"], [], {1: seed, 2: seed})
+        member = result.group_results[1]
+    assert member.success, member.message
+    assert member.parameters["c"].value == pytest.approx(1 / 11, abs=0.01)
+
+
+def test_grouped_blockwise_poisson_reports_deviance_at_returned_parameters():
+    from asymmetry.core.fitting.grouped_time_domain import (
+        GroupedTimeDomainGroup,
+        fit_grouped_series,
+    )
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.utils.constants import MUON_LIFETIME_US
+
+    time = np.array([0.0, 1.0])
+    counts = np.array([10.0, 15.0])
+    members = {
+        run: [
+            GroupedTimeDomainGroup(group, str(group), time, counts, np.sqrt(counts), run)
+            for group in (1, 2)
+        ]
+        for run in range(1, 33)
+    }
+    seed = ParameterSet(
+        [
+            Parameter("c", 1.0),
+            Parameter("N0", 1.0, fixed=True),
+            Parameter("background", 2.0),
+            Parameter("amplitude", 1.0, fixed=True),
+            Parameter("relative_phase", 0.0, fixed=True),
+        ]
+    )
+
+    def model(t, c):
+        return np.exp(t / MUON_LIFETIME_US) * (1 + c * (1 + t)) - 1
+
+    result = fit_grouped_series(
+        "global",
+        members,
+        model,
+        ["c"],
+        ["background"],
+        {run: {1: seed, 2: seed} for run in members},
+        block_separable=True,
+        max_workers=1,
+    )
+    assert result.success, result.message
+    assert "block-separable solver" in result.message
+    shared = result.shared_parameters["c"].value
+    minimum = float("inf")
+    for member in result.member_results.values():
+        expected = 1 + shared * (1 + time) + member.parameters["background"].value
+        minimum = min(minimum, float(np.min(expected)))
+        deviance = 2 * np.sum(expected - counts + counts * (np.log(counts) - np.log(expected)))
+        assert member.chi_squared == pytest.approx(deviance, abs=1e-10)
+        assert member.residuals == pytest.approx(counts - expected, abs=1e-10)
+    assert all(
+        member.minimum_expected_count == pytest.approx(minimum)
+        for member in result.member_results.values()
+    )
 
 
 def test_global_result_uses_checked_observations_when_caller_buffers_change():

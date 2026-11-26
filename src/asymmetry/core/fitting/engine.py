@@ -24,6 +24,7 @@ from asymmetry.core.fitting.likelihood import (
     PoissonCounts,
     gaussian_chi2,
     poisson_deviance,
+    poisson_invalid_expected_counts,
 )
 from asymmetry.core.fitting.likelihood import (
     dataset_observations as _dataset_observations,
@@ -523,13 +524,14 @@ def _build_least_squares(x, y, yerr, model):
 
 
 def _build_poisson_deviance(x, y, yerr, model):
-    # Cash fits the raw Poisson counts ``y`` against the model expectation μ;
-    # ``yerr`` is unused (the Poisson variance is μ itself, not a stored σ).
+    # The Poisson variance is the model expectation μ.
     counts = np.asarray(y, dtype=float)
     times = np.asarray(x, dtype=float)
 
     def cost(*args) -> float:
-        return poisson_deviance(counts, np.asarray(model(times, *args), dtype=float))
+        return poisson_deviance(
+            counts, np.asarray(model(times, *args), dtype=float), restore_invalid=True
+        )
 
     cost.errordef = 1.0
     return cost
@@ -1251,10 +1253,12 @@ def _pack_coupled_block(
     Column indices use the block-qualified mapping for both joint and global fits.
     """
 
-    minimum_expected_count = None
+    minimum_expected_count = global_model_error = None
     if cost_factory is not None and cost_factory.objective is Objective.POISSON:
         expected = problem.model_wrapper(problem.all_times, *solution.values)
-        if np.all(np.isfinite(expected)) and np.all(expected >= 0):
+        if poisson_invalid_expected_counts(problem.all_asymm, expected).any():
+            global_model_error = "Global Poisson fit has invalid expected counts"
+        else:
             minimum_expected_count = float(np.min(expected))
     values = solution.values
     initial_params = block.initial_params
@@ -1342,10 +1346,7 @@ def _pack_coupled_block(
             if pname not in result_params:
                 result_params.add(Parameter(name=pname, value=value, fixed=True))
 
-        # Compute the per-dataset cost. The Gaussian default keeps the
-        # √-weighted χ²; a factory reports its own statistic (Poisson Cash),
-        # so the per-group reduced value stays on the same footing as the
-        # joint objective the minimiser actually drove.
+        # Each dataset contributes the same statistic to the joint objective.
         param_dict = {p.name: p.value for p in result_params}
         record = problem.observations[ds.run_number]
         observed = record.values if isinstance(record, GaussianObservations) else record.counts
@@ -1417,7 +1418,7 @@ def _pack_coupled_block(
                 record, ds, window=(block.t_min, block.t_max), error_oversampling=error_oversampling
             ),
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
-            success=solution.success and invalid_model is None,
+            success=solution.success and global_model_error is None and invalid_model is None,
             minimum_expected_count=minimum_expected_count,
             chi_squared=dataset_chi2,
             reduced_chi_squared=red_chi2,
@@ -1429,7 +1430,7 @@ def _pack_coupled_block(
             residual_time=record.time,
             residual_sigma=record.sigma if isinstance(record, GaussianObservations) else None,
             observation_report=record.report if isinstance(record, GaussianObservations) else None,
-            message=invalid_model or solution.message,
+            message=invalid_model or global_model_error or solution.message,
             function_calls=solution.function_calls,
             gradient_calls=solution.gradient_calls,
             hessian_calls=solution.hessian_calls,
@@ -1771,9 +1772,6 @@ class FitEngine:
                 kw[name] = tie.evaluate(kw)
             return _call_model(t, kw)
 
-        # Build the cost. The default (no factory) is the historical √-weighted
-        # least squares, kept byte-identical; a factory swaps in the selectable
-        # objective (e.g. Poisson Cash on raw counts) through the shared seam.
         if cost_factory is None:
             cost = LeastSquares(time, asymmetry, error, model_wrapper)
         else:
@@ -1954,11 +1952,15 @@ class FitEngine:
 
         ndata = len(time)
         nfree = len(free)
-        red_chi2 = m.fval / max(ndata - nfree, 1)
         fitted_values = _call_model(time, {p.name: p.value for p in result_params})
         residuals = np.asarray(asymmetry, dtype=float) - np.asarray(fitted_values, dtype=float)
-
-        chi_squared = m.fval
+        invalid_model = (
+            observations.invalid_model_reason(np.asarray(fitted_values))
+            if isinstance(observations, PoissonCounts)
+            else None
+        )
+        chi_squared = float("inf") if invalid_model else m.fval
+        red_chi2 = chi_squared / max(ndata - nfree, 1)
         dof = ndata - nfree
         covariance = m.covariance if m.valid else None
         minos_errors_result = minos_errors or None
@@ -1997,11 +1999,6 @@ class FitEngine:
             if oversampling_message:
                 result_warnings.append(oversampling_message)
 
-        invalid_model = (
-            observations.invalid_model_reason(np.asarray(fitted_values))
-            if isinstance(observations, PoissonCounts)
-            else None
-        )
         return FitResult(
             computation_revision=computation.COMPUTATION_REVISION,
             input_attribution=attribution,
@@ -2638,10 +2635,7 @@ class FitEngine:
         t_min, t_max = block.t_min, block.t_max
         cancel_guard = _make_cancel_guard(cancel_callback)
 
-        # Warm-start cache: the last accepted local solution per dataset. Seeded
-        # from the caller's initial params; refreshed after every inner solve so
-        # each outer iteration re-enters the same local basin (keeps the profiled
-        # objective smooth — the key correctness condition for L).
+        # Re-enter each member's local basin across nearby outer trials.
         warm_locals: dict[int, dict[str, float]] = {}
         for ds in datasets:
             params = initial_params[ds.run_number]
@@ -2649,13 +2643,7 @@ class FitEngine:
                 name: params[name].value for name in local_params if not params[name].fixed
             }
 
-        # The runtime minimiser controls the joint path honours (max_calls,
-        # migrad_iterations, use_simplex_rescue) must reach the inner solves too —
-        # otherwise a caller who caps max_calls on a large global fit would not
-        # actually cap the per-dataset inner work. Each inner solve is its own
-        # minimisation, so max_calls is applied as the per-inner-fit ncall cap
-        # (the joint path likewise applies it as one problem's ncall), and
-        # iterate / use_simplex mirror the joint migrad settings.
+        # Each inner minimise call owns its function-call budget.
         if method == "simplex":
             inner_migrad_kwargs: dict = {"ncall": max_calls}
         else:
@@ -2665,8 +2653,6 @@ class FitEngine:
                 "use_simplex": bool(use_simplex_rescue),
             }
 
-        # Inner solve for one dataset with the globals pinned. Reuses the proven
-        # single-fit path (self.fit) rather than a bespoke inner Minuit.
         def _inner_fit(ds: MuonDataset, global_values: dict[str, float]) -> FitResult:
             base = initial_params[ds.run_number]
             inner = ParameterSet()
@@ -2714,8 +2700,6 @@ class FitEngine:
                 migrad_kwargs=inner_migrad_kwargs,
             )
 
-        # Counters accumulated across every inner solve (the profiled fit's cost
-        # is dominated by the inner fits, so these are the meaningful totals).
         counters = {"fcn": 0, "grad": 0, "hess": 0}
 
         def _solve_all(global_values: dict[str, float]) -> dict[int, FitResult]:
@@ -2733,13 +2717,26 @@ class FitEngine:
                 counters["hess"] += int(res.hessian_calls or 0)
             return out
 
+        def _fitted_vector(global_values):
+            values = np.asarray(problem.initial_values, dtype=float)
+            for name, column in problem.block_global_columns[_SINGLE_BLOCK].items():
+                values[column] = global_values[name]
+            for run, columns in problem.dataset_param_indices.items():
+                for name, column in columns.items():
+                    values[column] = warm_locals[run][name]
+            return values
+
         def _outer_objective(*args: float) -> float:
             global_values = dict(zip(free_global_params, args))
             inner_results = _solve_all(global_values)
+            if cost_factory is not None and any(
+                result.minimum_expected_count is None for result in inner_results.values()
+            ):
+                values = _fitted_vector(global_values)
+                expected = problem.model_wrapper(problem.all_times, *values)
+                return poisson_deviance(problem.all_asymm, expected, restore_invalid=True)
             return float(sum(r.chi_squared for r in inner_results.values()))
 
-        # iminuit needs named scalar-cost signatures; a χ² sum has errordef 1.0
-        # (Minuit.LEAST_SQUARES), matching the joint LeastSquares cost.
         _outer_objective.errordef = Minuit.LEAST_SQUARES  # type: ignore[attr-defined]
 
         global_seeds = {
@@ -2792,17 +2789,7 @@ class FitEngine:
 
         fitted_values = {name: float(m.values[i]) for i, name in enumerate(free_global_params)}
         final_results = _solve_all(fitted_values)
-        values = np.asarray(problem.initial_values, dtype=float)
-        for name, column in problem.block_global_columns[_SINGLE_BLOCK].items():
-            values[column] = fitted_values[name]
-        for run, columns in problem.dataset_param_indices.items():
-            for name, column in columns.items():
-                member = final_results[run]
-                values[column] = (
-                    member.parameters[name].value
-                    if name in member.parameters
-                    else warm_locals[run][name]
-                )
+        values = _fitted_vector(fitted_values)
         valid = bool(m.valid) and all(result.success for result in final_results.values())
         covariance = None
         covariance_warning = ""

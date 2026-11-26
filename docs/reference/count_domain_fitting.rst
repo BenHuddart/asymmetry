@@ -190,11 +190,15 @@ The Poisson statistic is the deviance
 :math:`D=2\sum_i[\mu_i-n_i+n_i\ln(n_i/\mu_i)]`, with the zero-count limit
 :math:`D_i=2\mu_i`, including exactly zero at :math:`n_i=\mu_i=0`
 [baker_cousins]_. It equals Cash's statistic up to a data-only constant.
-Invalid trial expectations receive a restoring penalty; a reported optimum
-outside the Poisson domain fails and identifies the affected bins. Positive
-observations require positive expectations; zero observations permit zero.
+The fit evaluates this deviance at every valid trial, including arbitrarily
+small positive expectations in occupied bins. An occupied bin needs a strictly
+positive expectation, and an empty bin permits zero. The optimiser substitutes a
+restoring penalty for each finite invalid expectation and rejects nonfinite
+trials. A fitted model outside the domain fails and identifies the affected bins.
 The result is labelled **Poisson deviance/ν**, including the detailed results
-window. A χ² quality verdict is shown only when every fitted expected count is
+window. Block-separable grouped-series fits report the deviance and residuals
+evaluated with the final shared parameters and the fitted local parameters.
+A χ² quality verdict is shown only when every fitted expected count is
 at least five; sparse fits show the reason in the tooltip. This display
 threshold is an approximation, not a calibrated goodness-of-fit test.
 **Fit ✓** reports convergence. See :doc:`assessing_a_fit` for the assumptions.

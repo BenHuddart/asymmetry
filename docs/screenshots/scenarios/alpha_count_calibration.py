@@ -102,6 +102,11 @@ class AlphaCountCalibrationScenario(Scenario):
         tab._run_count_domain_fit()
         tab.wait_for_fit()
         _process_events_for(milliseconds=80)
+        card = tab._results_card
+        if not self.reference_requested and "Poisson deviance/ν" not in card.content_html():
+            raise RuntimeError(
+                "Count calibration must show the Poisson deviance per degree of freedom"
+            )
         return window
 
 

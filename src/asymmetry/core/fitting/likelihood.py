@@ -196,8 +196,7 @@ class PoissonCounts:
         return type(self), (self.time, self.counts, self.source, self.run_number)
 
     def invalid_model_reason(self, model: NDArray[np.float64]) -> str | None:
-        invalid = ~np.isfinite(model) | (model < 0) | ((self.counts > 0) & (model == 0))
-        points = np.flatnonzero(invalid)
+        points = np.flatnonzero(poisson_invalid_expected_counts(self.counts, model))
         if points.size == 0:
             return None
         label = _point_label(self.run_number, int(points[0]), self.time[points[0]])
@@ -212,20 +211,47 @@ def gaussian_chi2(observed, model, errors) -> float:
     return float(np.sum(((observed - model) / errors) ** 2))
 
 
-# The continuation joins far below the smallest positive observation. Its slope
-# is negative and curvature positive, so it cannot introduce an exterior minimum.
-_POISSON_CONTINUATION_FRACTION = 1e-6
+def poisson_invalid_expected_counts(observed, model) -> NDArray[np.bool_]:
+    """Only an empty observed bin can have zero expected counts."""
+    return ~np.isfinite(model) | (model < 0) | ((observed > 0) & (model == 0))
 
 
-def poisson_deviance(observed: NDArray[np.float64], model: NDArray[np.float64]) -> float:
-    """Poisson deviance with a differentiable restoring penalty for trial μ ≤ 0."""
-    if not np.all(np.isfinite(model)):
-        return float("inf")
+_LOG_MINIMUM_EXPECTATION = np.log(np.finfo(float).smallest_subnormal)
+_INVALID_EXPECTATION_SLOPE = 2e6
+_DEVIANCE_SERIES = tuple((-1) ** power / power for power in range(2, 10))
+
+
+def poisson_deviance(
+    observed: NDArray[np.float64], model: NDArray[np.float64], *, restore_invalid: bool = False
+) -> float:
+    """Baker–Cousins deviance, with optional restoration for finite invalid trials."""
+    invalid = poisson_invalid_expected_counts(observed, model)
     positive = observed > 0
-    n, mu = observed[positive], model[positive]
-    join = _POISSON_CONTINUATION_FRACTION * n
-    safe = np.maximum(mu, join)
-    terms = safe - n + n * np.log(n / safe)
-    delta = np.minimum(mu - join, 0)
-    terms += (1 - n / join) * delta + n * (delta / join) ** 2 / 2
-    return 2 * float(np.sum(terms) + np.sum(np.abs(model[~positive])))
+    penalty = 0.0
+    if invalid.any():
+        invalid_model = model[invalid]
+        if not restore_invalid or not np.all(np.isfinite(invalid_model)):
+            return float("inf")
+        occupied = observed[invalid & positive]
+        # An occupied bin at zero costs at least its deviance at the smallest
+        # positive mean. A steep exterior slope restores finite negative means.
+        penalty = np.sum(occupied * (np.log(occupied) - _LOG_MINIMUM_EXPECTATION))
+        penalty -= _INVALID_EXPECTATION_SLOPE * np.sum(invalid_model)
+
+    used = positive & ~invalid
+    n, mu = observed[used], np.asarray(model[used], dtype=float)
+    delta = mu - n
+    local = np.abs(delta) <= n / 2
+    far = ~local
+    n_far = n[far]
+    # Separate logarithms avoid overflow in n/μ. Apply the count scale after
+    # combining the normalized terms so n·log(n/μ) need not fit on its own.
+    delta[far] = n_far * (delta[far] / n_far + (np.log(n_far) - np.log(mu[far])))
+    relative = delta[local] / n[local]
+    terms = relative - np.log1p(relative)
+    # (μ−n)/n − log1p((μ−n)/n) starts at second order near μ=n.
+    small = np.abs(relative) < 0.01
+    x = relative[small]
+    terms[small] = x**2 * np.polynomial.polynomial.polyval(x, _DEVIANCE_SERIES)
+    delta[local] = n[local] * terms
+    return 2 * float(np.sum(delta) + np.sum(model[~positive & ~invalid]) + penalty)

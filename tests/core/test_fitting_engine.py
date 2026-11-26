@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from math import log
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
@@ -528,3 +529,138 @@ def test_poisson_deviance_primitive_matches_definition():
     assert poisson_deviance(n, mu) == pytest.approx(expected)
     # Exact minimum at μ = n (for n > 0): Cash → 0.
     assert poisson_deviance(np.array([7.0]), np.array([7.0])) == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.fixture
+def tight_minuit_tolerance(monkeypatch):
+    from asymmetry.core.fitting import engine
+
+    drive = engine.drive_minuit
+
+    def drive_with_tight_tolerance(m, **kwargs):
+        m.tol = 1e-6
+        return drive(m, **kwargs)
+
+    monkeypatch.setattr(engine, "drive_minuit", drive_with_tight_tolerance)
+
+
+def _fit_poisson_strategy(data, model, seed, strategy):
+    if strategy == "single":
+        return FitEngine().fit_observations(data, model, seed)
+    run = data.run_number
+    dataset = MuonDataset(data.time, data.counts, np.ones_like(data.time), {"run_number": run})
+    results, _ = FitEngine().global_fit(
+        [dataset],
+        model,
+        ["c"],
+        [],
+        {run: seed},
+        observations={run: data},
+        strategy=strategy,
+        minuit_tol=1e-6,
+    )
+    return results[run]
+
+
+@pytest.mark.parametrize("strategy", ["single", "joint", "profiled"])
+@pytest.mark.usefixtures("tight_minuit_tolerance")
+def test_poisson_fit_uses_exact_deviance_for_nearly_empty_expected_bin(strategy):
+    from asymmetry.core import computation
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
+
+    times = np.array([0.0, 1.0])
+    counts = np.array([1.0, 10.0])
+    data = PoissonCounts(times, counts, CountSource.RAW, run_number=7)
+    seed = ParameterSet([Parameter("c", 9.0, min=0.0)])
+    exposure = 1e-9
+
+    def model(t, c):
+        return np.where(t == 0, exposure * c, c)
+
+    result = _fit_poisson_strategy(data, model, seed, strategy)
+    assert result.success, result.message
+    assert computation.is_current(result.computation_revision)
+    rate = result.parameters["c"].value
+    assert rate == pytest.approx(11 / (1 + exposure), abs=0.01)
+    expected = 2 * sum(
+        mu - n + n * (log(n) - log(mu))
+        for n, mu in zip(counts, (exposure * rate, rate), strict=True)
+    )
+    assert result.chi_squared == pytest.approx(expected, abs=1e-8, rel=0.0)
+
+
+@pytest.mark.parametrize("start", [-1.0, 0.0])
+@pytest.mark.parametrize("method", ["migrad", "simplex"])
+def test_poisson_fit_recovers_from_invalid_starting_expectations(start, method):
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
+
+    data = PoissonCounts([0.0, 1.0], [1, 3], CountSource.RAW)
+
+    def model(t, c):
+        return np.full_like(t, c)
+
+    result = FitEngine().fit_observations(
+        data, model, ParameterSet([Parameter("c", start)]), method=method
+    )
+    assert result.success, result.message
+    assert result.parameters["c"].value == pytest.approx(2.0, abs=0.15)
+
+
+@pytest.mark.parametrize("strategy", ["single", "joint", "profiled"])
+@pytest.mark.parametrize("start", [-1.0, 1.2])
+@pytest.mark.usefixtures("tight_minuit_tolerance")
+def test_poisson_fit_recovers_when_only_one_starting_expectation_is_invalid(strategy, start):
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
+
+    data = PoissonCounts([0.0, 1.0], [1, 10], CountSource.RAW, run_number=7)
+
+    def model(t, c):
+        return np.where(t == 0, c, 1.0 - c)
+
+    seed = ParameterSet([Parameter("c", start)])
+    result = _fit_poisson_strategy(data, model, seed, strategy)
+    assert result.success, result.message
+    assert result.parameters["c"].value == pytest.approx(1 / 11, abs=1e-4)
+
+
+@pytest.mark.parametrize("strategy", ["single", "joint", "profiled"])
+@pytest.mark.parametrize("start", [-1.0, 0.0])
+@pytest.mark.usefixtures("tight_minuit_tolerance")
+def test_poisson_fit_recovers_with_large_deviance_in_valid_companion_bin(strategy, start):
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
+
+    data = PoissonCounts([0.0, 1.0], [1, 0], CountSource.RAW, run_number=7)
+
+    def model(t, c):
+        return np.where(t == 0, c, 2000.0)
+
+    result = _fit_poisson_strategy(data, model, ParameterSet([Parameter("c", start)]), strategy)
+    assert result.success, result.message
+    assert result.parameters["c"].value == pytest.approx(1.0, abs=1e-3)
+    assert result.chi_squared == pytest.approx(4000.0, abs=1e-6, rel=0.0)
+
+
+@pytest.mark.parametrize("strategy", ["joint", "profiled"])
+def test_poisson_global_fit_fails_when_one_member_finishes_outside_domain(strategy):
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
+
+    times = np.array([0.0, 0.1])
+    counts = np.array([1.0, 2.0])
+    datasets = [MuonDataset(times, counts, np.ones(2), {"run_number": run}) for run in (7, 8)]
+    data = {run: PoissonCounts(times, counts, CountSource.RAW, run_number=run) for run in (7, 8)}
+    seeds = {
+        run: ParameterSet([Parameter("c", 2.0, min=0.0), Parameter("scale", scale, fixed=True)])
+        for run, scale in [(7, 0.0), (8, 1.0)]
+    }
+
+    def model(t, c, scale):
+        return np.full_like(t, c * scale)
+
+    results, _ = FitEngine().global_fit(
+        datasets, model, ["c"], ["scale"], seeds, observations=data, strategy=strategy
+    )
+    assert all(not result.success for result in results.values())
+    assert all(result.minimum_expected_count is None for result in results.values())
+    assert "run 7, point 0" in results[7].message
+    assert "bins [0, 1]" in results[7].message
+    assert results[7].chi_squared == float("inf")
