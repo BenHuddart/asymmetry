@@ -300,6 +300,7 @@ def _import_scenarios() -> None:
         bunching_comparison,
         composite_fractions_dialog,
         composite_models_builder,
+        composite_parameter_uncertainty,
         data_browser_filter,
         data_browser_groups,
         data_browser_phases,

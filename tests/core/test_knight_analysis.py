@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -28,7 +28,6 @@ from asymmetry.core.fitting.knight_analysis import (
     run_joint_fit,
     run_joint_fit_outcome,
     selected_components,
-    snapshot_from_rows,
     suggest_assignment_discriminating_angle,
     suggest_model_discriminating_angle,
     suggest_next_angle,
@@ -63,7 +62,7 @@ def _point(
         x=x,
         field_gauss=field_gauss,
         values=values,
-        errors=errors or {name: 0.0 for name in values},
+        errors=errors if errors is not None else {name: 0.0 for name in values},
         covariance=covariance,
         include=include,
     )
@@ -310,6 +309,72 @@ def test_covariance_changes_sigma_relative_to_zero_covariance():
     sigma_cov = knight_evaluate(analysis_input_cov, config).branch("K[frequency]").k_err[0]
 
     assert sigma_no_cov != pytest.approx(sigma_cov)
+
+
+@pytest.mark.parametrize(
+    "errors",
+    [{}, {"frequency": 0.02}, {"frequency_2": 0.01}, {"frequency": 0.02, "frequency_2": math.inf}],
+)
+def test_component_knight_shift_keeps_value_with_missing_free_errors(errors):
+    point = _point(1, 0.0, 7000.0, {"frequency": 5.1, "frequency_2": 5.0}, errors)
+    branch = _reference_branch(point)
+
+    assert branch.k[0] == pytest.approx(0.02)
+    assert math.isnan(branch.k_err[0])
+
+
+def _reference_branch(point):
+    snapshot = _input(
+        [point], components=(("frequency", "frequency"), ("frequency_2", "frequency"))
+    )
+    config = KnightShiftConfig(
+        enabled=True, reference_mode=REFERENCE_COMPONENT, reference_component="frequency_2"
+    )
+    return knight_evaluate(snapshot, config).branch("K[frequency]")
+
+
+@pytest.mark.parametrize("errors", [{}, {"frequency": math.nan}])
+def test_knight_shift_with_covariance_and_unavailable_marginals(errors):
+    point = _point(
+        1,
+        0.0,
+        7000.0,
+        {"frequency": 5.1, "frequency_2": 5.0},
+        errors,
+        covariance={
+            "frequency": {"frequency": 0.04, "frequency_2": 0.01},
+            "frequency_2": {"frequency": 0.01, "frequency_2": 0.09},
+        },
+    )
+    branch = _reference_branch(point)
+    jacobian = np.array([1.0 / 5.0, -5.1 / 25.0])
+    covariance = np.array([[0.04, 0.01], [0.01, 0.09]])
+
+    assert branch.k[0] == pytest.approx(0.02)
+    assert branch.k_err[0] == pytest.approx(math.sqrt(jacobian @ covariance @ jacobian))
+
+
+def test_knight_shift_propagates_only_sample_error_for_fixed_reference():
+    point = _point(
+        1,
+        0.0,
+        7000.0,
+        {"frequency": 5.1, "frequency_2": -5.0},
+        {"frequency": 0.02},
+        covariance={"frequency_2": {"frequency_2": 0.09}},
+    )
+    branch = _reference_branch(replace(point, fixed_parameters=frozenset({"frequency_2"})))
+
+    assert branch.k[0] == pytest.approx(-2.02)
+    assert branch.k_err[0] == pytest.approx(0.02 / abs(-5.0))
+
+
+def test_knight_shift_at_zero_sample_ignores_missing_reference_variance():
+    point = _point(1, 0.0, 7000.0, {"frequency": 0.0, "frequency_2": 5.0}, {"frequency": 0.02})
+    branch = _reference_branch(point)
+
+    assert branch.k[0] == -1.0
+    assert branch.k_err[0] == pytest.approx(0.02 / 5.0)
 
 
 def test_missing_reference_component_in_point_gives_no_branches_data():
@@ -786,79 +851,6 @@ def test_migrate_legacy_state_realistic_block_maps_fields():
     assert state.x_key == "angle"
     assert state.source_group_id == "g1"
     assert state.source_batch_id is None
-
-
-# --- snapshot_from_rows() -----------------------------------------------------
-
-
-@dataclass
-class _Row:
-    run_number: int
-    run_label: str
-    field: float
-    values: dict
-    errors: dict
-    covariance: dict | None = None
-    include_in_trend: bool = True
-
-
-def test_snapshot_from_rows_maps_fields_correctly():
-    rows = [
-        _Row(
-            1, "run1", 7000.0, {"frequency": 95.0}, {"frequency": 0.1}, covariance={"a": {"b": 1.0}}
-        ),
-        _Row(2, "run2", 7050.0, {"frequency": 95.5}, {"frequency": 0.2}, include_in_trend=False),
-    ]
-    x_values = [10.0, 20.0]
-
-    snapshot = snapshot_from_rows(
-        rows,
-        x_values=x_values,
-        x_key="angle",
-        x_label="Angle",
-        components=[("frequency", "frequency")],
-        source_label="my source",
-        batch_id="b1",
-        group_id="g1",
-    )
-
-    assert snapshot.x_key == "angle"
-    assert snapshot.x_label == "Angle"
-    assert snapshot.components == (("frequency", "frequency"),)
-    assert snapshot.source_label == "my source"
-    assert snapshot.batch_id == "b1"
-    assert snapshot.group_id == "g1"
-    assert len(snapshot.points) == 2
-
-    p0, p1 = snapshot.points
-    assert p0.run_number == 1
-    assert p0.run_label == "run1"
-    assert p0.x == 10.0
-    assert p0.field_gauss == 7000.0
-    assert p0.values == {"frequency": 95.0}
-    assert p0.covariance == {"a": {"b": 1.0}}
-    assert p0.include is True
-
-    assert p1.run_number == 2
-    assert p1.x == 20.0
-    assert p1.include is False
-    assert p1.covariance is None
-
-
-def test_snapshot_from_rows_length_mismatch_raises():
-    rows = [_Row(1, "run1", 7000.0, {}, {})]
-    with pytest.raises(ValueError):
-        snapshot_from_rows(rows, x_values=[1.0, 2.0], x_key="angle", x_label="Angle", components=[])
-
-
-def test_snapshot_from_rows_non_finite_field_and_x_coerced_to_nan():
-    rows = [_Row(1, "run1", float("inf"), {}, {})]
-    snapshot = snapshot_from_rows(
-        rows, x_values=[float("nan")], x_key="angle", x_label="Angle", components=[]
-    )
-    point = snapshot.points[0]
-    assert math.isnan(point.x)
-    assert math.isnan(point.field_gauss)
 
 
 # --- run_joint_fit(): recovery on a synthetic crossing scan --------------------

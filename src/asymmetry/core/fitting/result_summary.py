@@ -9,7 +9,7 @@ has one canonical structure for parameter trending.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -35,6 +35,7 @@ __all__ = [
     "fit_result_uncertainties",
     "fit_statistic_labels",
     "parameters_at_bound",
+    "recorded_fit_uncertainties",
     "reduced_statistic_label",
     "reduced_statistic_summary",
 ]
@@ -214,6 +215,18 @@ def fit_result_uncertainties(fit_result: FitResult) -> dict[str, float]:
             fit_result.uncertainties.get(parameter.name, 0.0 if parameter.fixed else math.nan)
         )
         for parameter in fit_result.parameters
+    }
+
+
+def recorded_fit_uncertainties(
+    errors: Mapping[str, float | None] | None,
+    names: Iterable[str] | None = None,
+) -> dict[str, float]:
+    """Read recorded errors, representing unavailable entries with NaN."""
+    errors = errors or {}
+    return {
+        str(name): math.nan if (value := errors.get(name)) is None else float(value)
+        for name in (errors if names is None else names)
     }
 
 

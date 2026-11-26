@@ -96,7 +96,10 @@ from asymmetry.core.fitting.parameter_models import (
     effective_range_bounds,
 )
 from asymmetry.core.fitting.parameters import ParameterSet
-from asymmetry.core.fitting.result_summary import reduced_statistic_summary
+from asymmetry.core.fitting.result_summary import (
+    recorded_fit_uncertainties,
+    reduced_statistic_summary,
+)
 from asymmetry.core.fitting.sc.trend_width import (
     cross_group_width_sources,
     fitted_width_sources,
@@ -10352,9 +10355,7 @@ class MainWindow(QMainWindow):
             )
 
             values = dict(summary.get("parameters", {}))
-            errors = {
-                name: summary.get("uncertainties", {}).get(name, float("nan")) for name in values
-            }
+            errors = recorded_fit_uncertainties(summary.get("uncertainties"), values)
             if collapse_groups:
                 # The collapsed row represents the whole run via one group member,
                 # so drop the per-group nuisance parameters: only the cross-group
@@ -10365,8 +10366,6 @@ class MainWindow(QMainWindow):
                     values.pop(nuisance, None)
                     errors.pop(nuisance, None)
 
-            # The member key routes exclusion to this series, including synthetic
-            # group keys used by collapsed per-run rows.
             trend_member_key = member_key
             include_in_trend = member_key not in series.trend_excluded_runs
             quality_flags = [str(f) for f in (summary.get("quality_flags") or [])]
@@ -10383,12 +10382,11 @@ class MainWindow(QMainWindow):
                     "computation_revision": summary.get("computation_revision"),
                     "errors": errors,
                     "covariance": summary.get("covariance"),
+                    "fixed_parameters": summary.get("fixed_parameters") or (),
                     "custom_values": custom_values,
                     "model_name": summary.get("model_name"),
                     "chi_squared": summary.get("chi_squared"),
                     "reduced_chi_squared": summary.get("reduced_chi_squared"),
-                    # Phase 2 trend-gating: which series/member this row toggles,
-                    # its current inclusion, and its advisory quality flags.
                     "batch_id": series.batch_id,
                     "trend_member_key": trend_member_key,
                     "include_in_trend": include_in_trend,

@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import ast
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
 import numpy as np
+
+from asymmetry.core.fitting.derived_uncertainty import first_order_uncertainty
 
 
 class CompositeExpressionError(ValueError):
@@ -86,8 +88,8 @@ def _safe_sqrt(x: float) -> float:
 
 
 def _asin_derivative(x: float) -> float:
-    if x <= -1.0 or x >= 1.0:
-        raise CompositeExpressionError("asin requires -1 < x < 1")
+    if abs(x) == 1.0:
+        return math.inf
     return 1.0 / math.sqrt(1.0 - x * x)
 
 
@@ -98,8 +100,8 @@ def _safe_asin(x: float) -> float:
 
 
 def _acos_derivative(x: float) -> float:
-    if x <= -1.0 or x >= 1.0:
-        raise CompositeExpressionError("acos requires -1 < x < 1")
+    if abs(x) == 1.0:
+        return -math.inf
     return -1.0 / math.sqrt(1.0 - x * x)
 
 
@@ -180,10 +182,7 @@ class CompositeExpression:
         result = self._eval_node(self._ast, symbol_values)
         if not np.isfinite(result.value):
             raise CompositeExpressionError("Expression evaluated to a non-finite value")
-        grad: dict[str, float] = {
-            name: float(val) for name, val in result.gradient.items() if np.isfinite(val)
-        }
-        return float(result.value), grad
+        return float(result.value), result.gradient
 
     def evaluate_with_uncertainty(
         self,
@@ -192,15 +191,15 @@ class CompositeExpression:
         *,
         covariance: np.ndarray | Mapping[str, Mapping[str, float]] | None = None,
         covariance_order: Sequence[str] | None = None,
+        fixed_parameters: Collection[str] = (),
     ) -> CompositeEvaluation:
+        """Evaluate the expression and propagate available input uncertainties."""
         value, gradient = self.evaluate(symbol_values)
-        variance = self._propagate_variance(
-            gradient,
-            symbol_uncertainties or {},
-            covariance=covariance,
-            covariance_order=covariance_order,
+        if isinstance(covariance, np.ndarray):
+            covariance = _named_covariance(covariance, covariance_order)
+        uncertainty = first_order_uncertainty(
+            gradient, symbol_uncertainties or {}, covariance, fixed_parameters=fixed_parameters
         )
-        uncertainty = float(math.sqrt(variance))
         return CompositeEvaluation(
             value=float(value),
             uncertainty=uncertainty,
@@ -253,20 +252,45 @@ class CompositeExpression:
 
         raise CompositeExpressionError("Unsupported expression element")
 
-    def _collect_symbols(self, node: ast.AST) -> set[str]:
+    def _collect_symbols(self, node: ast.AST, *, prune_identities: bool = False) -> set[str]:
         symbols: set[str] = set()
 
         class _Collector(ast.NodeVisitor):
             def visit_Name(self, subnode: ast.Name) -> None:  # noqa: N802
-                if (
-                    subnode.id not in self_outer._functions
-                    and subnode.id not in self_outer._constants
+                if subnode.id not in self_outer._constants and (
+                    prune_identities or subnode.id not in self_outer._functions
                 ):
                     symbols.add(subnode.id)
+
+            def visit_Call(self, subnode: ast.Call) -> None:  # noqa: N802
+                self.visit(subnode.args[0])
+
+            def visit_BinOp(self, subnode: ast.BinOp) -> None:  # noqa: N802
+                if (
+                    prune_identities
+                    and isinstance(subnode.op, (ast.Sub, ast.Div))
+                    and ast.dump(subnode.left) == ast.dump(subnode.right)
+                ):
+                    return
+                self.generic_visit(subnode)
 
         self_outer = self
         _Collector().visit(node)
         return symbols
+
+    def _chain_gradient(
+        self, argument: ast.AST, derivative: float, gradient: dict[str, float]
+    ) -> dict[str, float]:
+        # At a singular outer derivative, an inner zero may be a stationary point.
+        dependencies = (
+            gradient
+            if math.isfinite(derivative)
+            else self._collect_symbols(argument, prune_identities=True)
+        )
+        return {
+            name: derivative * val if name in dependencies else 0.0
+            for name, val in gradient.items()
+        }
 
     def _eval_node(self, node: ast.AST, symbol_values: Mapping[str, float]) -> _EvalResult:
         if isinstance(node, ast.Constant):
@@ -311,15 +335,13 @@ class CompositeExpression:
             if isinstance(node.op, ast.Div):
                 if right.value == 0.0:
                     raise CompositeExpressionError("Division by zero")
-                denom = right.value * right.value
-                grad = {}
-                for name, val in left.gradient.items():
-                    grad[name] = grad.get(name, 0.0) + val / right.value
-                for name, val in right.gradient.items():
-                    grad[name] = grad.get(name, 0.0) - (left.value * val) / denom
-                return _EvalResult(left.value / right.value, grad)
+                ratio = left.value / right.value
+                numerators = _merge_gradients(left.gradient, right.gradient, 1.0, -ratio)
+                return _EvalResult(
+                    ratio, {name: numerator / right.value for name, numerator in numerators.items()}
+                )
             if isinstance(node.op, ast.Pow):
-                return self._eval_power(left, right)
+                return self._eval_power(node, left, right)
             raise CompositeExpressionError("Unsupported arithmetic operator")
 
         if isinstance(node, ast.Call):
@@ -328,19 +350,18 @@ class CompositeExpression:
             arg = self._eval_node(node.args[0], symbol_values)
             try:
                 value = float(spec.value_fn(arg.value))
-                derivative = float(spec.derivative_fn(arg.value))
+                derivative = float(spec.derivative_fn(arg.value)) if arg.gradient else 0.0
             except CompositeExpressionError:
                 raise
             except Exception as exc:  # pragma: no cover - defensive
                 raise CompositeExpressionError(
                     f"Function '{node.func.id}' failed for value {arg.value!r}"
                 ) from exc
-            grad = {name: derivative * val for name, val in arg.gradient.items()}
-            return _EvalResult(value, grad)
+            return _EvalResult(value, self._chain_gradient(node.args[0], derivative, arg.gradient))
 
         raise CompositeExpressionError("Unsupported expression element")
 
-    def _eval_power(self, left: _EvalResult, right: _EvalResult) -> _EvalResult:
+    def _eval_power(self, node: ast.BinOp, left: _EvalResult, right: _EvalResult) -> _EvalResult:
         left_grad = left.gradient
         right_grad = right.gradient
 
@@ -357,9 +378,12 @@ class CompositeExpression:
         if not right_grad:
             # Constant exponent: d(u^c) = c*u^(c-1)*du
             if left.value == 0.0 and right.value < 1.0:
-                raise CompositeExpressionError("Power derivative undefined at zero base")
-            factor = right.value * (left.value ** (right.value - 1.0))
-            return _EvalResult(value, {name: factor * val for name, val in left_grad.items()})
+                if right.value == 0.0:
+                    raise CompositeExpressionError("Power derivative undefined at zero base")
+                factor = math.inf
+            else:
+                factor = right.value * (left.value ** (right.value - 1.0))
+            return _EvalResult(value, self._chain_gradient(node.left, factor, left_grad))
 
         grad: dict[str, float] = {}
         ln_base = math.log(left.value)
@@ -369,85 +393,17 @@ class CompositeExpression:
             grad[name] = grad.get(name, 0.0) + value * ln_base * val
         return _EvalResult(value, grad)
 
-    def _propagate_variance(
-        self,
-        gradient: Mapping[str, float],
-        symbol_uncertainties: Mapping[str, float],
-        *,
-        covariance: np.ndarray | Mapping[str, Mapping[str, float]] | None,
-        covariance_order: Sequence[str] | None,
-    ) -> float:
-        symbols = [name for name in self.referenced_symbols if gradient.get(name, 0.0) != 0.0]
-        if not symbols:
-            return 0.0
 
-        jac = np.array([float(gradient[name]) for name in symbols], dtype=float)
-        cov = np.zeros((len(symbols), len(symbols)), dtype=float)
-
-        # Start with diagonal fallback from provided uncertainties.
-        for i, name in enumerate(symbols):
-            sigma = float(symbol_uncertainties.get(name, 0.0))
-            if not np.isfinite(sigma):
-                return math.nan
-            if sigma > 0.0:
-                cov[i, i] = sigma * sigma
-
-        if covariance is not None:
-            if isinstance(covariance, np.ndarray):
-                if covariance_order is None:
-                    raise CompositeExpressionError(
-                        "covariance_order is required for ndarray covariance"
-                    )
-                self._overlay_ndarray_covariance(cov, symbols, covariance, covariance_order)
-            else:
-                self._overlay_mapping_covariance(cov, symbols, covariance)
-
-        variance = float(jac @ cov @ jac.T)
-        if not np.isfinite(variance):
-            raise CompositeExpressionError("Propagated variance is non-finite")
-        return max(0.0, variance)
-
-    def _overlay_ndarray_covariance(
-        self,
-        out: np.ndarray,
-        symbols: list[str],
-        covariance: np.ndarray,
-        covariance_order: Sequence[str],
-    ) -> None:
-        cov = np.asarray(covariance, dtype=float)
-        if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
-            raise CompositeExpressionError("covariance must be a square matrix")
-        if len(covariance_order) != cov.shape[0]:
-            raise CompositeExpressionError("covariance_order length does not match covariance")
-
-        index_by_name = {name: idx for idx, name in enumerate(covariance_order)}
-        for i, name_i in enumerate(symbols):
-            idx_i = index_by_name.get(name_i)
-            if idx_i is None:
-                continue
-            for j, name_j in enumerate(symbols):
-                idx_j = index_by_name.get(name_j)
-                if idx_j is None:
-                    continue
-                val = float(cov[idx_i, idx_j])
-                if np.isfinite(val):
-                    out[i, j] = val
-
-    def _overlay_mapping_covariance(
-        self,
-        out: np.ndarray,
-        symbols: list[str],
-        covariance: Mapping[str, Mapping[str, float]],
-    ) -> None:
-        for i, name_i in enumerate(symbols):
-            row = covariance.get(name_i)
-            if row is None:
-                continue
-            for j, name_j in enumerate(symbols):
-                if name_j in row:
-                    val = float(row[name_j])
-                    if np.isfinite(val):
-                        out[i, j] = val
+def _named_covariance(
+    covariance: np.ndarray, order: Sequence[str] | None
+) -> dict[str, dict[str, float]]:
+    if order is None:
+        raise CompositeExpressionError("covariance_order is required for ndarray covariance")
+    if covariance.ndim != 2 or covariance.shape[0] != covariance.shape[1]:
+        raise CompositeExpressionError("covariance must be a square matrix")
+    if len(order) != covariance.shape[0]:
+        raise CompositeExpressionError("covariance_order length does not match covariance")
+    return {name: dict(zip(order, row)) for name, row in zip(order, covariance)}
 
 
 def _merge_gradients(

@@ -496,6 +496,7 @@ def test_summary_preserves_covariance_identity_and_unknown_free_errors():
     )
     summary = fit_result_summary(result)
     assert summary["covariance"] == {"C": {"C": 0.09, "A": -0.01}, "A": {"C": -0.01, "A": 0.04}}
+    assert summary["fixed_parameters"] == ["B"]
     assert summary["uncertainties"]["B"] == 0
     assert np.isnan(summary["uncertainties"]["C"])
     result.covariance = None
@@ -514,5 +515,6 @@ def test_explicit_recorded_error_wins_over_parameter_fixed_flag():
         uncertainties={"unknown": float("nan")},
     )
     summary = fit_result_summary(result)
+    assert summary["fixed_parameters"] == ["exact"]
     assert np.isnan(summary["uncertainties"]["unknown"])
     assert summary["uncertainties"]["exact"] == 0.0

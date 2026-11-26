@@ -655,3 +655,72 @@ def test_project_without_new_width_fields_uses_only_captured_source_identity(
     assert captured["values"] == unknown["values"] == summary["parameters"]
     assert restored._project_model.batch("captured").results_by_run[1] == summary
     restored.close()
+
+
+def test_project_reopens_authoritative_fit_series_with_null_uncertainties(
+    mainwindow, monkeypatch, tmp_path
+):
+    from asymmetry.core.fitting.knight_shift import (
+        REFERENCE_COMPONENT,
+        KnightShiftConfig,
+        KnightShiftUnit,
+    )
+    from asymmetry.core.project.schema import load_project, save_project
+    from asymmetry.core.representation import FitSeries
+
+    summary = {
+        "success": True,
+        "parameters": {"frequency": 5.1, "frequency_2": 5.0},
+        "field": 7000.0,
+        "temperature": 1.0,
+    }
+    records = {
+        1: summary | {"uncertainties": None},
+        2: summary | {"uncertainties": {"frequency": 0.02, "frequency_2": None}},
+        3: summary | {"uncertainties": {"frequency": 0.02}, "fixed_parameters": None},
+        4: summary
+        | {
+            "uncertainties": {"frequency": 0.02, "frequency_2": None},
+            "fixed_parameters": ["frequency_2"],
+        },
+    }
+    mainwindow._project_model.add_batch(
+        FitSeries(
+            "legacy",
+            RepresentationType.TIME_FB_ASYMMETRY,
+            label="Legacy frequency fits",
+            member_run_numbers=list(records),
+            results_by_run=records,
+        )
+    )
+    state = mainwindow.collect_project_state()
+    state["fit_parameters_state"].update(
+        knight_shift=KnightShiftConfig(
+            enabled=True,
+            reference_mode=REFERENCE_COMPONENT,
+            reference_component="frequency_2",
+            unit=KnightShiftUnit.FRACTION,
+        ).to_dict(),
+        group_fit_results={
+            "legacy": {
+                "rows": [],
+                "composite_parameters": [{"name": "delta", "expression": "frequency-frequency_2"}],
+            }
+        },
+    )
+    path = tmp_path / "legacy-fits.asymp"
+    save_project(state, path)
+
+    forbid_trend_optimization(monkeypatch)
+    mainwindow.restore_project_state(load_project(path), str(path))
+
+    rows = mainwindow._fit_parameters_panel._rows
+    assert [row.run_number for row in rows] == [1, 2, 3, 4]
+    assert [row.values["K[frequency]"] for row in rows] == pytest.approx([0.02] * 4)
+    assert [row.values["delta"] for row in rows] == pytest.approx([0.1] * 4)
+    np.testing.assert_allclose(
+        [row.errors["K[frequency]"] for row in rows], [np.nan, np.nan, np.nan, 0.004]
+    )
+    np.testing.assert_allclose(
+        [row.errors["delta"] for row in rows], [np.nan, np.nan, np.nan, 0.02]
+    )
