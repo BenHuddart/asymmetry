@@ -523,14 +523,23 @@ def test_batch_pool_tracks_empty_inputs_without_losing_the_recipe(mainwindow, re
     assert {ds.run_number for ds in tab.batch_datasets()} == {runs[0], runs[2]}
     assert tab._fit_btn.isEnabled()
 
+    included = next(
+        entry
+        for row in range(tab._members_list.count())
+        if (entry := tab._members_list.item(row)).data(Qt.ItemDataRole.UserRole) == runs[0]
+    )
+    included.setCheckState(Qt.CheckState.Unchecked)
+    assert not tab._fit_btn.isEnabled()
+    included.setCheckState(Qt.CheckState.Checked)
+
     tab.set_fit_range_display(0.0, 0.01)
     tab._on_fit_range_spinbox_committed()
     assert tab.batch_datasets() == []
     assert not tab._fit_btn.isEnabled()
+    assert tab._fit_btn.toolTip() == "No bins in the fit window."
     assert plot.get_fit_range() == (0.0, 0.8)
 
-    tab.set_fit_range_display(0.0, 0.8)
-    tab._on_fit_range_spinbox_committed()
+    plot.fit_range_guide_changed.emit(0.0, 0.8)
     assert tab._fit_btn.isEnabled()
     assert {ds.run_number for ds in tab.batch_datasets()} == {runs[0], runs[2]}
 
@@ -539,6 +548,37 @@ def test_batch_pool_tracks_empty_inputs_without_losing_the_recipe(mainwindow, re
     assert tab.current_recipe() == recipe
     assert not tab._unavailable_members
     assert {ds.run_number for ds in tab.batch_datasets()} == set(runs[:-1])
+
+
+def test_group_draft_uses_its_own_window_before_launch(mainwindow):
+    browser = mainwindow._data_browser
+    runs = [4242, 4243]
+    for run in runs:
+        browser.add_dataset(
+            _histogram_run_dataset(np.full(16, 200.0), np.full(16, 150.0), run_number=run)
+        )
+    browser.select_runs({runs[0]})
+    group = browser.create_data_group(runs, name="Short records")
+    tab = mainwindow._fit_panel._global_tab
+    tab.set_fit_range_display(0.3, 0.8)
+    mainwindow._on_fit_group_requested(group)
+
+    assert tab.bound_group_id() == group
+    assert tab._unavailable_members == dict.fromkeys(runs, "No bins in the fit window.")
+    assert tab.batch_datasets() == []
+    assert not tab._fit_btn.isEnabled()
+
+    tab.set_fit_range_display(0.0, 0.20)
+    tab._on_fit_range_spinbox_committed()
+    assert tab._fit_btn.isEnabled()
+    tab._set_composite_model(CompositeModel(["Constant"]))
+    tab._fit_btn.click()
+    assert tab.wait_for_fit()
+    series = mainwindow._project_model.batch(mainwindow._fit_panel.open_series_id())
+    assert set(series.results_by_run) == set(runs)
+    for summary in series.results_by_run.values():
+        assert summary["success"]
+        assert summary["input_attribution"]["n"] == 13
 
 
 @pytest.mark.parametrize("view", ["raw_counts", "groups"])

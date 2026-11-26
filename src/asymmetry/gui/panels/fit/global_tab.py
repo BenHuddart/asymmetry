@@ -1383,12 +1383,10 @@ class GlobalFitTab(FitTabBase):
     def replace_member_datasets(
         self, datasets: list[MuonDataset], unavailable: Mapping[int, str]
     ) -> None:
-        """Re-read the pool's runs as *datasets*, keeping exclusions, binding and form.
-
-        What the host calls when the members' data change under the tab — a new
-        fit target, or a run's rotating frame — rather than the member set.
-        """
+        """Refresh member data while keeping exclusions, binding, and form."""
         self._set_member_pool(datasets, self._excluded_runs, unavailable)
+        self._update_mode_ui(preserve_result=True)
+        self._refresh_series_row()
 
     def _apply_recipe(self, canonical_model: dict | None, recipe: dict) -> None:
         """Replay a series' model and recipe into the form (D2)."""
@@ -1405,12 +1403,7 @@ class GlobalFitTab(FitTabBase):
         self._update_mode_ui(preserve_result=True)
 
     def _apply_recipe_fit_range(self, fit_range: dict) -> None:
-        """Write a recipe's window into the range fields, filling unbounded sides.
-
-        A side the recipe leaves open (a pre-v20 series whose window could not
-        be recovered) takes the members' own extent — what the fit actually
-        saw — so the fields always describe a real window.
-        """
+        """Fill missing recipe bounds from the available members' extent."""
         low, high = fit_range["min"], fit_range["max"]
         if low is None or high is None:
             extent = self._member_extent()
@@ -1418,7 +1411,7 @@ class GlobalFitTab(FitTabBase):
                 low = extent[0] if low is None else low
                 high = extent[1] if high is None else high
         if low is None or high is None:
-            return
+            low = high = 0.0
         self.set_fit_range_display(float(low), float(high))
 
     def _member_extent(self) -> tuple[float, float] | None:
@@ -1840,7 +1833,7 @@ class GlobalFitTab(FitTabBase):
         """Recompute the included member set when a member checkbox toggles."""
         if self._suppress_member_signals or self._members_list is None:
             return
-        excluded: set[int] = set()
+        excluded = self._excluded_runs & self._unavailable_members.keys()
         for row in range(self._members_list.count()):
             entry = self._members_list.item(row)
             run_number = entry.data(Qt.ItemDataRole.UserRole)
@@ -5402,7 +5395,8 @@ class GlobalFitTab(FitTabBase):
 
         n = len(self._datasets)
         self._fit_btn.setEnabled((n > 1) and (not self._fit_blocked) and editable)
-        self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
+        reason = next(iter(self._unavailable_members.values()), "") if n < 2 else ""
+        self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else reason)
         self._preview_btn.setEnabled(False)
         self._preview_btn.setToolTip("Preview is available only in grouped time-domain mode.")
         wizard_enabled = (n > 1) and (not self._fit_blocked) and self._domain == "time" and editable

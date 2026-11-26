@@ -1556,10 +1556,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_display_bunch(self) -> None:
         """Refresh the displayed data and fit input after the bunch factor changes."""
-        if self._current_dataset is not None:
-            self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
         self._render_current_selection_plot()
-        self._update_selected_datasets()
+        self._update_selected_datasets(preserve_batch=True)
 
     def _on_view_mode_button_clicked(self, mode_index: int) -> None:
         if (
@@ -1992,7 +1990,7 @@ class MainWindow(QMainWindow):
         self._fit_panel.saved_fit_compare_requested.connect(self._on_saved_fit_compare_requested)
         self._fit_panel.batch_fit_range_changed.connect(self._on_batch_fit_range_changed)
         for _panel in (self._plot_panel, self._frequency_plot_panel):
-            _panel.fit_range_guide_changed.connect(self._fit_panel.set_batch_fit_range)
+            _panel.fit_range_guide_changed.connect(self._on_batch_fit_guide_changed)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         self._fit_panel.members_changed.connect(self._scan_fits.stop)
@@ -3158,19 +3156,29 @@ class MainWindow(QMainWindow):
         self._follow_fit_target_in_batch_draft()
         self._refresh_trend_panel(surface=False)
 
-    def _repool_batch(self, projection: str | None) -> None:
-        """Re-read the Batch tab's member runs on *projection*, keeping its form (D7).
-
-        Exclusions, the group binding and the recipe stay; only the members'
-        data, and which runs can join, change.
-        """
-        runs = self._fit_panel.member_pool_runs()
+    def _repool_batch(
+        self, projection: str | None, rep_type: RepresentationType | None = None
+    ) -> None:
+        """Refresh the member data while preserving the Batch form and exclusions."""
         self._fit_panel.replace_member_datasets(
-            self._batch_datasets_for_runs(
-                runs, self._fit_panel.batch_fit_range(), None, projection
-            ),
-            self._unavailable_members(runs, projection),
+            *self._batch_members_for_runs(
+                self._fit_panel.member_pool_runs(),
+                self._fit_panel.batch_fit_range(),
+                rep_type or self._active_representation_type(),
+                projection,
+            )
         )
+
+    def _refresh_fb_batch_inputs(self) -> None:
+        """Refresh the open series' input or the current F–B draft."""
+        if not isinstance(self._fit_panel, fit_panel_module.FitPanel):
+            return
+        series = self._project_model.batch(self._fit_panel.open_series_id() or "")
+        if series is not None:
+            if series.rep_type == RepresentationType.TIME_FB_ASYMMETRY:
+                self._repool_batch(series.projection, series.rep_type)
+        elif self._plot_workspace.active_view() == "fb_asymmetry":
+            self._repool_batch(self._current_single_fit_projection())
 
     def _follow_fit_target_in_batch_draft(self) -> None:
         """A Batch draft fits what the plot's fit target shows; an open series keeps its own."""
@@ -5821,25 +5829,18 @@ class MainWindow(QMainWindow):
             and self._should_launch_multi_group_fit_window()
         )
 
-    def _selected_time_fit_datasets(
-        self, unavailable: dict[int, str] | None = None
-    ) -> list[MuonDataset]:
-        """Prepare the selected runs over the Batch tab's own fit window."""
-        window = self._fit_panel.batch_fit_range()
+    def _selected_time_batch_inputs(self) -> tuple[list[MuonDataset], dict[int, str]]:
+        """Prepare selected members over their Batch window and projection."""
+        selected = self._data_browser.get_selected_datasets()
         projection = self._current_single_fit_projection()
-        fb_asymmetry = self._plot_workspace.active_view() == "fb_asymmetry"
-        datasets = []
-        for source in self._data_browser.get_selected_datasets():
-            crop = self._get_fit_dataset(source, window, projection=projection)
-            if crop is None:
-                continue
-            if crop.n_points or not fb_asymmetry:
-                datasets.append(crop)
-            elif unavailable is not None:
-                unavailable[source.run_number] = _empty_time_fit_reason(
-                    source, self._plot_panel.get_bunch_factor()
-                )
-        return datasets
+        unavailable = self._unavailable_members([ds.run_number for ds in selected], projection)
+        datasets = self._time_batch_datasets(
+            selected,
+            self._fit_panel.batch_fit_range(),
+            projection,
+            unavailable if self._plot_workspace.active_view() == "fb_asymmetry" else None,
+        )
+        return datasets, unavailable
 
     def _unavailable_members(self, runs, projection: str | None) -> dict[int, str]:
         """The loaded *runs* that cannot be members of a series on *projection*, by why.
@@ -5855,13 +5856,6 @@ class MainWindow(QMainWindow):
             for dataset in datasets
             if dataset is not None and self._frame_snapshot(dataset) is None
         }
-
-    def _selection_unavailable_members(self) -> dict[int, str]:
-        """The selected runs a Batch draft on the plot's fit target cannot take."""
-        return self._unavailable_members(
-            [ds.run_number for ds in self._data_browser.get_selected_datasets()],
-            self._current_single_fit_projection(),
-        )
 
     def _sync_fit_dock_mode(self) -> None:
         """Swap the fit dock between regular, grouped and ALC content."""
@@ -5891,7 +5885,8 @@ class MainWindow(QMainWindow):
             # surface (see _grouped_fit_surface_active), so entering the groups
             # view must also hand it the series members it missed.
             if hasattr(self._multi_group_fit_window, "set_member_datasets"):
-                self._multi_group_fit_window.set_member_datasets(self._selected_time_fit_datasets())
+                members, _unavailable = self._selected_time_batch_inputs()
+                self._multi_group_fit_window.set_member_datasets(members)
             self._dock_fit.setWindowTitle(self._multi_group_fit_window.dock_title())
         else:
             self._dock_fit.setWindowTitle("Fit")  # inspector tab label — title case per spec
@@ -9934,7 +9929,9 @@ class MainWindow(QMainWindow):
             and self._plot_workspace.active_domain() == "frequency"
         ):
             self._set_frequency_fit_datasets_for_selection()
-        self._update_selected_datasets()
+        self._update_selected_datasets(
+            preserve_batch=self._plot_workspace.active_view() == "fb_asymmetry"
+        )
         self._refresh_fourier_staleness()
 
     def _on_fit_range_edit_committed(self, x_min: float, x_max: float) -> None:
@@ -9951,8 +9948,14 @@ class MainWindow(QMainWindow):
         self._update_fit_block_state()
         self._sync_batch_fit_range_guide()
 
+    def _on_batch_fit_guide_changed(self, x_min: float, x_max: float) -> None:
+        """Mirror a Batch guide drag into the form and refresh its inputs."""
+        self._fit_panel.set_batch_fit_range(x_min, x_max)
+        self._refresh_fb_batch_inputs()
+
     def _on_batch_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
-        """The Batch tab's own window moved: the range guides follow it (D8)."""
+        """Re-crop the Batch members and move their plot guides."""
+        self._refresh_fb_batch_inputs()
         self._sync_batch_fit_range_guide()
 
     def _sync_batch_fit_range_guide(self) -> None:
@@ -10934,17 +10937,17 @@ class MainWindow(QMainWindow):
             return
         editing = self._fit_panel.open_series_id() == batch_id
         members = list(series.member_run_numbers)
-        window = self._recipe_window(series.recipe)
         self._project_model.remove_batch(batch_id)
         self._clear_series_overlays(batch_id)
         if editing:
             # The Batch tab was editing it: keep the runs and the setup on show
             # as a draft rather than emptying the surface under the user.
+            datasets, unavailable = self._batch_members_for_runs(
+                members, self._fit_panel.batch_fit_range(), series.rep_type, series.projection
+            )
             self._fit_panel.open_draft(
-                datasets=self._batch_datasets_for_runs(
-                    members, window, series.rep_type, series.projection
-                ),
-                unavailable=self._unavailable_members(members, series.projection),
+                datasets=datasets,
+                unavailable=unavailable,
                 group_id=self._fit_panel.bound_group_id(),
                 group_name=self._data_group_name(self._fit_panel.bound_group_id() or ""),
             )
@@ -11063,28 +11066,48 @@ class MainWindow(QMainWindow):
                     continue
         return text
 
-    def _batch_datasets_for_runs(
-        self, runs, fit_range, rep_type, projection: str | None = None
-    ) -> list[MuonDataset]:
-        """The Batch tab's member pool for *runs*, cropped to *fit_range*.
+    def _batch_members_for_runs(self, runs, fit_range, rep_type, projection):
+        """Prepare an editable Batch pool and list its unavailable runs."""
+        unavailable = self._unavailable_members(runs, projection)
+        datasets = self._batch_datasets_for_runs(
+            runs, fit_range, rep_type, projection, unavailable=unavailable
+        )
+        return datasets, unavailable
 
-        *rep_type* decides both where the members come from and what unit the
-        window is in: a frequency representation draws them from its cached
-        spectra and crops in MHz, every other one from the browser's time
-        datasets in µs. *fit_range* is the series' own window (D8); an unbounded
-        side falls back to the owning plot's bound. A rotated *projection* takes
-        each run's rotated curve in its own frame and leaves out a run without
-        one (:meth:`_unavailable_members` lists them).
-        """
+    def _batch_datasets_for_runs(
+        self,
+        runs,
+        fit_range,
+        rep_type,
+        projection: str | None = None,
+        *,
+        unavailable: dict[int, str] | None = None,
+    ) -> list[MuonDataset]:
+        """Crop each run in the representation's coordinate units."""
         if rep_type is not None and rep_type.domain == "frequency":
             return self._frequency_fit_datasets_for_runs(runs, rep_type, fit_range)
+        sources = (self._data_browser.get_dataset(int(run)) for run in runs)
+        return self._time_batch_datasets(
+            (source for source in sources if source is not None),
+            fit_range,
+            projection,
+            unavailable if rep_type == RepresentationType.TIME_FB_ASYMMETRY else None,
+        )
+
+    def _time_batch_datasets(
+        self, sources, fit_range, projection, unavailable: dict[int, str] | None
+    ) -> list[MuonDataset]:
+        """Collect fit crops and disable empty F–B members in editable pools."""
         datasets = []
-        for run_number in runs:
-            dataset = self._data_browser.get_dataset(int(run_number))
-            if dataset is None:
+        for source in sources:
+            crop = self._get_fit_dataset(source, fit_range, projection=projection)
+            if crop is None:
                 continue
-            crop = self._get_fit_dataset(dataset, fit_range, projection=projection)
-            if crop is not None:
+            if unavailable is not None and not crop.n_points:
+                unavailable[int(source.run_number)] = _empty_time_fit_reason(
+                    source, self._plot_panel.get_bunch_factor()
+                )
+            else:
                 datasets.append(crop)
         return datasets
 
@@ -11107,27 +11130,20 @@ class MainWindow(QMainWindow):
         return [int(run) for run in group.member_run_numbers]
 
     def _open_series_in_batch_tab(self, batch_id: str) -> None:
-        """Open a recorded series in the Batch tab and make it the active one (D1/D5).
-
-        The single route from a ``batch_id`` to an edited series: it resolves
-        the owning group's members into datasets *of the series' own
-        representation* — cached spectra for a frequency series, browser time
-        data otherwise — cropped to the series' own window in that domain's
-        unit, hands the tab the whole recipe, and moves the active pointer so
-        the plot and the chip rail follow.
-        """
+        """Restore the series recipe and resolve its current member observations."""
         series = self._project_model.batch(str(batch_id))
         if series is None:
             return
         window = self._recipe_window(series.recipe)
         pool = self._group_member_pool(series.group_id, series.member_run_numbers)
+        datasets, unavailable = self._batch_members_for_runs(
+            pool, window, series.rep_type, series.projection
+        )
         self._fit_panel.open_series(
             series,
             display_name=series.label or self._series_fallback_name(series),
-            datasets=self._batch_datasets_for_runs(
-                pool, window, series.rep_type, series.projection
-            ),
-            unavailable=self._unavailable_members(pool, series.projection),
+            datasets=datasets,
+            unavailable=unavailable,
             excluded_runs=series.excluded_run_numbers,
             group_id=series.group_id,
             group_name=self._data_group_name(series.group_id) if series.group_id else None,
@@ -11186,8 +11202,7 @@ class MainWindow(QMainWindow):
         selection change: the member pool becomes the selection and the group
         binding is cleared, so the run mints or adopts its own group.
         """
-        unavailable = self._selection_unavailable_members()
-        self._fit_panel.set_datasets(self._selected_time_fit_datasets(unavailable), unavailable)
+        self._fit_panel.set_datasets(*self._selected_time_batch_inputs())
         self._fit_panel.clear_bound_group()
         self._sync_batch_fit_range_guide()
 
@@ -12592,19 +12607,7 @@ class MainWindow(QMainWindow):
         return name.strip() if isinstance(name, str) and name.strip() else None
 
     def _on_fit_group_requested(self, group_id: str) -> None:
-        """Handle "Fit this group…": bind the Batch tab to the group and prefill it.
-
-        Bypasses the live/visible browser selection — the F9 trap, where a group
-        hidden by a column filter or sort order silently fit exactly the wrong
-        (invisible) runs — by building the batch dataset list directly from
-        :meth:`DataBrowserPanel.get_group_member_run_numbers` rather than the
-        current table selection. The tab becomes a *draft* bound to the group
-        (D1/D7): the recorded series will carry a structural ``group_id`` and the
-        member-list checkboxes drive its exclusions. When the group already holds
-        a series, the draft opens on that series' recipe with its exclusions
-        unticked, so the natural next run is an identical re-run or a deliberate
-        variation rather than a setup rebuilt from defaults.
-        """
+        """Open an editable draft over the group's members and its latest recipe."""
         browser = self._data_browser
         if not hasattr(browser, "get_group_member_run_numbers"):
             return
@@ -12613,18 +12616,22 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("This group has too few runs to batch fit.")
             return
         seed = self._newest_series_for_group(group_id)
-        window = self._recipe_window(seed.recipe) if seed is not None else None
+        window = (
+            self._recipe_window(seed.recipe)
+            if seed is not None
+            else self._fit_panel.batch_fit_range()
+        )
         projection = self._current_single_fit_projection()
-        analysis_datasets = self._batch_datasets_for_runs(
+        analysis_datasets, unavailable = self._batch_members_for_runs(
             run_numbers, window, self._active_representation_type(), projection
         )
-        if not analysis_datasets:
+        if not analysis_datasets and not unavailable:
             self.statusBar().showMessage("This group has no fittable datasets.")
             return
         group_name = self._data_group_name(group_id) or group_id
         self._fit_panel.open_draft(
             datasets=analysis_datasets,
-            unavailable=self._unavailable_members(run_numbers, projection),
+            unavailable=unavailable,
             excluded_runs=seed.excluded_run_numbers if seed is not None else (),
             group_id=group_id,
             group_name=group_name,
@@ -14875,7 +14882,7 @@ class MainWindow(QMainWindow):
                 self._data_browser.custom_values_by_run()
             )
 
-    def _update_selected_datasets(self, *_args) -> None:
+    def _update_selected_datasets(self, *_args, preserve_batch: bool = False) -> None:
         """Update the fit panel with currently selected datasets."""
         self._moment_batch.invalidate()
         selected = self._data_browser.get_selected_datasets()
@@ -14952,12 +14959,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_fit_panel") and hasattr(self._fit_panel, "set_domain"):
             self._fit_panel.set_domain("frequency" if is_frequency_domain else "time")
 
-        unavailable = {} if is_frequency_domain else self._selection_unavailable_members()
-        analysis_datasets = (
-            self._frequency_fit_datasets_for_selected_runs()
-            if is_frequency_domain
-            else self._selected_time_fit_datasets(unavailable)
-        )
+        open_series = self._fit_panel.open_series_id()
+        new_draft = open_series is None and not preserve_batch
+        grouped = self._grouped_fit_surface_active()
+        analysis_datasets, unavailable = [], {}
+        if is_frequency_domain:
+            analysis_datasets = self._frequency_fit_datasets_for_selected_runs()
+        elif new_draft or grouped:
+            analysis_datasets, unavailable = self._selected_time_batch_inputs()
 
         # Refresh the single-fit tab with the currently active dataset so that
         # bunch-factor or fit-range changes are reflected immediately.
@@ -14978,24 +14987,18 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
 
         self._update_fit_block_state()
-        if self._fit_panel.open_series_id() is None:
-            # No series open: the Batch tab is a draft over the selection, as it
-            # has always been. A selection-driven batch is ad-hoc, so any
-            # "Fit this group…" binding goes with it (D1).
+        if new_draft:
+            # A new browser selection replaces the draft's member pool.
             self._fit_panel.set_datasets(analysis_datasets, unavailable)
             self._fit_panel.clear_bound_group()
         else:
-            # D7: a selection change never rewrites an open series. The tab says
-            # so and offers the ways out instead.
+            self._refresh_fb_batch_inputs()
+        if open_series is not None:
             self._fit_panel.note_selection_differs(
                 [int(dataset.run_number) for dataset in selected]
             )
         # The grouped surface fits a *series* across the selected runs.
-        if (
-            not is_frequency_domain
-            and self._grouped_fit_surface_active()
-            and hasattr(self._multi_group_fit_window, "set_member_datasets")
-        ):
+        if grouped and hasattr(self._multi_group_fit_window, "set_member_datasets"):
             self._multi_group_fit_window.set_member_datasets(analysis_datasets)
         # The guides belong to whichever window is being edited, and the domain
         # may have changed under them (D8). Two tuple compares when it has not.

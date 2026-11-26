@@ -3218,10 +3218,8 @@ class PlotPanel(QWidget):
         self._last_low_count_mask = None
         self._clear_waterfall_render_record()
         self._reset_decimation_view_state()
-        self._fit_x_min = None
-        self._fit_x_max = None
         if self._is_frequency_plot_panel():
-            self._frequency_reference_mhz = None
+            self._fit_x_min = self._fit_x_max = self._frequency_reference_mhz = None
 
         self._ax.clear()
         style_axes(self._ax)
