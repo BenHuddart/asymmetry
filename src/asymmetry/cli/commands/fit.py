@@ -16,11 +16,7 @@ from asymmetry.cli._output import (
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
 from asymmetry.cli._runs import reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
-from asymmetry.core.fitting.spectral_lines import (
-    FrequencySpacing,
-    close_frequency_spacing,
-    fitted_frequency_spacings,
-)
+from asymmetry.core.fitting.spectral_lines import FrequencySpacing, fitted_frequency_spacings
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -99,25 +95,7 @@ def run(args: argparse.Namespace) -> None:
     if result["background_held"]:
         print(f"NOTE: {HELD_BACKGROUND} Say in the summary that it was held.")
     spacings = fitted_frequency_spacings(result["parameters"]) if result["success"] else []
-    pair = close_frequency_spacing(spacings)
-    if pair is not None:
-        dof = result["ndof"]
-        weight = (
-            f" — on {dof} degrees of freedom a chi2_red lower by 0.001 is a chi2 lower by "
-            f"{dof * 0.001:.0f}, far more than the few extra parameters cost —"
-            if dof is not None and dof > 0
-            else ""
-        )
-        print(
-            f"NOTE: this fit holds two lines, at {pair.upper.magnitude_mhz:.6g} and "
-            f"{pair.lower.magnitude_mhz:.6g} MHz, {_spacing_text(pair, result, after_units=' apart')}. "
-            f"A split below the FFT resolution is still two lines: compare chi2, not chi2_red, with the one-line "
-            f"fit's{weight} and if it is lower report both frequencies, their separation and "
-            f"amplitudes, not a single line. A rate pinned at its bound or a large error flags "
-            f"one line's envelope, not the line: it does not cancel the chi2 gain, so do not "
-            f"headline a single line either."
-        )
-    if len(spacings) >= (1 if pair is None else 2):
+    if spacings:
         print(
             "Line spacings: "
             + "; ".join(
@@ -126,14 +104,13 @@ def run(args: argparse.Namespace) -> None:
                 for spacing in spacings
             )
         )
+        print("Assessing line multiplicity requires a separate model comparison.")
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
 
 
-def _spacing_text(
-    spacing: FrequencySpacing, result: dict[str, Any], *, after_units: str = ""
-) -> str:
+def _spacing_text(spacing: FrequencySpacing, result: dict[str, Any]) -> str:
     uncertainty = spacing.standard_uncertainty_mhz(
         result["uncertainties"],
         result.get("covariance"),
@@ -141,7 +118,7 @@ def _spacing_text(
     )
     error_bar = f" ± {uncertainty:.2g}" if uncertainty else ""
     status = " (uncertainty unavailable)" if uncertainty is None else ""
-    return f"{spacing.separation_mhz:.4g}{error_bar} MHz{after_units}{status}"
+    return f"{spacing.separation_mhz:.4g}{error_bar} MHz{status}"
 
 
 #: What a run fitted with its background held at zero says about why.

@@ -896,8 +896,7 @@ def _frequency_shift(trend, param: str) -> tuple[float, float, float] | None:
     return first[param], last[param], error
 
 
-#: A held line above this frequency (MHz) sits in a field of tesla order,
-#: where inequivalent sites or sublattices split it by about the resolution.
+#: Frequency threshold (MHz) for suggesting a two-component fit in a field of tesla order.
 HIGH_FIELD_LINE_MHZ = 100.0
 
 
@@ -945,11 +944,8 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
         for name, sign in zip(new_frequencies, (1.0, -1.0))
     )
     return [
-        f"A held line can still be two: inequivalent muon sites or magnetic sublattices "
-        f"split it by as little as the FFT resolution, and an unresolved pair fits as one "
-        f"line whose envelope turns exponential. Before reading the relaxation as the whole "
-        f"story — or the sample as unordered — fit the coldest run with two lines and "
-        f"compare chi2_red: asymmetry recipe <folder> --run {coldest['key']} --name two-line "
+        f"Inequivalent muon sites or magnetic sublattices can contribute nearby frequencies. "
+        f"Try a two-component fit of the coldest run: asymmetry recipe <folder> --run {coldest['key']} --name two-line "
         f"--expression '{two_line}'{initial}, then asymmetry fit <folder> --run "
         f"{coldest['key']} --recipe two-line ({LINE_SEEDS}). A field distribution beyond two lines needs "
         f"MaxEnt or a multi-group analysis, which this CLI does not do: say so under Not done."

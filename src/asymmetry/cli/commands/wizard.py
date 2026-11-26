@@ -227,12 +227,10 @@ def run(args: argparse.Namespace) -> None:
         if harmonic is not None:
             line, double = harmonic
             print(
-                f"NOTE: the recommendation's line at {double:.6g} MHz is twice the one at "
-                f"{line:.6g} MHz — a harmonic of that line, not a second line. In a field of "
-                f"tesla order a second line sits within about the FFT resolution of the first: "
-                f"look for it with asymmetry fourier {shlex.quote(args.folder)} --run {args.run} "
-                f"--window none --fmin {line - 1:.6g} --fmax {line + 1:.6g}, which prints the "
-                f"two-line test."
+                f"NOTE: the recommendation's frequencies {line:.6g} and {double:.6g} MHz "
+                f"are consistent with a harmonic. To inspect the spectrum near {line:.6g} MHz, "
+                f"run asymmetry fourier {shlex.quote(args.folder)} --run {args.run} "
+                f"--window none --fmin {line - 1:.6g} --fmax {line + 1:.6g}."
             )
     from asymmetry.core.fitting.fit_wizard import RecommendationVerdict
 

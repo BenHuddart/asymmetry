@@ -134,10 +134,10 @@ def run(args: argparse.Namespace) -> None:
         )
     for root, run, frequency in untested:
         print(
-            f"Run {run} in {root}: fourier found a line at {frequency:.6g} MHz in a field of "
-            f"tesla order and printed a two-line test, but no fit here has two lines. Run that "
-            f"test (asymmetry fourier <folder> --run {run} --window none --workdir {root} prints "
-            f"it) before calling the line single."
+            f"Run {run} in {root}: fourier found a peak at {frequency:.6g} MHz in a field of "
+            f"tesla order and suggested a two-component fit. Try it to estimate nearby "
+            f"component frequencies (asymmetry fourier <folder> --run {run} --window none "
+            f"--workdir {root} prints the commands)."
         )
     if untrended:
         print(
@@ -505,9 +505,8 @@ def _unfitted_report(unfitted: list[_UnfittedScan]) -> str:
 def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
     """``(work directory, run, MHz)`` for a tesla-field line no two-line fit there tested.
 
-    A fit tests the pair only when two of its frequencies lie within
-    :data:`~asymmetry.cli.commands.fourier.PAIR_SPLIT` of each other; a wizard recipe whose second line is the
-    first's harmonic does not.
+    Fit coverage uses the proximity cutoff
+    :data:`~asymmetry.core.fitting.spectral_lines.PAIR_SPLIT` on fitted coordinates.
     """
     from asymmetry.cli.commands.fourier import close_pair, tesla_field_lines
 
