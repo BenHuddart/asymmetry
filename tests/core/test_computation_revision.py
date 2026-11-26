@@ -13,7 +13,11 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.fit_wizard import single_fit_build_signature
 from asymmetry.core.fitting.input_attribution import fit_input_attribution, saved_fit_matches
-from asymmetry.core.fitting.likelihood import dataset_observations
+from asymmetry.core.fitting.likelihood import (
+    CountSource,
+    PoissonCounts,
+    dataset_observations,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.result_payload import _deserialize_fit_result, _serialize_fit_result
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -35,6 +39,20 @@ def constant(time, c):
 
 def reduced_curve():
     return reduce_run(_continuous_run(0), ReductionSettings(alpha=1.0, alpha_source="user"))
+
+
+def test_saved_poisson_fit_retains_historical_deviance():
+    counts = PoissonCounts([0.0, 1.0], [1.0, 2.0], CountSource.RAW)
+    result = FitEngine().fit_observations(counts, constant, ParameterSet([Parameter("c", 1.0)]))
+    summary = fit_result_summary(result) | {"computation_revision": "14", "chi_squared": 28.5911}
+    saved = json.loads(json.dumps(FitSlot(result=summary).to_dict()))
+    reopened = FitSlot.from_dict(saved)
+
+    assert reopened.result["objective"] == "poisson"
+    assert reopened.result["chi_squared"] == 28.5911
+    assert reopened.result["computation_revision"] == "14"
+    assert not computation.is_current(reopened.result["computation_revision"])
+    assert reopened.to_dict()["result"]["computation_revision"] == "14"
 
 
 @pytest.mark.parametrize("revision", [None, "historical", "5", "6"])

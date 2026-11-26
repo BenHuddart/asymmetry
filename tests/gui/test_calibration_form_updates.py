@@ -136,8 +136,8 @@ def test_vector_batch_does_not_publish_partial_results(qapp, monkeypatch, finish
         completed.append(request.slot)
         return result
 
-    def held_cost(*args):
-        value = original_cost(*args)
+    def held_cost(*args, **kwargs):
+        value = original_cost(*args, **kwargs)
         if active.slot == failed_slot and not entered.is_set():
             entered.set()
             assert release.wait(10)

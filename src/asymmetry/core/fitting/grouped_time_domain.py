@@ -1550,14 +1550,16 @@ def _blockwise_run_rounds(
     executor: ProcessPoolExecutor | None,
     max_rounds: int,
     tol: float,
-) -> tuple[dict[int, GroupedTimeDomainFitResult], dict[str, float], dict[str, float], int]:
-    """Run the alternating rounds; return ``(inner_results, shared, shared_unc, rounds)``.
-
-    Each round: (a) fit every run independently with the shared params held, then
-    (b) fit only the shared params with all locals held. A broken pool drops to the
-    sequential path for that round and the rest of the solve.
-    """
+) -> tuple[
+    dict[int, GroupedTimeDomainFitResult],
+    dict[int, FitResult],
+    dict[str, float],
+    dict[str, float],
+    int,
+]:
+    """Alternate independent local fits and a shared-parameter update."""
     inner_results: dict[int, GroupedTimeDomainFitResult] = {}
+    outer_results: dict[int, FitResult] = {}
     shared_uncertainties: dict[str, float] = {}
     rounds_run = 0
     for _round in range(max_rounds):
@@ -1633,6 +1635,8 @@ def _blockwise_run_rounds(
             cost_factory=cost_factory,
             minuit_strategy=0,
         )
+        if cost_factory is not None and any(name not in outer_shared for name in truly_global):
+            break
         new_shared = {name: float(outer_shared[name].value) for name in truly_global}
         shared_uncertainties = {
             p.name: float(u)
@@ -1641,9 +1645,7 @@ def _blockwise_run_rounds(
             if u is not None
         }
 
-        # The shared params are the ONLY cross-run coupling, so once a full alternation
-        # leaves them unchanged the inner fits reproduce the same locals and the
-        # iteration is at its fixed point — that is the convergence test.
+        # Shared parameters are the only cross-run coupling.
         shared_converged = all(
             _relative_change(shared_values[name], new_shared[name]) <= tol for name in truly_global
         )
@@ -1651,7 +1653,7 @@ def _blockwise_run_rounds(
         if rounds_run >= 2 and shared_converged:
             break
 
-    return inner_results, shared_values, shared_uncertainties, rounds_run
+    return inner_results, outer_results, shared_values, shared_uncertainties, rounds_run
 
 
 def _fit_grouped_series_global_blockwise(
@@ -1681,22 +1683,15 @@ def _fit_grouped_series_global_blockwise(
     max_rounds: int = 12,
     tol: float = 1.0e-4,
 ) -> GroupedSeriesFitResult:
-    """Solve the mixed global/local grouped fit by alternating block minimisation.
+    """Alternate local and shared fits for a joint objective.
 
-    The joint objective couples runs only through ``truly_global`` (the cross-run
-    shared physics). Each round (a) holds those shared params and fits every run
-    independently — its per-run physics ``per_run_physics`` shared across the run's
-    groups, ``nuisances`` per ``(run, group)`` — then (b) holds all locals and fits
-    only the shared params. Iterating to a fixed point reaches the joint optimum while
-    each sub-problem stays small and well-conditioned, so cost scales linearly in run
-    count. Shared-parameter uncertainties come from step (b) and are conditional on the
-    fitted locals; per-(run, group) uncertainties come from step (a).
+    The per-(run, group) uncertainties are conditional on the shared parameters.
+    Shared-parameter uncertainties are conditional on the locals unless profiled.
     """
     run_order = list(members)
     workers = _resolve_grouped_series_workers(max_workers, len(run_order))
 
-    # Mutable per-run seeds carry the structural template (bounds, fixed phases) and the
-    # latest fitted values across rounds; the shared params are pinned fixed for step (a).
+    # Inner rounds pin the shared seeds and fit the member parameters.
     run_seeds: dict[int, dict[Hashable, ParameterSet]] = {
         int(run): {gid: _copy_param_set_with(ps) for gid, ps in groups.items()}
         for run, groups in initial_params.items()
@@ -1705,21 +1700,16 @@ def _fit_grouped_series_global_blockwise(
     shared_values: dict[str, float] = {
         name: float(representative[name].value) for name in truly_global
     }
-    # Captured from the ORIGINAL seeds: the round loop pins the shared params fixed in
-    # run_seeds, so their free/fixed status must be read before that mutation.
     free_shared = [name for name in truly_global if not representative[name].fixed]
     inner_global = list(per_run_physics) + list(truly_global)
 
-    # One persistent pool for the whole solve — the inner per-run fits repeat every
-    # round, so creating the (spawn) pool per round would pay the import cost N times
-    # and erase the parallel gain. Created once here, reused across rounds, torn down
-    # in finally (covering the cancel path).
+    # The inner rounds reuse one pool to avoid process startup on each round.
     executor: ProcessPoolExecutor | None = None
     if workers > 1 and _grouped_series_payload_picklable(polarization_model_fn):
         executor = open_spawn_pool(workers)
 
     try:
-        inner_results, shared_values, shared_uncertainties, rounds_run = _blockwise_run_rounds(
+        inner, outer, shared_values, shared_uncertainties, rounds_run = _blockwise_run_rounds(
             run_order=run_order,
             members=members,
             polarization_model_fn=polarization_model_fn,
@@ -1746,9 +1736,7 @@ def _fit_grouped_series_global_blockwise(
             max_rounds=max_rounds,
             tol=tol,
         )
-        # Rigorous (marginal) shared-parameter errors: profile the few shared params,
-        # re-optimising all locals at each probe (the numerical Schur complement), while
-        # the pool is still alive. Falls back to the conditional errors on any failure.
+        # Marginal shared errors re-optimise the locals at each curvature probe.
         profiled_errors = (
             _profile_shared_covariance(
                 truly_global=truly_global,
@@ -1781,20 +1769,26 @@ def _fit_grouped_series_global_blockwise(
     if profiled_errors:
         shared_uncertainties = {**shared_uncertainties, **profiled_errors}
 
-    # Final per-(run, group) results come from the last inner round; inject the converged
-    # shared values + their (conditional or profiled) uncertainties so each member reports
-    # the full set.
     member_results: dict[int, FitResult] = {}
     for key, run in member_source_run.items():
-        result = inner_results.get(int(run))
+        result = inner.get(int(run))
         if result is None:
             continue
         group_result = result.group_results.get(member_group_id[key])
         if group_result is None:
             continue
-        member_results[key] = _inject_shared_parameters(
-            group_result, shared_values, shared_uncertainties
-        )
+        member = _inject_shared_parameters(group_result, shared_values, shared_uncertainties)
+        if cost_factory is not None:
+            # The shared update evaluates the model at the returned parameters.
+            fitted = outer[key]
+            member.residuals = fitted.residuals
+            member.chi_squared = fitted.chi_squared if fitted.residuals is not None else math.inf
+            member.reduced_chi_squared = member.chi_squared / max(member.dof, 1)
+            member.minimum_expected_count = fitted.minimum_expected_count
+            if not fitted.success:
+                member.success = False
+                member.message = fitted.message
+        member_results[key] = member
 
     shared_parameters = ParameterSet(
         [
