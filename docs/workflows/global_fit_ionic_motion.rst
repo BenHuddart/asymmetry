@@ -1,11 +1,10 @@
 Global fitting across fields: Li⁺ ionic motion in a garnet electrolyte
 ======================================================================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for the
+   EMU garnet electrolyte runs.
 
    Use several applied fields at each temperature, together with reliable field
    and temperature metadata and a common instrument calibration. The LLZ triplets
@@ -58,7 +57,7 @@ Fit" it descends from) calls a global fit.
 The runs
 --------
 
-The corpus example contains 40 EMU runs collected in April 2015 (experiment
+The Rigi school data include 40 EMU runs collected in April 2015 (experiment
 RB1510349): one transverse-field calibration run and thirteen temperatures each
 measured at three longitudinal fields.
 

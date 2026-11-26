@@ -1,11 +1,10 @@
 Muon diffusion in copper: Kubo–Toyabe, Abragam, and QLCR
 ========================================================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for the
+   EMU and ARGUS copper runs.
 
    Use your own temperature series with the field geometries you want to study,
    plus the instrument calibration. The copper run numbers and fitted values below
@@ -25,7 +24,7 @@ the relaxation changes with temperature turns a µSR spectrometer into a
 diffusion probe.
 
 This worked example follows the WiMDA muon-school copper set through the three
-field geometries the guide prescribes, using real corpus data at every step:
+field geometries the guide prescribes, using the Rigi school data at every step:
 
 - **zero field (ZF)** — the static Gaussian Kubo–Toyabe dip at 40 K, and its
   departure at base temperature that signals low-temperature quantum diffusion;
@@ -37,10 +36,10 @@ field geometries the guide prescribes, using real corpus data at every step:
 - **longitudinal field (LF)** — the quadrupolar level-crossing resonance (QLCR),
   a resonance unique to the muon sitting next to a quadrupolar nucleus.
 
-The experiment and the corpus data
------------------------------------
+The experiment and the runs
+---------------------------
 
-The corpus example (*Nuclear magnetism and ionic motion → Muon diffusion and
+The Rigi school example (*Nuclear magnetism and ionic motion → Muon diffusion and
 QLCR in copper*, ``Data/``) contains 74 NeXus ``.nxs`` runs from two campaigns: a
 2010 **EMU** set (runs 20882–20917) and a 2024 **ARGUS** set (runs
 76924–76961), both pulsed ISIS instruments. Between them they cover all three
@@ -118,8 +117,8 @@ local field pointing along their initial spin and do not depolarise.
 
 The width :math:`\Delta` is a property of the *lattice* — the geometry and
 magnitude of the ⁶³Cu/⁶⁵Cu dipolar fields at the muon site — not of temperature,
-so it serves as a fixed anchor for the dynamic fits that follow. The corpus
-teaching guide states no target value for it; the :math:`0.38`–:math:`0.39`
+so it serves as a fixed anchor for the dynamic fits that follow. The Rigi school
+guide states no target value for it; the :math:`0.38`–:math:`0.39`
 µs⁻¹ figure is a literature sanity anchor (a zero-field measurement gives
 :math:`0.389(3)` µs⁻¹), used here only to confirm the fit is physical.
 
@@ -313,7 +312,7 @@ with an ``Arrhenius + Constant`` model gives
 
 in the expected range for muon diffusion in copper. The value is window-dependent
 — it drifts with where the low-temperature end of the branch is cut — and a
-narrower or wider fit range shifts it by several meV; the corpus program's own
+narrower or wider fit range shifts it by several meV; WiMDA's
 run gave :math:`E_a \approx 62` meV over a slightly different window. Both
 describe the same over-barrier hopping.
 
@@ -413,7 +412,7 @@ appears directly as a feature in :math:`A` versus field.
    RESONANCE (A_M, A_P)** sections used to fit the dip. The densest sampling sits
    at 75–90 G, deliberately concentrated to pin the resonance field.
 
-The corpus guide states no expected resonance field; it is a deliverable, to be
+The Rigi school exercise asks for the resonance field to be
 located from the dip. The dense 75–90 G sampling and the minimum near 78 G are
 consistent with the known copper QLCR, first reported by Kreitzman *et al.*,
 Phys. Rev. Lett. **56**, 181 (1986). The same resonance can also be extracted by
@@ -454,7 +453,7 @@ Assumptions and limitations
 
 - **The activation energy is window-dependent.** :math:`E_a \approx 73` meV comes
   from an Arrhenius fit to the :math:`T \ge 90` K branch; a different low-T cut-off
-  shifts it by several meV (the corpus program obtained ~62 meV over a nearby
+  shifts it by several meV (WiMDA obtained ~62 meV over a nearby
   window). Quote it with the fit window, not as a hard number, and note the
   guide states no target value — :math:`E_a` is a deliverable.
 

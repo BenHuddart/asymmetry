@@ -4,12 +4,9 @@ Module: `lifeas_pnictide.py` · Example: `Superconductivity/LiFeAs`
 Spec: that example's `GROUND_TRUTH.md` (paper-graded — no teaching docx; the
 reference is Pratt *et al.*, PRB **79**, 052508 (2009)).
 
-The transverse-field vortex-lattice **B_rms(T) → penetration-depth** workflow on
-the "111" iron-arsenide superconductor LiFeAs. Real PSI GPS `.bin` runs, two
-samples: **Sample 1 "LFA"** (3366–3387, T_c = 16 K) and **Sample 2 "LFA_2"**
-(3662–3697, T_c ≈ 12 K). The authoritative deliverable is the 40 mT (400 G)
-temperature scan of Sample 1 (runs 3366–3373), which reproduces the paper's
-Fig. 1 B_rms(T) plateau → λ_ab = 195 nm.
+The scenarios use the 40 mT temperature scan of LiFeAs Sample 1 (LFA,
+PSI GPS runs 3366–3373). The low-temperature plateau in the vortex-lattice
+field width B_rms gives the penetration depth λ_ab.
 
 ## Scenarios registered
 
@@ -17,7 +14,7 @@ Fig. 1 B_rms(T) plateau → λ_ab = 195 nm.
 |---|---|---|
 | `corpus_lifeas_pair_select` | Matplotlib 2-panel, base-T run 3366: default Forward/Back (cancelled mush) vs Up/Down transverse pair (clean 5.44 MHz damped precession) | **Data-handling**: the essential detector-pairing choice for these spin-rotated (WED) runs — the loader's default pair cancels the signal |
 | `corpus_lifeas_tf_fit` | GUI single-fit panel, two-Gaussian TF fit on 3366 (1.5 K, 40 mT, Up/Down): σ_2 = 1.189, σ_4 = 0.178, χ²ᵣ = 9.71, model string + param table | **Core fit**: the vortex signal σ_2 with the weakly-relaxing Ag background σ_4 → B_rms ≈ 1.96 mT (λ_ab ≈ 195 nm) |
-| `corpus_lifeas_brms_t` | **Real Fit-Parameters trend panel, native multi-series overlay** (PR-248): Sample 1 real Asymmetry fits (blue, C0) + Sample 2 digitised Fig. 1 (orange, C1); λ_ab lines + T_c markers added on the axes in `settle()` | **The headline**: plateaus ≈ 1.9 / ≈ 1.2 mT, T_c ≈ 16 / 12 K, λ_ab = 195/244 nm via Eq. (3) |
+| `corpus_lifeas_brms_t` | Fit Parameters trend panel showing Sample 1 two-Gaussian fits, with a 16 K transition marker | Field width from the raw GPS runs, with unresolved points ringed in grey |
 | `corpus_lifeas_vortex_lineshape` | Matplotlib FFT overlay, S1 40 mT: 18 K narrow (nuclear) vs 1.5 K broad (vortex) p(B) line at 5.44 MHz | **Normal vs SC**: the field-distribution broadening below T_c that B_rms measures |
 
 `requires_fit = True` on `tf_fit` and `brms_t` (real iminuit fits at capture).
@@ -27,7 +24,7 @@ Fig. 1 B_rms(T) plateau → λ_ab = 195 nm.
 - **Model** (§4): above T_c a single Gaussian (nuclear); below T_c the vortex
   broadening adds in quadrature, σ² = σ_VL² + σ_n² (Eq. 2), and B_rms = σ_VL/γ_µ
   (γ_µ = 0.8516 µs⁻¹ mT⁻¹). Powder London limit (Eq. 3):
-  B_rms = √0.00371·φ₀/(3^{1/4}λ_ab)² → **195 nm ↔ 1.912 mT, 244 nm ↔ 1.221 mT**
+  B_rms = √0.00371·φ₀/(3^{1/4}λ_ab)² → **195 nm ↔ 1.912 mT**
   (verified numerically — the √ prefactor matters).
 - **Detector pairing (the key corpus fact).** These are spin-rotated "TF WED"
   GPS runs (5 histograms: Forw, Back, Up, Down, Righ). The loader's *default*
@@ -54,37 +51,13 @@ Fig. 1 B_rms(T) plateau → λ_ab = 195 nm.
   the points where the broad component is well-defined (σ > 1.3 σ_n and signal
   fraction > 0.55): the low-T plateau + onset of collapse (1.5–10 K).
 
-## Fitted B_rms vs paper (Sample 1, 40 mT, from the shipped module)
+## Sample 1 trend
 
-σ_n(18 K, single Gaussian) = 0.156 µs⁻¹ (Asymmetry conv.).
-
-| T (K) | fit B_rms (mT) | Fig. 1 digitised §11 (mT) | Δ | kept in headline |
-|---|---|---|---|---|
-| 1.5  | **1.958** | 1.93 | +1.5 % | ✓ |
-| 4.0  | 1.955 | 1.77 | +10 % | ✓ |
-| 7.0  | 1.758 | 1.48 | +19 % | ✓ |
-| 10.0 | 1.189 | 1.04 | +14 % | ✓ |
-| 12.0 | (1.166) | 0.74 | — | ✗ (component swap) |
-| 14.0 | (1.250) | 0.43 | — | ✗ |
-| 16.0 | (0.733) | 0.11 | — | ✗ |
-| 18.0 | (0.789) | 0.02 | — | ✗ (= σ_n, B_rms→0) |
-
-**Base-T plateau is spot-on** (1.958 vs 1.93 mT → λ_ab ≈ 193 nm vs the printed
-195(2) nm). The 4–10 K points run ~10–19 % high — the two-Gaussian split slightly
-over-attributes width to the vortex component as the SC signal weakens; above
-10 K the split degenerates (component swap) and points are dropped. Sample 2's
-B_rms(T) comes entirely from the digitised Fig. 1 (§11): its supplied `.bin`
-runs are 1.5/20 K field-dependence *pairs*, not a T-scan (see problems).
-
-## B_rms ↔ λ_ab vs paper (hard targets)
-
-| Quantity | Paper (GROUND_TRUTH §6/§11) | This work |
-|---|---|---|
-| B_rms plateau, S1 (40 mT, low T) | ≈ 1.8–1.9 mT (Fig. 1); digitised 1.93 | **1.96 mT** (real two-Gaussian fit, run 3366) |
-| λ_ab, Sample 1 (T_c = 16 K) | **195(2) nm** | ≈ 193 nm (from B_rms = 1.958 via Eq. 3) |
-| B_rms plateau, S2 (40 mT, low T) | ≈ 1.0 mT (§6); digitised 1.31 | digitised only (no S2 T-scan in corpus) |
-| λ_ab, Sample 2 (T_c ≈ 12 K) | **244(2) nm** | annotated on headline (digitised curve) |
-| Eq. (3) check | 195 nm → 1.912 mT; 244 nm → 1.221 mT | reproduced numerically (√ prefactor) |
+The fits give a base-temperature width of approximately 1.96 mT, or
+λ_ab ≈ 193 nm by Eq. (3). Pratt et al. report 195(2) nm for Sample 1.
+The panel rings the 12, 14, 16, and 18 K points in grey and excludes
+them from the trend because the two-component fit does not resolve the
+vortex contribution at those temperatures.
 
 ## Feature-demonstration opportunities
 
@@ -124,20 +97,11 @@ runs are 1.5/20 K field-dependence *pairs*, not a T-scan (see problems).
    module docstring and `_brms_mT`.
 3. **Two-component fit degenerates near T_c.** As the vortex signal collapses,
    the signal/background split becomes ill-conditioned (component swap, σ → bound
-   ghosts). The headline keeps only the well-defined low-T points; the full
-   B_rms(T) shape is carried by the digitised §11 curve. χ²ᵣ ≈ 6–10 across the
+   ghosts). Only the well-defined low-temperature points contribute to the trend.
+   χ²ᵣ ≈ 6–10 across the
    scan (raw error scaling on rebinned PSI data) — the fits converge and the
    parameters are physical, but this is not a χ²ᵣ ≈ 1 regime.
-4. **Sample 2 has no 40 mT T-scan in the corpus** (GROUND_TRUTH §3 note). The
-   supplied LFA_2 runs are 1.5 K vs 20 K field-dependence pairs (7–200 G). So
-   the headline's Sample-2 curve is the digitised Fig. 1 (§11); a real S2 base-T
-   fit (run 3663, 200 G) gives B_rms ≈ 1.56 mT — off the 40 mT ≈ 1.31 mT value
-   (different field / incipient field-induced magnetism), so it is deliberately
-   **not** overlaid to avoid a misleading apples-to-oranges point.
-5. **No reference-program output exists** (§7) — no WiMDA `.fit`, no teaching
-   docx. Grading is against the paper's printed λ_ab/n (hard) and the digitised
-   Fig. 1 B_rms(T) (shape/magnitude), per §11.
-6. **MaxEnt does not cleanly separate the vortex/normal lineshape here — FFT
+4. **MaxEnt does not cleanly separate the vortex/normal lineshape here — FFT
    stays the tool.** Re-tested on the PR-249 branch (2026-07-16): core `maxent()`
    on the Up/Down transverse pair (groups 3, 4), out-of-the-box auto steering,
    converges to **χ²/N ≈ 30–50** with **no** vortex-vs-normal contrast — the
@@ -152,69 +116,3 @@ runs are 1.5/20 K field-dependence *pairs*, not a T-scan (see problems).
    manual steering and never at χ²/N ≈ 1; the frequency-domain
    `corpus_lifeas_vortex_lineshape` FFT overlay remains the cleaner, more
    compelling picture of the p(B) broadening. No MaxEnt scenario added.
-
-## PR-248 (multi-series overlay) — verdict from this rework
-
-`corpus_lifeas_brms_t` was reworked (2026-07-12) from a standalone Matplotlib
-figure to the **native PR-248 trend-panel overlay**: series A = Sample 1's real
-per-run two-Gaussian Asymmetry fits, series B = the digitised Pratt-2009 Fig. 1
-Sample-2 reference. Loaded via `load_representation_series([...two tuples...])`
-with `_set_selected_group_ids(["lifeas-s1-fit","lifeas-s2-ref"])`.
-
-- **Works — mixed provenance + mismatched x-grids.** The two series have
-  completely different temperature grids and lengths (S1: 8 pts on the 40 mT
-  scan; S2: 12 digitised pts). The panel assembles each series' arrays
-  independently (`_plot_series_param` sorts and transforms per series), so there
-  is **no shared-x-grid assumption** — real fits and a digitised table overlay
-  cleanly. S1 low-T plateau ≈ 1.96 mT, S2 ≈ 1.31 mT, both read clearly.
-- **Member markers attach to the right series.** The Sample-1 rows near T_c
-  (12/14/16/18 K, where the signal/background split degenerates) are loaded with
-  `include_in_trend=False`; the panel rings exactly those four points in grey on
-  the *active* (Sample 1) series and reports "4/8 members in trend · 4 excluded
-  (12 K, 14 K, 16 K, 18 K)" in the provenance line — the excluded-member overlay
-  is per-series and correct. (The provenance count reflects the active series
-  only, which is correct here since Sample 2 has no exclusions.)
-- **Labelling overlaid series.** What the panel supports is a **legend of series
-  names** (set via the series-name argument to `load_representation_series`);
-  there is no on-plot per-series annotation feature. So the λ_ab plateau lines,
-  T_c markers, and the Eq. (3) note are drawn on the axes in `settle()` (the same
-  channel `sigma_t`/`field_compare` use). The physics labels therefore live on
-  the figure, not attached to the series objects.
-- **Export active-series only.** As on BiSCCO, TSV/GLE export only the active
-  (Sample 1) series; the digitised Sample-2 overlay is plot-only.
-- **No errors on either series here** (`errors={"B_rms": nan}`): the real fit
-  path does not surface a B_rms uncertainty and the digitised curve has none, so
-  no error bars — the panel handles all-NaN errors gracefully (draws no bars).
-
-## Top pick for docs
-
-**`corpus_lifeas_brms_t`** — the headline two-sample B_rms(T), with the real
-Asymmetry Sample-1 fits landing on the paper's Fig. 1 plateau (1.96 vs 1.93 mT)
-and the λ_ab = 195/244 nm conversions annotated via Eq. (3). Best companion is
-`corpus_lifeas_tf_fit` (the converged two-Gaussian fit that produces the base-T
-plateau point). `corpus_lifeas_pair_select` is the most *distinctive* image this
-example offers — the detector-pairing insight no other corpus example shows so
-starkly.
-
-## PR 248 round 2 (re-test, 2026-07-12)
-
-Re-tested commit 4a91420 on the real `corpus_lifeas_brms_t` overlay (Sample 1
-real two-Gaussian fits + Sample 2 digitised Fig. 1).
-
-- **CONFIRMED — `select_series()` migration.** The overlay is now armed through
-  the public `panel.select_series(["lifeas-s1-fit", "lifeas-s2-ref"])` (was the
-  private `_set_selected_group_ids`). Behaviour identical: 2 series, C0/C1,
-  Sample 1 active. Render unchanged.
-- **CONFIRMED — `(active)` legend flag.** Legend now reads
-  `Sample 1 — Asymmetry fit (LFA) (active)` / `Sample 2 — Pratt 2009 Fig. 1
-  (LFA₂)`; the flag sits on the active (Sample 1) series, which owns the
-  grey-ringed excluded-member overlay and the provenance line.
-- **CONFIRMED — TSV overlay exports both series** (the round-1 "active-series
-  only" caveat is closed): a leading `Series` column with both series' rows.
-  (This scenario has no active transform, so no transformed columns — Y is
-  `B_rms` with all-NaN errors, drawn without bars as before.)
-- GLE export remains active-series only (warns + names Sample 1) — the
-  documented fast-follow.
-- **Physics regression: none.** Sample-1 base-T plateau still lands on the paper
-  Fig. 1 (~1.96 mT ⇒ λ_ab ≈ 195 nm); render, exclusions, and annotations
-  unchanged.

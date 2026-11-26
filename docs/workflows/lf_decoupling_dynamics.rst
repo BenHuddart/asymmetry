@@ -1,11 +1,11 @@
 LF decoupling and static-vs-dynamic field distributions
 =======================================================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for the
+   Ca₃Co₂O₆ plateau scan. The :ref:`Re₆Zr contrast <re6zr-lf>` uses
+   MuSR runs from the ISIS DataGateway.
 
    Use your own longitudinal-field series at a stable temperature, with field
    metadata, instrument calibration, and a zero-field reference where available.
@@ -21,7 +21,7 @@ resolution, and the assumptions of the candidate models. Decoupling alone does
 not establish a unique static or dynamic mechanism.
 
 This chapter works the dynamic case on real data: the Ca₃Co₂O₆ magnetic-plateau
-decoupling scan from the WiMDA muon school corpus (HiFi runs 9023–9051, 15 K,
+decoupling scan from the Rigi school data (HiFi runs 9023–9051, 15 K,
 0–3.8 T), the same measurement published by Baker, Lord, and Prabhakaran,
 J\. Phys.: Condens. Matter **23**, 306001 (2011). Its headline is the Redfield
 linearisation — :math:`1/\lambda` against :math:`B^2` — built directly in the
@@ -104,9 +104,9 @@ and the muon decoupling scan at 15 K is designed to catch them.
 The data
 --------
 
-The corpus holds the real HiFi ISIS NeXus (HDF4) files, runs 9023–9051, read
-natively by Asymmetry. Run 9023 is a TF20 calibration (300 K, 20 G transverse)
-used as a reference for :math:`\alpha` and the initial asymmetry. One
+The Rigi school archive contains the ISIS HiFi NeXus (HDF4) files for
+runs 9023–9051. The 20 G transverse-field calibration at 300 K (run 9023)
+provides a reference for :math:`\alpha` and the initial asymmetry. One
 calibration run does not determine their full field dependence. The
 15 K longitudinal-field scan runs from 9031 (zero field) to 9051 (3.8 T),
 stepping the applied field through and beyond the plateau. Ten million decay
@@ -304,8 +304,13 @@ a correlation time just under a nanosecond and an effective field scale near
 40 mT. These estimates are conditional on the model, plateau selection, and
 background treatment; they do not uniquely identify a microscopic process.
 
+.. _re6zr-lf:
+
 Contrast: the static counter-example
 -------------------------------------
+
+The Re₆Zr measurements come from the `ISIS dataset for MuSR runs 38176–38275
+<https://doi.org/10.5286/ISIS.E.24088625>`__.
 
 .. figure:: /_generated/corpus_screenshots/corpus_trsb_lf_decoupling.png
    :alt: Re₆Zr base-temperature zero-field spectrum overlaid with the 10 mT longitudinal-field spectrum
@@ -334,11 +339,9 @@ a universal sharp threshold or from a single flat high-field trace.
 The static LF-KT decoupling series
 ----------------------------------
 
-Neither corpus dataset shows a full *static* decoupling series — Ca₃Co₂O₆ is
-dynamic, and the Re₆Zr contrast uses only two fields. The textbook static case,
-where the LF-KT polarisation is calculated across a progression of fields
-spanning the decoupling crossover, is shown on
-a synthetic generic Gaussian-field dataset, for which the answer is known exactly.
+The Ca₃Co₂O₆ scan probes dynamics, and the Re₆Zr example compares two fields.
+The textbook static case is illustrated with a synthetic Gaussian-field series
+that spans the decoupling crossover.
 
 .. image:: /_generated/screenshots/lf_kt_global_results.png
    :alt: Member Results window from a global generic LF-KT fit, showing shared width and Hessian error

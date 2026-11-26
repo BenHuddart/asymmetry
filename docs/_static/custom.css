@@ -66,6 +66,11 @@
     white-space: normal;
 }
 
+/* Run numbers must remain readable as contiguous file identifiers. */
+.rst-content .wy-table-responsive table.isis-run-table td:first-child {
+    white-space: nowrap;
+}
+
 /* Installation extra names are command arguments and remain whole. */
 .rst-content table.installation-extras td:first-child code,
 .rst-content table.installation-extras td:first-child code .pre {

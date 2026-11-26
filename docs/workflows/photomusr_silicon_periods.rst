@@ -1,11 +1,10 @@
 Photo-μSR in silicon: carrier recombination from period-mode runs
 =================================================================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for the
+   two-period HiFi silicon runs.
 
    Use your own light-on/light-off measurements and the experiment log that maps
    periods to laser states, injection density, and timing. The HiFi run numbers below
@@ -21,15 +20,12 @@ muon spin through the hyperfine interaction. The relaxation rate
 :math:`\lambda` therefore acts as a yardstick for the excess carrier
 density :math:`\Delta n`, and following :math:`\lambda` as the carriers
 recombine measures the carrier lifetime. This chapter works that analysis
-end to end on real HiFi data, and doubles as the corpus's showcase for
-**period-mode** files — a single run that holds two histogram sets, laser
-**ON** and laser **OFF**.
+on the HiFi runs from the Rigi school data. Each **period-mode** file
+holds two histogram sets, one for laser **ON** and one for laser **OFF**.
 
-The dataset is not a teaching mock-up: runs ``HIFI00103277``–``103299``
-(ISIS proposal RB1520457, May 2016) are the very measurements published in
-K\. Yokoyama *et al.*, Phys. Rev. Lett. **119**, 226601 (2017). That makes
-the example **paper-graded** — the numbers Asymmetry recovers below can be
-held against the published fit values, and they agree.
+Runs ``HIFI00103277``–``103299``
+(ISIS proposal RB1520457) are the measurements published by
+K\. Yokoyama *et al.*, Phys. Rev. Lett. **119**, 226601 (2017).
 
 The data
 --------
@@ -37,8 +33,7 @@ The data
 The example uses 23 two-period HiFi (ISIS pulsed source) runs on
 single-crystal intrinsic silicon (:math:`R > 1000\;\Omega\,\mathrm{cm}`) at
 room temperature (:math:`T = 291\;\mathrm{K}`) in a longitudinal field of
-100 G (10 mT). They fall into three roles (corpus
-*Semiconductors → Photo-μSR in silicon*, ``Data/``):
+100 G (10 mT). The runs in the Rigi school *Photo-μSR in silicon* folder serve three roles.
 
 - **Calibration set** — runs 103277–103286, laser timing
   :math:`\Delta T = 0`, injected carrier density stepped from
@@ -176,11 +171,9 @@ the lifetime below justifies).
    Single-exponential fit to the laser-ON period of the highest-density run
    103277, restricted to the first 1 μs (shaded) with the amplitude fixed at
    the laser-OFF value. The rate comes out at
-   :math:`\lambda = 1.27\;\mathrm{\mu s^{-1}}`, matching the digitised paper
-   value (≈ 1.29). The fit is flagged **poor**
-   (:math:`\chi^2/\nu \approx 2.7`): a single exponential is a slight
-   idealisation of a spectrum with more structure over 0–1 μs, but the
-   recovered rate is robust. See :doc:`/reference/fit_functions/relaxation`
+   :math:`\lambda = 1.27\;\mathrm{\mu s^{-1}}`. The fit is flagged **poor**
+   (:math:`\chi^2/\nu \approx 2.7`) because the spectrum has more
+   structure than a single exponential can describe over 0–1 μs. See :doc:`/reference/fit_functions/relaxation`
    for the exponential relaxation component and
    :doc:`/reference/fit_functions/muonium` for the underlying muonium
    dynamics.
@@ -217,9 +210,7 @@ which appears as a straight line whose slope is the exponent
    overlay is a straight line on these axes. The fitted exponent is
    :math:`\alpha = 0.65`, against the paper's :math:`0.68(4)` — within one
    standard deviation; the prefactor :math:`\beta = 1.30\;\mathrm{\mu s^{-1}}`
-   sits a little below the paper's :math:`1.46(4)`, because the
-   single-exponential rates run slightly low at small :math:`\Delta n`
-   (see the limitations below).
+   sits below the paper's :math:`1.46(4)`.
 
 Inverting this calibration turns any measured :math:`\lambda` back into a
 carrier density, which is exactly what the delay scan needs.
@@ -286,14 +277,11 @@ because they set the accuracy of the recovered numbers:
   laser-OFF value removes a degeneracy between amplitude and rate in the
   short 1 μs window; it assumes the initial asymmetry is unchanged by the
   illumination.
-- **Rates run low at low density.** The fitted :math:`\lambda` sit roughly
-  5–15 % below the digitised paper values at small :math:`\Delta n`, since a
-  baseline-free single exponential underestimates a slow tail. This pulls
-  the calibration exponent (:math:`\alpha = 0.65` vs :math:`0.68(4)`) and
-  prefactor (:math:`\beta = 1.30` vs :math:`1.46(4)`) a little low. The
-  headline :math:`\tau_0` is insensitive to it, as it depends on the
-  *shape* of :math:`\Delta n(\Delta T)` rather than the calibration
-  normalisation.
+- **Sensitivity to the calibration.** A single exponential can be a poor
+  description of the time spectrum at low carrier density, where the relaxing
+  signal is weaker. The prefactor sets the scale of :math:`\Delta n`. The
+  calibration exponent affects the shape of the inferred decay and can
+  therefore affect the fitted lifetime.
 - **Default detector balance.** The trends here use the loader's default
   reduction (:math:`\alpha = 1`); the transverse-field α calibration from
   run 103299 refines the absolute asymmetry but not the relaxation-rate
@@ -303,7 +291,7 @@ because they set the accuracy of the recovered numbers:
 .. rubric:: References
 
 - K\. Yokoyama, J. S. Lord, J. Miao, P. Murahari, and A. J. Drew, Phys. Rev.
-  Lett. **119**, 226601 (2017) — the photoexcited-μSR carrier-lifetime
+  Lett. **119**, `226601 (2017) <https://doi.org/10.1103/PhysRevLett.119.226601>`__ — the photoexcited-μSR carrier-lifetime
   method; the source of the calibration exponent :math:`\alpha = 0.68(4)`
   and the lifetime :math:`\tau_0 = 11.1(9)\;\mathrm{\mu s}` used as targets
   above. This example's runs (RB1520457) are the same measurement.

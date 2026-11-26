@@ -461,8 +461,8 @@ unresolved precession as LF.
 the resolved dominant line, else the damped-line scan's. There is no Larmor
 frequency to compare with, so a line is ``other@<MHz>``: precession in a static
 internal field, the signature of long-range magnetic order. ``none`` means no
-line was resolved in that record. On the corpus this finds the ordered-state
-lines of EuO (29.9 MHz at 10 K, falling towards T\ :sub:`c`), nickel and a
+line was resolved in that record. In the example runs this finds the ordered-state lines
+of EuO (29.9 MHz at 10 K, falling towards T\ :sub:`c`), nickel and a
 molecular antiferromagnet, and nothing in paramagnetic, Kubo–Toyabe or F–μ–F
 zero-field runs.
 
@@ -477,8 +477,8 @@ A dominant line that completes fewer than two cycles in the record (the fit
 wizard's own
 :data:`~asymmetry.core.fitting.fit_wizard.MIN_CYCLES_IN_EFFECTIVE_WINDOW`)
 away from the Larmor frequency is the relaxation leaking into the lowest
-frequency bins, not precession — on the corpus it sat near 0.1 MHz in every
-weak-field and decoupling run. For such a run the survey reports the line the
+frequency bins, not precession — it sat near 0.1 MHz in the example weak-field
+and decoupling runs. For such a run the survey reports the line the
 fingerprint's damped-line scan found instead, which reaches the heavily damped
 lines a windowed FFT misses (a muonium line in a 2 G field, the normal-domain
 line of a type-I superconductor), and ``none`` when that scan found nothing. A

@@ -1,11 +1,10 @@
 F–µ–F entangled states: measuring a bond length with muons
 ==========================================================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for the
+   MuSR PTFE runs.
 
    Use your own zero-field fluoride spectra with sufficient time resolution to
    resolve the beating, plus an instrument calibration. The PTFE run numbers and
@@ -69,7 +68,7 @@ dipolar coupling frequency* — and hence :math:`r_{\mu F}`.
 The runs
 --------
 
-The corpus example contains 30 MuSR runs collected on 22–23 April 2008 on a Teflon
+The Rigi school data include 30 MuSR runs collected on 22–23 April 2008 on a Teflon
 sample. One is a transverse-field calibration run; the rest are a zero-field
 temperature scan.
 
@@ -221,11 +220,9 @@ embarrassing — see the next section.
 
 .. note::
 
-   This corpus dataset is an unallocated 2008 teaching run, not the data behind
-   any publication, and the muon-school guide sets **no** numeric target for the
-   bond length or the frequency. The 1.1–1.2 Å figure is a literature
-   *expectation* for the same physics (an ionic-fluoride and fluoropolymer
-   value), used here only as a sanity check on a physically sensible result.
+   The Rigi school exercise uses 2008 PTFE measurements. The 1.1–1.2 Å range
+   comes from the literature on ionic fluorides and fluoropolymers and serves
+   as a plausibility check for the fitted bond length.
 
 Step 4 — The frequency-domain view
 -----------------------------------

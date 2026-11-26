@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Link the worked examples to public Rigi school data and ISIS runs, and show
+  the LiFeAs Sample 1 linewidth from fits to the raw GPS data.
+
 ## [0.29.0] - 2026-11-25
 
 - Derive the analytic RF comparison helper directly from spin perturbation theory,

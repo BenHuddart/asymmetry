@@ -1602,12 +1602,13 @@ MaxEnt rewards a tightly scoped problem. To resolve a clean precession line:
   refinement — the fit is over-iterating; **Restart** and run fewer cycles
   (or with fewer spectrum points) rather than pushing it further.
 
-As a worked example, the CdS shallow-donor TF 100 G run at base temperature
-(run 20721, logged 5.175 K, 45.9 Mevents — the highest-statistics run, deepest
-in the neutral-muonium phase) resolves the diamagnetic Mu\ :sup:`+` Larmor line
-near 1.39 MHz (the muon Larmor frequency at 100 G, :math:`\gamma_\mu \cdot 100\,
-\text{G} \approx 1.36` MHz) with a frequency window capped a little above the
-line, a good time window, and a modest number of cycles and spectrum points.
+The CdS shallow-donor example uses EMU run 20721 from the
+:ref:`Rigi school data <rigi-school-data>`. This 100 G transverse-field run
+was recorded at 5.175 K with 45.9 million events. The spectrum resolves the
+diamagnetic Mu\ :sup:`+` Larmor line near 1.39 MHz (compare the expected
+:math:`\gamma_\mu \cdot 100\,\text{G} \approx 1.36` MHz) with a frequency
+window capped a little above the line, a good time window, and a modest
+number of cycles and spectrum points.
 Tightening that window further and binning the raw histogram brings out the two
 faint Mu\ :sup:`0` satellites this cold run also carries — the super-resolution
 example below.
@@ -2000,10 +2001,8 @@ antiferromagnet κ-(BEDT-TTF)\ :sub:`2`\ Cu[N(CN)\ :sub:`2`]Cl was measured in
 transverse fields of 6 and 8 T on the HAL9500 spectrometer at PSI [10]_. At 6 T
 the diamagnetic Larmor line sits at 813 MHz (:math:`\gamma_\mu \cdot 6\,\text{T}`),
 and the raw HAL ``.mdu`` histograms are binned finely enough — about 0.02 ns —
-that the transform reaches it directly, with no rotating reference frame. This
-is the corpus's high-field frequency-domain example; the ordering transition
-and its order parameter are analysed as a temperature trend
-(:doc:`/workflows/temperature_scan_magnetism`) rather than repeated here.
+that the transform reaches it directly, with no rotating reference frame. Find the raw HAL runs in the
+:ref:`Rigi school data <rigi-school-data>`.
 
 .. figure:: /_generated/corpus_screenshots/corpus_kappacl_tf_fft.png
    :alt: Multi-run FFT overlay of two κ-Cl 6 T runs at 813 MHz — a sharp

@@ -1,11 +1,10 @@
 EMU detector grouping and α calibration
 =======================================
 
-.. admonition:: Demonstration and your own data
+.. admonition:: Example data
 
-   This chapter uses private teaching measurements that are not distributed
-   with Asymmetry. For a complete example requiring no measurement files,
-   start with :doc:`/getting_started/quickstart`.
+   :ref:`Download the Rigi school data <rigi-school-data>` for the
+   ISIS calibration and steering runs in the Basics folder.
 
    Use your own transverse-field calibration run, representative sample runs, and
    the detector timing, grouping, and dead-time information for your instrument.
@@ -33,10 +32,8 @@ own dedicated dialog.
 The runs
 --------
 
-The walkthrough draws on the corpus *Basics* set (``Basics/data/``, the
-ISIS muon-school data-handling primer, stored as HDF4 NeXus and read
-natively). Each calibration concept is shown on the run where it reads
-most clearly:
+The walkthrough uses HDF4 NeXus files in the Rigi school archive's
+``Basics/data/`` folder. The table identifies the run for each calibration step.
 
 .. list-table::
    :header-rows: 1
@@ -348,7 +345,7 @@ the trend to plot is :math:`a_0` against steering current.
 The catch is that the steering current is **not logged in the data files**,
 so it cannot come from a run header. This is the teaching point: in the
 **Fit Parameters** panel you add the current as a **manual column** —
-transcribed from the run log — and select it as the trend's X axis.
+using the currents listed in ``Basics 2026.docx`` — and select it as the trend's X axis.
 
 .. figure:: /_generated/corpus_screenshots/corpus_basics_steering.png
    :width: 100%
@@ -364,13 +361,11 @@ transcribed from the run log — and select it as the trend's X axis.
    minimum falls at
    :math:`I = -0.060` A: with the beam centred, muons pass *through* the Ag
    aperture onto the depolarising Fe₂O₃, so the Ag-mask signal is lowest at
-   the centred current. That reproduces the WiMDA-graded muon-school answer
-   for this exercise — a beam-centred steering current of essentially 0 A.
+   the centred current. This figure applies the **Cubic** trend fit to the
+   WiMDA per-run fit results. Fit the public EMU runs to obtain your own
+   per-run asymmetries and locate the minimum in Asymmetry.
 
-A **Cubic** model is used, rather than a plain parabola, because the WiMDA
-reference curve is itself a cubic; its minimum at :math:`I = -0.060` A is
-the graded deliverable. The same panel exports the trend (**⋯ → Export
-TSV…**, **⋯ → Export GLE (PDF)…**) once you are happy with it.
+Export the fitted trend with **⋯ → Export TSV…** or **⋯ → Export GLE (PDF)…**.
 
 Reusing the calibration
 --------------------------
