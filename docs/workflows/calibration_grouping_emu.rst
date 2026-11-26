@@ -12,22 +12,12 @@ EMU detector grouping and α calibration
    Asymmetry. Replace them with your runs and check the instrument defaults before
    applying a profile to a series.
 
-This demonstration covers the
-everyday setup every time-domain analysis depends on: loading a run,
-defining the forward/backward detector grouping, calibrating
-:math:`\alpha` from a transverse-field (TF) run, turning on dead-time
-correction, and reading the timing origin :math:`t_0` and good-data
-window — all built into one named **grouping profile** for the
-instrument, edited from the **Grouping** window. It closes with the
-fit-table trend that turns a run series into a single answer.
-
-It is the Asymmetry-worded counterpart to the WiMDA muon-school "Basics"
-exercise, worked on the same teaching data. Where WiMDA asks you to type a
-detector list into a text box, Asymmetry gives you a **visual Detector
-Layout Editor** with instrument presets, and collects every calibration
-field — :math:`t_0`, good-data window, dead-time, grouping, and
-:math:`\alpha` — under one profile, with each correction calibrated in its
-own dedicated dialog.
+How do we tell detector imbalance and timing effects from a change in
+the muon signal? Use the silver runs to see how **Grouping** combines
+detector counts, how detector balance centres a clean transverse-field
+oscillation, and how timing and dead-time settings affect the first bins.
+Then use **Fit Parameters** to find the steering current that minimises
+the silver-mask precession amplitude.
 
 The runs
 --------
@@ -58,11 +48,11 @@ The walkthrough uses HDF4 NeXus files in the Rigi school archive's
      - EMU — Ag mask on Fe₂O₃, 100 G TF
      - Steering-current trend across a run series (Step 7).
 
-Silver is the standard calibrant: it has a near-zero nuclear moment, so a
-small transverse field produces a clean, slowly-relaxing precession whose
-forward/backward amplitudes reveal any detector imbalance, and its
-well-characterised response makes it the reference sample for both
-:math:`\alpha` and per-detector dead-time.
+Silver is the calibrant for this example. In a small transverse field
+it produces a clean, slowly relaxing oscillation. With the detector
+groups assigned, a baseline offset indicates an imbalance. The
+high-count-rate silver run lets you inspect the detector dead-time
+correction separately.
 
 Step 1 — Load a run
 --------------------
@@ -93,13 +83,12 @@ whole calibration surface for that profile:
    the detectors into two groups of 32 — one holding detectors 1–32, the
    other 33–64 — and the **Forward Group** / **Backward Group** selectors
    pair them into the :math:`F` and :math:`B` sums (here 33–64 forward,
-   1–32 backward). **Alpha** still reads ``1.000000 · manual`` because the
-   run has not yet been calibrated; **t0 Bin** shows ``From file`` = 30
-   with **t_good Offset** = 6 and **Last Good Bin** = 2048, all seeded from
-   the file header; **Deadtime** is ``off``. The live asymmetry along the
-   bottom redraws as you change any of these. (The amber banner is an
-   advisory heuristic that misreads this zero-field run as transverse; it
-   is only a suggestion — the grouping shown is correct.)
+   1–32 backward). The **α (detector balance)** card shows the manual value
+   ``1.000000`` for this grouping example. The file supplies **t0 Bin**
+   = 30, **t_good Offset** = 6, and **Last Good Bin** = 2048. **Deadtime**
+   is **Off**. The preview redraws as you change the settings. The amber
+   banner suggests a transverse grouping for this zero-field run. Keep
+   the displayed grouping for the example.
 
 .. list-table::
    :header-rows: 1
@@ -123,9 +112,9 @@ whole calibration surface for that profile:
    * - **Forward Group / Backward Group**
      - Which detector groups form the :math:`F` and :math:`B` sums of the
        asymmetry.
-   * - **Alpha / Calibrate…**
-     - The current :math:`\alpha` and its provenance, with a **Calibrate…**
-       button that opens the alpha calibration dialog (see Step 3).
+   * - **α (detector balance)**
+     - The coefficient and its provenance. Expand the card to choose the
+       calibration run and method, then click **Estimate calibration**.
    * - **t0 Bin**
      - The time-zero bin (the muon-implantation prompt), with a mode selector
        — **From file** (the default), **Manual**, or **Auto-detect** — and a
@@ -139,11 +128,11 @@ whole calibration surface for that profile:
        bins (the bunching factor, also available on the toolbar).
    * - **Exclude Detectors**
      - A list of detector ids to drop from every group (masked or dead tubes).
-   * - **Deadtime / Configure…**
-     - Opens the deadtime dialog: mode (Off / From file / Manual / Estimate
-       from run), per-detector table, **Cal** fit (see Step 5).
-   * - **Background / Configure…**
-     - Opens the background dialog for a constant-background subtraction.
+   * - **Deadtime**
+     - Expand the card for **Off**, **From file**, **Manual**, or
+       **Estimate from run**, the per-detector table, and **Cal**.
+   * - **Background**
+     - Expand the card to select a constant-background subtraction.
    * - **Live preview**
      - The forward/backward asymmetry the current draft would produce,
        updating as you edit.
@@ -271,7 +260,7 @@ positron arriving inside that interval is lost, and the count must be
 statistically recovered. The per-detector dead-times are measured once from
 a silver sample and stored in the data file (Kilcoyne, RAL-94-080).
 
-Click **Configure…** beside the **Deadtime** row and choose a mode:
+Open the **Deadtime** card and choose the mode you want to inspect.
 
 - **From file** — use the per-detector dead-time values stored in the data
   file (the usual choice, and WiMDA's "Auto Load").
@@ -279,7 +268,7 @@ Click **Configure…** beside the **Deadtime** row and choose a mode:
 - **Estimate from run** — fit the dead-time from the early-time count rate;
   the **Cal** button fits one value per detector from the preview run.
 
-The dialog also reports "Max correction at t=0", the largest correction any
+The card also reports **Max correction at t=0**, the largest correction any
 detector receives, so an unreasonable value is visible immediately.
 
 .. figure:: /_generated/corpus_screenshots/corpus_basics_deadtime.png
@@ -340,10 +329,12 @@ centres the beam. Each run is fitted with a single non-relaxing oscillating
 component; the observable is the Ag-mask initial asymmetry :math:`a_0`, and
 the trend to plot is :math:`a_0` against steering current.
 
-The catch is that the steering current is **not logged in the data files**,
-so it cannot come from a run header. This is the teaching point: in the
-**Fit Parameters** panel you add the current as a **manual column** —
-using the currents listed in ``Basics 2026.docx`` — and select it as the trend's X axis.
+The steering currents come from the school guide, ``Basics 2026.docx``.
+In the Data Browser, use **+ → Custom column…** to add a
+:ref:`logbook column <logbook-columns>` named ``Steering current (A)``.
+Enter the current on each corresponding run. Open **View → Show Fit Parameters**, select the fit series, and use
+that column on the **x** rail. Choose the amplitude on the **y** rail,
+then select **Fit…** on its card and choose ``Cubic``.
 
 .. figure:: /_generated/corpus_screenshots/corpus_basics_steering.png
    :width: 100%

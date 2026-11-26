@@ -12,16 +12,13 @@ Muon diffusion in copper: Kubo–Toyabe, Abragam, and QLCR
    static width and suitable models from its own spectra; do not copy the copper
    width or fit starting values without checking them.
 
-Copper is the textbook host for muon diffusion. A positive muon stops at an
-octahedral interstitial site in the face-centred-cubic lattice, where it behaves
-as a light isotope of hydrogen — a proton with one ninth of the mass — and its
-spin dephases in the static dipolar field of the surrounding ⁶³Cu and ⁶⁵Cu
-nuclear moments. As the sample warms the muon begins to **hop** between sites,
-the field it samples fluctuates, and the relaxation *motionally narrows*. Copper
-is the classic choice precisely because hydrogen itself is too insoluble in the
-metal to study by conventional means, so the muon stands in for it. Tracking how
-the relaxation changes with temperature turns a µSR spectrometer into a
-diffusion probe.
+How does the muon hop rate in copper change with temperature? At low
+mobility the muon stays near one octahedral site and its spin dephases
+in the nuclear fields of nearby copper atoms. Hopping changes the field
+seen by the muon and changes the shape of the relaxation. Compare the
+zero-field traces, then use Kubo–Toyabe fits in **Fit** to track the
+fluctuation rate. The transverse-field Abragam fit checks the same
+rate through the damping of a precession signal.
 
 This worked example follows the WiMDA muon-school copper set through the three
 field geometries the guide prescribes, using the Rigi school data at every step:
@@ -193,8 +190,7 @@ Kubo–Toyabe minimum fills in and the ⅓ tail lifts and then relaxes; once
 exponential :math:`\exp(-2\Delta^2 t/\nu)`. The rate :math:`\nu` *is* the muon
 hop rate, so fitting it at each temperature is the measurement.
 
-Use **DynamicGaussianKT** (composited with a flat **Constant** background). The
-parameters are the amplitude ``A_1`` (%), the static width ``Delta``
+In **Fit → Single**, use ``DynamicGaussianKT + Constant``. The parameters are the amplitude ``A_1`` (%), the static width ``Delta``
 (:math:`\mu\mathrm{s}^{-1}`), the fluctuation rate ``nu`` (MHz), a longitudinal
 field ``B_L`` (G) held at zero, and the background ``A_bg`` (%). Two settings
 matter:
@@ -235,10 +231,10 @@ matter:
      - free
      - Flat background
 
-The demonstration fits the warmest EMU run, ``20917`` (200 K). To adapt the
-script, replace the filename with your zero-field run and determine the fixed
-static width from your own reference data. The input values and quoted output
-below describe the copper example:
+To isolate the hop rate in run 20917 (200 K), the script uses
+``FitEngine.fit`` with the static width and the baseline fixed. The
+separate temperature-series figure lets both vary. For another sample,
+determine the fixed width from its own static reference.
 
 .. code-block:: python
 
@@ -247,7 +243,7 @@ below describe the copper example:
    from asymmetry.core.fitting.models import MODELS
    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-   ds = load("your_zf_run.nxs")
+   ds = load("EMU00020917.nxs")
 
    model = MODELS["DynamicGaussianKT"]
    params = ParameterSet([
@@ -277,11 +273,38 @@ fixed.
 The hop-rate curve and the mobility minimum
 -------------------------------------------
 
-Repeating the dynamic-KT fit across the ZF temperature scan — warm-starting each
-temperature from the previous fit's converged values, the guide's "follow the
-relaxation up in temperature" recipe — builds the hop rate :math:`\nu(T)`. This
-is the headline result of the whole example, and it is not a simple straight
-line: the hop rate spans two decades and turns over.
+Select EMU runs 20886, 20887, and 20901–20917 and choose
+``DynamicGaussianKT + Constant`` in **Fit → Batch**. In **Parameter
+Classification**, set ``B_L`` to 0 G and mark it **Fixed**. Mark the
+remaining parameters **Local** and use **Bounds** to enter their limits.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Parameter
+     - Initial seed
+     - Bounds
+   * - ``A_1`` (%)
+     - 20
+     - 0 to 40
+   * - ``Delta`` (µs⁻¹)
+     - 0.38
+     - 0.1 to 0.8
+   * - ``nu`` (MHz)
+     - 0.05
+     - 0 to 20
+   * - ``A_bg`` (%)
+     - 0
+     - −10 to 20
+
+Under **Seeding**, choose **Chain from previous run** and click **Run
+series** to fit in temperature order. Check the sensitivity to ``Delta``
+using the fixed-width fit above.
+
+Open **View → Show Fit Parameters** and plot ``ν (MHz)`` against
+``𝑇 (K)``. On the rate card, use **Fit…** to fit ``Arrhenius + Constant``
+over 90–200 K, with **Column (stabilised errors)** under **Errors**.
+Read the activation energy from the fitted ``Ea`` parameter in meV.
 
 .. figure:: /_generated/corpus_screenshots/corpus_cu_hop_rate_arrhenius.png
    :width: 90%
@@ -295,26 +318,18 @@ line: the hop rate spans two decades and turns over.
    toggle on the :math:`\nu` axis enabled so the two-decade span reads in one
    frame. The rate falls from :math:`\approx 0.10` MHz at ~5 K to a **minimum**
    of :math:`\approx 0.02` MHz near 60 K — the mobility minimum — and then climbs
-   steeply to :math:`\approx 2.3` MHz at 200 K. The blue curve is a **Model
-   Fit\*** of an ``Arrhenius + Constant`` model over the thermally activated
-   :math:`T \ge 90` K branch; its slope gives the activation energy.
+   steeply to :math:`\approx 2.3` MHz at 200 K. The blue curve is the
+   ``Arrhenius + Constant`` fit to the rates against temperature over
+   90–200 K. Its fitted ``Ea`` is about 74 meV. The logarithmic y axis
+   is for display.
 
 Two regimes meet at the minimum. Above it, hopping is **thermally activated** —
 the muon climbs over the site-to-site barrier, and the rate follows an Arrhenius
 law :math:`\nu(T) = a\,e^{-E_a/k_B T} + c`. Below it, the rate turns *up* again
-on cooling: this is the low-temperature quantum-diffusion branch seen in the
-5 K vs 40 K contrast above. Fitting the activated branch (:math:`T \ge 90` K)
-with an ``Arrhenius + Constant`` model gives
-
-.. math::
-
-   E_a \approx 73\;\mathrm{meV},
-
-in the expected range for muon diffusion in copper. The value is window-dependent
-— it drifts with where the low-temperature end of the branch is cut — and a
-narrower or wider fit range shifts it by several meV; WiMDA's
-run gave :math:`E_a \approx 62` meV over a slightly different window. Both
-describe the same over-barrier hopping.
+on cooling, as seen in the 5 K and 40 K comparison. The activation
+energy depends on the lower bound of the fitted interval. Moving that
+bound shifts the result by several meV. The WiMDA reference fit gives
+about 62 meV over a slightly different window.
 
 .. warning::
 
@@ -386,11 +401,10 @@ relaxation channel. The result is a **quadrupolar level-crossing resonance
 (QLCR)** — a dip in the time-integrated muon asymmetry as the field is stepped
 through the crossing.
 
-Asymmetry analyses this by **integral counting**, in the **Integral scan (ALC)**
-representation. Rather than fit a model to each spectrum, it reduces every run to
-one number — the asymmetry integrated over a fixed time window — and plots that
-against the swept field. A resonance shifts the time-averaged asymmetry, so it
-appears directly as a feature in :math:`A` versus field.
+Select runs 20888–20900 in the Data Browser and click **Integral scan**.
+Set **Integration window** to 0.1–31.75 µs and click **Build Scan**.
+Each point shows one run's integral asymmetry at its applied field.
+Look for the minimum in that scan.
 
 .. figure:: /_generated/corpus_screenshots/corpus_cu_qlcr_scan.png
    :width: 100%

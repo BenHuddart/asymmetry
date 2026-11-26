@@ -8,7 +8,8 @@ Photo-μSR in silicon: carrier recombination from period-mode runs
    densities and laser delays. For another experiment, use its period labels,
    timing log and density calibration.
 
-In photoexcited μSR, a laser pulse injects electron–hole pairs into silicon.
+How quickly do laser-injected carriers recombine in silicon? In photoexcited
+μSR, a laser pulse injects electron–hole pairs into the sample.
 These excess carriers interact with the bound electron in muonium and relax
 the muon spin. At fixed field and temperature, the illuminated relaxation
 rate :math:`\lambda` can be calibrated against the excess carrier density
@@ -99,8 +100,9 @@ the original file entry.
 Fit each run’s illuminated relaxation
 --------------------------------------
 
-In **Fit**, choose **Exponential** for the **Green** reduction. Set the time
-fit range to 0–1 µs, with **Bunch** at 1, and fit
+Open **Analysis → Fit**, choose **Single**, and select **Exponential**
+for the **Green** reduction. Set **Fit range** to 0–1 µs, with **Bunch**
+at 1, and fit
 :math:`A(t)=A_1 e^{-\lambda t}` with both parameters free. Record the fitted
 amplitude :math:`A_1`. Switch the same run to **Red**, keep the same fit range
 and model, and set and fix :math:`A_1` at its dark value. Fit
@@ -138,9 +140,9 @@ density. The prepared **Fit Parameters** series below uses
 :math:`x=\Delta n/\Delta n_0`, where
 :math:`\Delta n_0=8.9 \times 10^{13}\;\mathrm{cm^{-3}}` is a fixed
 reference density. Fit **PowerLaw** :math:`\lambda=a x^n+c`, with
-:math:`c=0` fixed as in Yokoyama *et al.*, Fig. 1(d). The fit uses rates in
-:math:`\mathrm{\mu s^{-1}}` and their standard errors on the original
-scale. The log axes are for display.
+:math:`c=0` fixed as in Yokoyama *et al.*, Fig. 1(d). Under **Errors**, select **Column (propagated errors)** to weight the
+rates in :math:`\mathrm{\mu s^{-1}}` by their supplied standard errors.
+The log axes are for display.
 
 .. figure:: /_generated/corpus_screenshots/corpus_si_lambda_vs_dn.png
    :alt: Illuminated relaxation rate versus normalised injected density on
@@ -195,11 +197,12 @@ is about 0.076 µs⁻¹ and the dark rate is about 0.090 µs⁻¹.
    The red fit curve stops at 20 µs, before the labelled late-delay
    extrapolations.
 
-The rate-only lifetime standard error is 0.21 µs. **Fit Parameters** floors
-the input errors used for weighting at half their median. The plotted bars
-show the input standard errors. The decay fit's reduced :math:`\chi^2` is 7.4,
-so the point scatter also exceeds these conditional errors under the
-exponential model.
+In **Fit Parameters**, set **Errors** to **Column (stabilised errors)**
+for the decay fit. This raises small input errors to half the median of
+the included errors for weighting. The plotted bars show the supplied
+standard errors. The rate-only lifetime standard error is 0.21 µs.
+With the stabilised weights, the sum of squared weighted residuals
+per degree of freedom is 7.4.
 
 All delay points share the same calibration. To estimate its effect on the
 lifetime, shift the prefactor :math:`a` and exponent :math:`n` together by

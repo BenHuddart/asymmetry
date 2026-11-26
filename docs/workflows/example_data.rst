@@ -28,7 +28,7 @@ grouping tables. For EMU, the desktop **LOG** reports this warning.
    EMU forward/backward grouping.
 
 The HiFi warning names HiFi. To change the grouping, open **Grouping**, choose a
-different **Preset** or edit the detectors in **Detector Layout**, then click
+different **Preset** or edit the detectors in **Detector Layout…**, then click
 **Apply** and save the project. See the :ref:`loading reference
 <legacy-v1-zero-grouping>` for the conditions and recorded provenance.
 
@@ -79,10 +79,10 @@ different **Preset** or edit the detectors in **Detector Layout**, then click
    * - :doc:`Ca₃Co₂O₆ magnetic plateau <lf_decoupling_dynamics>`
      - ``Magnetism/Dynamics in a magnetic plateau system/Data/``
      - HiFi 9023–9051, including the 15 K field scan at 9031–9051.
-   * - :doc:`CdS shallow donor </reference/fourier_analysis>`
+   * - :ref:`CdS shallow donor <cds-shallow-donor>`
      - ``Semiconductors/Shallow donor state in cadmium sulphide/Data/``
-     - EMU 20721 for the CdS FFT and MaxEnt comparison.
-   * - :doc:`High-field κ-Cl </reference/fourier_analysis>`
+     - EMU 20721 (5.175 K) and 20729 (50 K) for the CdS FFT and MaxEnt comparison.
+   * - :ref:`High-field κ-Cl <kappa-cl-high-field>`
      - ``Magnetism/AFM transition in high TF/data/``
      - PSI HAL9500 ``.mdu`` files 686 and 693 for the 6 T FFT overlay.
        MaxEnt uses run 686.

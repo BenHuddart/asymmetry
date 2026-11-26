@@ -12,16 +12,13 @@ ALC field scan in TCNQ
    own scan, inspect its resonance and non-resonant regions, and choose the
    baseline windows and resonance model to match it.
 
-An **avoided-level-crossing (ALC)** measurement asks a different question from a
-time-domain relaxation fit. Instead of following one spectrum in time, it steps
-the applied longitudinal field through a resonance and watches a single reduced
-number — the time-integral asymmetry — dip as the field crosses the level
-anticrossing. The dip field pins a hyperfine coupling, and its width and
-temperature dependence report on molecular motion. This chapter builds that scan
-end-to-end on the TCNQ runs from the Rigi school data, fits the resonance, and reads the
-muon hyperfine coupling off it; a closing advanced section carries the same
-workflow to a four-resonance corannulene spectrum published to sub-percent
-precision.
+What hyperfine coupling does the muoniated TCNQ radical produce, and
+how does it change on cooling? Near an avoided level crossing (ALC),
+resonant spin relaxation reduces the time-integral asymmetry. Find the
+dip in a longitudinal-field scan, then use its fitted centre to
+calculate the coupling. The corannulene example uses the same
+observable to distinguish four radical sites and follow their response
+to warming.
 
 The **Integral scan** mode is Asymmetry's home for this analysis: it reduces
 every run to one integral-asymmetry value and plots it against the swept field,
@@ -74,11 +71,10 @@ Building the integral scan
       is checked when you build the scan, not on the toolbar button.
 
 3. **Set the integration window and build.** The **Integration window** is the
-   time window each run's asymmetry is integrated over. Drag the shaded window on
-   the slim time-spectrum strip beneath the scan, or type
-   :math:`t_\mathrm{min}` and :math:`t_\mathrm{max}` into the spinboxes, then
-   click **Build Scan**. Each selected run collapses to one point and the scan
-   appears in the central area.
+   time window each run's asymmetry is integrated over. Set it to
+   0.105–31.75 μs for the 350 K example by dragging the shaded window or
+   typing the limits into the spinboxes. Click **Build Scan** to display
+   one point for each selected run.
 
 .. figure:: /_generated/corpus_screenshots/corpus_tcnq_integral_scan.png
    :width: 100%
@@ -303,8 +299,9 @@ from a script.
 Advanced: a four-resonance µLCR spectrum
 ----------------------------------------
 
-The corannulene scans illustrate how to fit several resonances in the same
-spectrum. The Rigi school archive contains the runs analysed by Gaboardi
+Which corannulene resonances narrow as the molecules start to rotate?
+First separate the four dips from the field-dependent background in the
+40 K scan, then compare their line shapes after warming. The Rigi school archive contains the runs analysed by Gaboardi
 *et al.*, *Carbon* **155**, 432 (2019). Corannulene, C₂₀H₁₀, is a cup-shaped polycyclic
 aromatic hydrocarbon — roughly one third of a C₆₀ ball — that chemisorbs muonium
 to form **four** long-lived muoniated-radical adducts, R1–R4, each with its own
@@ -333,8 +330,8 @@ scan contains **158 runs stepped from 0.5 to 3.0 T**. Build it in the
    asymmetry **rises steadily** across the whole scan — the broad longitudinal-
    field *repolarisation* envelope of muonium — with the strong **R3** resonance
    dip carved out of it near 15000 G (1.53 T). Fitting on a background this
-   curved is what the higher-order polynomial baselines (a **Quartic** here) are
-   for.
+   curved requires a model for the off-resonance signal. This example
+   uses a **Quartic** baseline.
 
 Four resonances, four hyperfine couplings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -366,9 +363,10 @@ resonance field inverts through the same relation as before,
    shoulder. Fitting them one at a time is unreliable — a single line dropped on
    the R2 window collapses onto the stronger R3 — so they are fitted **together**
    as a two-Gaussian doublet in one minimisation, which separates the shoulder
-   cleanly. The outer lines R4 and R1 are well isolated and fit singly. This is
-   the general rule for overlapping resonances: one shared fit, not sequential
-   passes (see :doc:`/reference/alc_mode` for the multi-resonance API).
+   cleanly. The outer lines R4 and R1 are well isolated and fit singly.
+   To fit the pair together, add two components with **+ Gaussian** in
+   **Peaks**, seed their centres separately, then click **Fit peaks**.
+   See :doc:`/reference/alc_mode` for the multi-resonance API.
 
 Molecular dynamics: what warming does to the lines
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

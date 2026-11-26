@@ -1611,11 +1611,13 @@ MaxEnt rewards a tightly scoped problem. To resolve a clean precession line:
   refinement — the fit is over-iterating; **Restart** and run fewer cycles
   (or with fewer spectrum points) rather than pushing it further.
 
+.. _cds-shallow-donor:
+
 Finding shallow-muonium satellites in CdS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Do the side peaks survive changes in analysis settings, and do they persist
-when the donor ionises? Compare the 100 G transverse-field EMU runs 20721
+Does shallow muonium produce a pair of side peaks in CdS, and what
+happens to them when the donor ionises? Compare the 100 G transverse-field EMU runs 20721
 (logged 5.175 K) and 20729 (50 K) from the
 :ref:`Rigi school data <rigi-school-data>`. At low temperature a muon can bind
 an electron to form shallow neutral muonium (Mu\ :sup:`0`). Its weak hyperfine
@@ -1647,7 +1649,9 @@ and minus half their inner-pair spacing. [8]_
    and the cold run has larger, structured deviations at early times.
 
 The figure uses the Python API with the standard EMU forward/backward
-groups for both runs.
+groups for both runs. Use ``maxent`` from ``asymmetry.core.maxent`` for the
+spectra, then pass each result's ``maxent_input`` and ``state`` to
+``reconstruct_group_signals`` to obtain the per-group weighted residuals.
 
 * The grouped FFT uses ``compute_average_group_spectrum`` with
   ``display="(Power)^1/2"``, ``subtract_average_signal=True``, a Lorentzian
@@ -1666,10 +1670,10 @@ groups for both runs.
 
 Use the desktop controls to inspect these runs interactively.
 
-#. For both runs, select **Grouped average**, **(Power)^1/2**, and
-   **Lorentzian**. Set **Filter start (µs)** to 0, **Filter τ (µs)** to 6,
+#. Select EMU 20721 and 20729 in the Data Browser and open **FFT**.
+   Choose **Grouped average**, **(Power)^1/2**, and **Lorentzian**. Set **Filter start (µs)** to 0, **Filter τ (µs)** to 6,
    and **Zero-pad factor** to 4, and enable **Subtract average signal**.
-   Click **Compute FFT**. The **Fit range** in **Single** sets the requested
+   Click **Compute FFT (2 runs)**. The **Fit range** in **Single** sets the requested
    window, and the sparse-count cutoff caps it at about 10.23 µs for both
    runs with the school files' default timing. Use the grouped FFT API to
    reproduce the longer windows in the figure and the sensitivity check.
@@ -2032,10 +2036,15 @@ carries the per-group phases, the per-bin errors, and — at a pulsed source —
 pulse response through its forward model. Choose between them with the guidance
 above.
 
+.. _kappa-cl-high-field:
+
 High-field FFT and MaxEnt on HAL data
 -------------------------------------
 
-The organic antiferromagnet κ-(BEDT-TTF)\ :sub:`2`\ Cu[N(CN)\ :sub:`2`]Cl was
+What changes in the 6 T precession line of an organic antiferromagnet
+when it orders? Compare the cold and warm FFTs on the same scales, then
+use MaxEnt to check where the dominant low-temperature line lies relative
+to the applied-field frequency. The material κ-(BEDT-TTF)\ :sub:`2`\ Cu[N(CN)\ :sub:`2`]Cl was
 measured in transverse fields of 6 and 8 T on the HAL9500 spectrometer at
 PSI [10]_. At 6 T the diamagnetic Larmor frequency is about 813 MHz, well
 below the Nyquist frequency for the 0.0244 ns HAL ``.mdu`` bins. You can
@@ -2047,7 +2056,11 @@ MV channel. In **Grouping**, assign F1–F8 to one group each and leave MV
 out. Choose F1 as **Forward Group** and F5 as **Backward Group**. The FFT
 uses this pair's **F−B asymmetry**, and MaxEnt uses all eight forward groups.
 Keep the file timing and good-bin limits. For the FFT overlay, set the
-time-domain fit range to 0–8 µs, within both runs' usable count statistics.
+**Fit range** in **Single** to 0–8 µs, within both runs' usable count
+statistics. Select HAL runs 686 and 693 and open **FFT**. Select
+**F−B asymmetry**, **(Power)^1/2**, and **Lorentzian**, and set
+**Filter τ (µs)** to 3. Click **Compute FFT (2 runs)**, then turn on
+**Overlay** and select **Temperature (K)** under **Label**.
 
 .. figure:: /_generated/corpus_screenshots/corpus_kappacl_tf_fft.png
    :alt: FFT overlay of two κ-Cl 6 T runs near 813.6 MHz. The central peak
@@ -2059,12 +2072,16 @@ time-domain fit range to 0–8 µs, within both runs' usable count statistics.
    **Lorentzian** apodisation with a 3 µs time constant. The peaks sit near 813.6 MHz, and
    the ordered run (3.24 K) has the lower central peak. The view is zoomed
    to the line so the two traces can be compared on the same scale.
+   The lower central peak in the cold run is consistent with spectral
+   weight spreading into the wings. The paper tracks the integrated
+   weight of those wings through the transition [10]_.
 
 In **MaxEnt**, choose **General (multi-group)** with all eight groups enabled,
 set **Spectrum points** to 256, and enable **Auto window from field**. With
 **Auto workload steering** enabled, leave **End** and **Binning** at their
 defaults so the engine chooses the time range and binning for this run. The
-result's ``auto_steer_applied`` metadata records those choices. See
+result's ``auto_steer_applied`` metadata records those choices. Select
+run 686 and click **Converge**. See
 `Workload steering and the large-calculation warning`_.
 
 .. figure:: /_generated/corpus_screenshots/corpus_kappacl_maxent.png

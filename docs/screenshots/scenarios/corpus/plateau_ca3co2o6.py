@@ -202,7 +202,14 @@ def _build_redfield_linear_fit(fields_g, lam, lam_err):
         ]
     )
     result = fit_parameter_model(
-        x2, inv_lam, inv_err, model, seed, x_min=float(x2.min()), x_max=float(x2.max())
+        x2,
+        inv_lam,
+        inv_err,
+        model,
+        seed,
+        x_min=float(x2.min()),
+        x_max=float(x2.max()),
+        error_mode="column_stabilized",
     )
     if not result.success:
         raise RuntimeError("Redfield Linear trend fit did not converge for the screenshot")
