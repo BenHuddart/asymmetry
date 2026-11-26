@@ -108,6 +108,14 @@ than the record leaves no complete output point.
 Curves without a resolved histogram observation and rotated projections use the
 curve-bin mean described below.
 
+**Bunch:** also sets the observations available to the next time-domain F–B
+fit. The x-axis limits frame the plot, and the fit window selects the bin
+centres used for fitting. If a run has too few recorded bins to complete a
+merge, **Fit** is disabled and the status bar reports, for example,
+``No complete bins at Bunch 32. Reduce Bunch.`` A fit window that excludes every
+bin reports ``No bins in the fit window.`` Completed fits retain their original
+input attribution.
+
 Direct reduction, the workflow, CLI, and histogram toolbar honour the same
 authored merge without a spectral peak veto. This permits deliberate averaging
 of a known fast line. Inspect native-resolution data when choosing the width;

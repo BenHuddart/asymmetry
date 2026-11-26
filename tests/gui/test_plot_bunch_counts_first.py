@@ -7,6 +7,7 @@ without raw histograms and rotated projections use independent curve means.
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 
 import numpy as np
 import pytest
@@ -22,7 +23,11 @@ from PySide6.QtWidgets import QApplication, QFileDialog  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
+from asymmetry.core.fitting.input_attribution import fit_input_attribution
+from asymmetry.core.fitting.likelihood import dataset_observations
+from asymmetry.core.representation import RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
@@ -308,6 +313,149 @@ def test_bunching_larger_than_the_record_returns_no_points(mainwindow):
     dataset = _histogram_run_dataset(np.array([90.0, 1]), np.array([10.0, 9]))
     mainwindow._plot_panel.set_bunch_factor(8, emit_signal=False)
     assert mainwindow._plot_panel.get_analysis_dataset(dataset).time.size == 0
+
+
+@pytest.mark.parametrize("recall", [False, True], ids=["direct", "saved-view"])
+def test_fit_availability_tracks_bunching_and_run_selection(mainwindow, recall):
+    long, short, other = [
+        _histogram_run_dataset(np.full(n, 200.0), np.full(n, 150.0), run_number=run)
+        for run, n in [(4242, 256), (4243, 16), (4244, 256)]
+    ]
+    browser = mainwindow._data_browser
+    for dataset in (long, short, other):
+        browser.add_dataset(dataset)
+
+    browser.select_runs({long.run_number})
+    bunch = mainwindow._view_bunch_spin
+    view_one, view_two, _ = mainwindow._view_mode_buttons
+    single = mainwindow._fit_panel._single_tab
+    batch = mainwindow._fit_panel._global_tab
+    reason = "No complete bins at Bunch 32. Reduce Bunch."
+
+    bunch.setValue(32)
+    if recall:
+        view_two.click()
+        assert bunch.value() == 1
+        view_one.click()
+    assert bunch.value() == 32
+    assert single._fit_btn.isEnabled()
+
+    browser.select_runs({short.run_number})
+    assert mainwindow._fit_panel.single_dataset().n_points == 0
+    assert not single._fit_btn.isEnabled()
+    assert single._fit_btn.toolTip() == reason
+    assert mainwindow.statusBar().currentMessage() == reason
+
+    browser.select_runs({long.run_number, short.run_number, other.run_number})
+    assert not single._fit_btn.isEnabled()
+    assert batch._fit_btn.isEnabled()
+    assert {ds.run_number for ds in batch.batch_datasets()} == {long.run_number, other.run_number}
+    assert batch._unavailable_members == {short.run_number: reason}
+
+    browser.select_runs({long.run_number})
+    assert single._fit_btn.isEnabled()
+    assert reason not in mainwindow.statusBar().currentMessage()
+
+    browser.select_runs({short.run_number})
+    assert not single._fit_btn.isEnabled()
+    if recall:
+        view_two.click()
+        assert single._fit_btn.isEnabled()
+        assert mainwindow._fit_panel.single_dataset().n_points == 16
+        view_one.click()
+        assert not single._fit_btn.isEnabled()
+        assert mainwindow.statusBar().currentMessage() == reason
+    bunch.setValue(1)
+    assert mainwindow._fit_panel.single_dataset().n_points == 16
+    assert single._fit_btn.isEnabled()
+    assert reason not in mainwindow.statusBar().currentMessage()
+
+    bunch.setValue(32)
+    assert not single._fit_btn.isEnabled()
+    assert mainwindow.statusBar().currentMessage() == reason
+
+
+def test_fit_availability_tracks_the_window_independently_of_bunching(mainwindow):
+    dataset = _histogram_run_dataset(np.full(64, 200.0), np.full(64, 150.0))
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._data_browser.select_runs({dataset.run_number})
+    mainwindow._view_bunch_spin.setValue(4)
+    plot = mainwindow._plot_panel
+    fit = mainwindow._fit_panel._single_tab._fit_btn
+
+    plot.set_fit_range(0.0, 0.01)
+    assert mainwindow._fit_panel.single_dataset().n_points == 0
+    assert not fit.isEnabled()
+    assert fit.toolTip() == "No bins in the fit window."
+    assert mainwindow.statusBar().currentMessage() == fit.toolTip()
+
+    plot.set_fit_range(0.0, 1.0)
+    assert fit.isEnabled()
+    assert fit.toolTip() == ""
+    assert "No bins" not in mainwindow.statusBar().currentMessage()
+
+
+def test_real_fit_keeps_attribution_when_bunch_and_zoom_change(mainwindow):
+    index = np.arange(256, dtype=float)
+    forward = 190 + 3 * (index % 13) + index
+    backward = 160 + 2 * (index % 11) + index / 2
+    dataset = _histogram_run_dataset(forward, backward)
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._data_browser.select_runs({dataset.run_number})
+    panel = mainwindow._fit_panel
+    tab = panel._single_tab
+    plot = mainwindow._plot_panel
+    fit_window = (0.10, 3.55)
+    plot.set_fit_range(*fit_window)
+    view_one, view_two, _ = mainwindow._view_mode_buttons
+
+    def check_fit_input(factor):
+        t = index.reshape(-1, factor).mean(axis=1) * BIN_WIDTH_US
+        f = forward.reshape(-1, factor).sum(axis=1)
+        b = backward.reshape(-1, factor).sum(axis=1)
+        mask = (t >= fit_window[0]) & (t <= fit_window[1])
+        observations = dataset_observations(panel.single_dataset())
+        np.testing.assert_allclose(observations.time, t[mask], atol=1e-15)
+        np.testing.assert_allclose(observations.values, (100 * (f - b) / (f + b))[mask])
+        sigma = 200 * np.sqrt(b**2 * f + f**2 * b) / (f + b) ** 2
+        np.testing.assert_allclose(observations.sigma, sigma[mask])
+        assert plot.get_fit_range() == fit_window
+        return fit_input_attribution(observations, panel.single_dataset())
+
+    mainwindow._view_bunch_spin.setValue(4)
+    producing_input = check_fit_input(4)
+    plot.set_view_limits(0.2, 0.8, -30.0, 30.0)
+    assert check_fit_input(4) == producing_input
+
+    tab._set_composite_model(CompositeModel(["Constant"]))
+    tab._fit_btn.click()
+    assert tab.wait_for_fit()
+    rep = mainwindow._project_model.representation(
+        dataset.run_number, RepresentationType.TIME_FB_ASYMMETRY
+    )
+    (original,) = rep.fit_set(None).fits
+    assert original.result["input_attribution"] == producing_input
+    saved_attribution = deepcopy(original.result["input_attribution"])
+    assert not mainwindow._saved_fit_catalogue().entries[0].stale_reason
+
+    view_two.click()
+    assert mainwindow._view_bunch_spin.value() == 1
+    native_input = check_fit_input(1)
+    assert native_input["n"] > producing_input["n"]
+    assert "Historical fit" in mainwindow._saved_fit_catalogue().entries[0].stale_reason
+    assert original.result["input_attribution"] == saved_attribution
+
+    tab._fit_btn.click()
+    assert tab.wait_for_fit()
+    _, native = rep.fit_set(None).fits
+    assert native.result["input_attribution"] == native_input
+
+    view_one.click()
+    assert mainwindow._view_bunch_spin.value() == 4
+    assert check_fit_input(4) == producing_input
+    assert not mainwindow._saved_fit_catalogue().entries[0].stale_reason
+    assert original.result["input_attribution"] == saved_attribution
+    assert dataset.run.grouping["bunching_factor"] == 1
 
 
 @pytest.mark.parametrize("view", ["raw_counts", "groups"])

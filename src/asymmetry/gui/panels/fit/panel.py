@@ -685,10 +685,7 @@ class FitPanel(QWidget):
     def set_datasets(
         self, datasets: list[MuonDataset], unavailable: Mapping[int, str] = NO_UNAVAILABLE
     ) -> None:
-        """Set the Batch tab's member pool, dropping it to a draft over them (D7).
-
-        *unavailable* runs are listed beside the pool, disabled with the reason.
-        """
+        """Set the draft Batch members and list unavailable runs with their reasons."""
         self._global_tab.set_datasets(datasets, unavailable)
 
     def member_pool_runs(self) -> list[int]:
@@ -735,9 +732,9 @@ class FitPanel(QWidget):
         """Return whether the global tab is in grouped time-domain mode."""
         return self._global_tab.is_grouped_time_domain_mode()
 
-    def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
-        """Apply fit-action blocking to both single and global tabs."""
-        self._single_tab.set_fit_blocked(blocked, reason)
+    def set_fit_blocked(self, blocked: bool, reason: str = "", *, single_reason: str = "") -> None:
+        """Apply shared fit restrictions and any problem specific to the Single tab."""
+        self._single_tab.set_fit_blocked(blocked or bool(single_reason), reason or single_reason)
         self._global_tab.set_fit_blocked(blocked, reason)
 
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:

@@ -298,10 +298,9 @@ from asymmetry.gui.panels.fit import (
     SeriesCatalogue,
     SeriesMenuEntry,
 )
+from asymmetry.gui.panels.fit import panel as fit_panel_module
 from asymmetry.gui.panels.fit.result_readout import fit_statistic_text
-from asymmetry.gui.panels.fit.tab_base import (
-    _fit_curve_time_bounds,
-)
+from asymmetry.gui.panels.fit.tab_base import _fit_curve_time_bounds
 from asymmetry.gui.panels.fit.wizard_cache import (
     persisted_global_fit_form_state,
     persisted_single_fit_form_state,
@@ -459,6 +458,15 @@ _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 _GLOBAL_FIT_DECORATIONS_EXTRA_KEY = "global_fit_decorations"
 
 _MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
+
+
+def _empty_time_fit_reason(source: MuonDataset, bunch: int) -> str:
+    """Explain an empty crop using the recorded output bins before the fit window."""
+    if not source.n_points:
+        return "No bins available for this run."
+    if bunch > source.n_points:
+        return f"No complete bins at Bunch {bunch}. Reduce Bunch."
+    return "No bins in the fit window."
 
 
 def _saved_fit_detail(slot: FitSlot) -> str:
@@ -910,6 +918,7 @@ class MainWindow(QMainWindow):
         #: per-run ``grouping_overrides`` payload. Edited via the grouping dialog
         #: and persisted through the project ``grouping_profiles`` block.
         self._grouping_profiles: list[GroupingProfile] = []
+        self._empty_fit_status = ""
         self._next_batch_index = 1
         self._next_scan_index = 1
         #: Per-run data for the current ALC scan (fractional value + metadata),
@@ -2958,7 +2967,27 @@ class MainWindow(QMainWindow):
         ):
             self._fit_panel.set_domain(self._plot_workspace.active_domain())
         blocked, reason = self._current_fit_block_state()
-        if hasattr(self._fit_panel, "set_fit_blocked"):
+        if isinstance(self._fit_panel, fit_panel_module.FitPanel):
+            current = self._current_dataset
+            crop = self._fit_panel.single_dataset()
+            single_reason = (
+                _empty_time_fit_reason(current, self._plot_panel.get_bunch_factor())
+                if not blocked
+                and self._plot_workspace.active_view() == "fb_asymmetry"
+                and current is not None
+                and crop is not None
+                and crop.run_number == current.run_number
+                and not crop.n_points
+                else ""
+            )
+            self._fit_panel.set_fit_blocked(blocked, reason, single_reason=single_reason)
+            status = self.statusBar()
+            if single_reason:
+                status.showMessage(single_reason)
+            elif self._empty_fit_status and status.currentMessage() == self._empty_fit_status:
+                status.clearMessage()
+            self._empty_fit_status = single_reason
+        elif hasattr(self._fit_panel, "set_fit_blocked"):
             self._fit_panel.set_fit_blocked(blocked, reason)
         if hasattr(self._fit_panel, "set_active_projection_label"):
             projection = self._current_single_fit_projection()
@@ -3297,13 +3326,7 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"Set vector polarization axis to {axis} for {updated} dataset(s).")
 
     def _rebind_single_fit_to_active_projection(self) -> None:
-        """Re-point the single-fit panel at the current dataset's active projection.
-
-        Switching the displayed polarization axis changes which per-projection
-        ``FitSlot`` the single-fit form should show. ``set_dataset`` re-runs the
-        restore mediator, so the form follows the selected projection's stored
-        fit (or blanks for an unfit one).
-        """
+        """Bind the selected projection's data and restore its own Single fit form."""
         if self._current_dataset is None:
             return
         if self._plot_workspace.active_domain() != "time":
@@ -5798,24 +5821,25 @@ class MainWindow(QMainWindow):
             and self._should_launch_multi_group_fit_window()
         )
 
-    def _selected_time_fit_datasets(self) -> list[MuonDataset]:
-        """Fit-range crops of the browser selection (the batch/grouped members).
-
-        Cropped to the Batch tab's own window (D8) — these datasets are what a
-        series run fits — with an unbounded side falling back to the plot's, on
-        the projection the plot's fit target names: a run without a curve on a
-        rotated one is left out (see :meth:`_unavailable_members`).
-        """
-        selected = self._data_browser.get_selected_datasets()
+    def _selected_time_fit_datasets(
+        self, unavailable: dict[int, str] | None = None
+    ) -> list[MuonDataset]:
+        """Prepare the selected runs over the Batch tab's own fit window."""
         window = self._fit_panel.batch_fit_range()
         projection = self._current_single_fit_projection()
-        return [
-            fit_dataset
-            for fit_dataset in (
-                self._get_fit_dataset(ds, window, projection=projection) for ds in selected
-            )
-            if fit_dataset is not None
-        ]
+        fb_asymmetry = self._plot_workspace.active_view() == "fb_asymmetry"
+        datasets = []
+        for source in self._data_browser.get_selected_datasets():
+            crop = self._get_fit_dataset(source, window, projection=projection)
+            if crop is None:
+                continue
+            if crop.n_points or not fb_asymmetry:
+                datasets.append(crop)
+            elif unavailable is not None:
+                unavailable[source.run_number] = _empty_time_fit_reason(
+                    source, self._plot_panel.get_bunch_factor()
+                )
+        return datasets
 
     def _unavailable_members(self, runs, projection: str | None) -> dict[int, str]:
         """The loaded *runs* that cannot be members of a series on *projection*, by why.
@@ -9716,7 +9740,6 @@ class MainWindow(QMainWindow):
                 self._render_current_selection_plot()
                 self._sync_frequency_plot_for_current_dataset()
                 self._refresh_vector_axis_selector()
-                self._update_fit_block_state()
                 if self._plot_workspace.active_domain() == "frequency":
                     if hasattr(self._fit_panel, "set_domain"):
                         self._fit_panel.set_domain("frequency")
@@ -9742,6 +9765,7 @@ class MainWindow(QMainWindow):
                     self._multi_group_fit_window.set_fit_range_display(*_fit_range)
                 self._log_panel.log(f"Selected run {run_number}")
                 self.statusBar().showMessage(f"Viewing run {run_number}")
+                self._update_fit_block_state()
         finally:
             self._log_perf_event(
                 "dataset_selected",
@@ -9785,7 +9809,6 @@ class MainWindow(QMainWindow):
         self._render_current_selection_plot()
         if _mode != "fb_asymmetry":
             self._refresh_vector_axis_selector()
-        self._update_fit_block_state()
         if self._current_dataset is not None:
             if _mode == "groups":
                 self.statusBar().showMessage(
@@ -9797,6 +9820,7 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
+        self._update_fit_block_state()
 
     def _on_domain_button_clicked(self, view: str) -> None:
         """Switch the workspace to *view* and keep the Domain buttons in sync.
@@ -9895,12 +9919,7 @@ class MainWindow(QMainWindow):
         """Refresh fit inputs when the selected fit x-range changes."""
         if hasattr(self._fit_panel, "set_fit_range_display"):
             self._fit_panel.set_fit_range_display(x_min, x_max)
-        # Keep the ALC fit panel's integration-window spinboxes and the
-        # integral-scan strip in sync (the strip does not re-emit). Both
-        # panels' fit_range_changed signals land here, so read the window from
-        # the TIME plot panel — Build Scan integrates over exactly that range,
-        # and echoing the frequency panel's MHz range as µs would desync the
-        # displayed window from the one the build actually uses.
+        # Both plots emit this signal, but the scan uses the time window.
         t_min, t_max = (None, None)
         if hasattr(self._plot_panel, "get_fit_range"):
             t_min, t_max = self._plot_panel.get_fit_range()
@@ -9910,23 +9929,12 @@ class MainWindow(QMainWindow):
             self._multi_group_fit_window, "set_fit_range_display"
         ):
             self._multi_group_fit_window.set_fit_range_display(x_min, x_max)
-        if self._current_dataset is not None:
-            if self._plot_workspace.active_domain() == "frequency":
-                if hasattr(self._fit_panel, "set_domain"):
-                    self._fit_panel.set_domain("frequency")
-                self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
-                self._set_frequency_fit_datasets_for_selection()
-            else:
-                if hasattr(self._fit_panel, "set_domain"):
-                    self._fit_panel.set_domain("time")
-                self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
-            if self._grouped_fit_surface_active():
-                self._multi_group_fit_window.set_dataset(
-                    self._single_fit_dataset(self._current_dataset)
-                )
+        if (
+            self._current_dataset is not None
+            and self._plot_workspace.active_domain() == "frequency"
+        ):
+            self._set_frequency_fit_datasets_for_selection()
         self._update_selected_datasets()
-        # The FFT window inherits the TIME plot's fit range; the staleness check
-        # compares the tail-capped result, so no-op wiggles don't flag.
         self._refresh_fourier_staleness()
 
     def _on_fit_range_edit_committed(self, x_min: float, x_max: float) -> None:
@@ -11178,9 +11186,8 @@ class MainWindow(QMainWindow):
         selection change: the member pool becomes the selection and the group
         binding is cleared, so the run mints or adopts its own group.
         """
-        self._fit_panel.set_datasets(
-            self._selected_time_fit_datasets(), self._selection_unavailable_members()
-        )
+        unavailable = self._selection_unavailable_members()
+        self._fit_panel.set_datasets(self._selected_time_fit_datasets(unavailable), unavailable)
         self._fit_panel.clear_bound_group()
         self._sync_batch_fit_range_guide()
 
@@ -14909,8 +14916,6 @@ class MainWindow(QMainWindow):
                 self._frequency_plot_panel.clear()
                 self._fit_panel.set_dataset(None)
 
-        # Availability must track every selection update — including "nothing
-        # is current" (after removals) — or the data-gated buttons go stale.
         self._refresh_time_view_selector()
 
         # In integral-scan mode the time strip previews the current run's
@@ -14931,21 +14936,14 @@ class MainWindow(QMainWindow):
                 and self._plot_workspace.active_domain() == "frequency"
             ):
                 self._sync_frequency_plot_for_current_dataset()
-            self._refresh_vector_axis_selector()
-            self._update_fit_block_state()
             if self._overlay_enabled():
                 self.statusBar().showMessage(self._selection_status_message(selected))
             elif self._current_dataset is not None:
                 self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
-        elif self._current_dataset is not None:
+        if len(selected) > 1 or self._current_dataset is not None:
             self._refresh_vector_axis_selector()
-            self._update_fit_block_state()
-        else:
-            self._update_fit_block_state()
         self._update_status_selection()
-        # The Compute FFT button's scope label tracks the selection ∪ active
-        # run (cheap: a run-number count), so it always names what a click
-        # would compute.
+        # FFT acts on the selection and the active run.
         self._refresh_fourier_compute_scope()
 
         is_frequency_domain = (
@@ -14954,12 +14952,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_fit_panel") and hasattr(self._fit_panel, "set_domain"):
             self._fit_panel.set_domain("frequency" if is_frequency_domain else "time")
 
-        if is_frequency_domain:
-            analysis_datasets = self._frequency_fit_datasets_for_selected_runs()
-        else:
-            # The batch path crops to the Batch tab's own window (D8), not to
-            # whatever the plot happens to be showing.
-            analysis_datasets = self._selected_time_fit_datasets()
+        unavailable = {} if is_frequency_domain else self._selection_unavailable_members()
+        analysis_datasets = (
+            self._frequency_fit_datasets_for_selected_runs()
+            if is_frequency_domain
+            else self._selected_time_fit_datasets(unavailable)
+        )
 
         # Refresh the single-fit tab with the currently active dataset so that
         # bunch-factor or fit-range changes are reflected immediately.
@@ -14979,14 +14977,12 @@ class MainWindow(QMainWindow):
             # cost on every switch.
             self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
 
+        self._update_fit_block_state()
         if self._fit_panel.open_series_id() is None:
             # No series open: the Batch tab is a draft over the selection, as it
             # has always been. A selection-driven batch is ad-hoc, so any
             # "Fit this group…" binding goes with it (D1).
-            self._fit_panel.set_datasets(
-                analysis_datasets,
-                {} if is_frequency_domain else self._selection_unavailable_members(),
-            )
+            self._fit_panel.set_datasets(analysis_datasets, unavailable)
             self._fit_panel.clear_bound_group()
         else:
             # D7: a selection change never rewrites an open series. The tab says
