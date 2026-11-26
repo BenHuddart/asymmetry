@@ -131,6 +131,8 @@ class PlotGleSnapshot(PlotExportData):
         used_tokens: set[str] | None = None,
     ) -> None:
         """Draw export payloads on a provided axis with axis-specific naming."""
+        if used_tokens is None:
+            used_tokens = set()
         is_multi = len(payloads) > 1
         axis_suffix = self._export_axis_suffix(axis_key)
         for i, payload in enumerate(payloads):
@@ -193,12 +195,12 @@ class PlotGleSnapshot(PlotExportData):
                                 alpha=0.25,
                                 label=None,
                                 offset=gle_offset,
-                                data_name=f"{token}_band",
+                                data_name=dedup_export_token(f"{token}_band", used_tokens),
                             )
                 else:
                     if self.connect_points:
                         self._plot_connected_time_data(
-                            ax, payload, token, data_color, data_label, gle_offset
+                            ax, payload, token, data_color, data_label, gle_offset, used_tokens
                         )
                     else:
                         ax.errorbar(
@@ -236,6 +238,8 @@ class PlotGleSnapshot(PlotExportData):
                     if order == 0
                     else colors[(i + order + 1) % len(colors)]
                 )
+                # gleplot collapses repeated underscores in table names.
+                fit_token = safe_file_token(self._sanitize_gle_text(f"{stem}_fit")).lower()
                 ax.plot(
                     fit.get("x_display", fit["t"]),
                     fit["y"],
@@ -244,7 +248,7 @@ class PlotGleSnapshot(PlotExportData):
                     zorder=2,
                     label=fit_label,
                     offset=gle_offset,
-                    data_name=f"{stem}_fit",
+                    data_name=dedup_export_token(fit_token, used_tokens),
                 )
 
         annotations = payloads[0].get("annotations") or []
@@ -280,7 +284,7 @@ class PlotGleSnapshot(PlotExportData):
             else:
                 ax.legend(loc="best")
 
-    def _plot_connected_time_data(self, ax, payload, token, color, label, offset):
+    def _plot_connected_time_data(self, ax, payload, token, color, label, offset, used_tokens):
         """Keep source tables separate from gapped, confidence-coloured display paths."""
         data = payload["data"]
         time, values = np.asarray(data["t"]), np.asarray(data["y"])
@@ -304,7 +308,7 @@ class PlotGleSnapshot(PlotExportData):
                 label=label,
                 offset=offset,
                 zorder=1.6,
-                data_name=f"{token}_guide_{colour}",
+                data_name=dedup_export_token(f"{token}_guide_{colour}", used_tokens),
             )
             label = None
             indices = geometry.indices
@@ -320,7 +324,7 @@ class PlotGleSnapshot(PlotExportData):
                 label=None,
                 offset=offset,
                 zorder=3,
-                data_name=f"{token}_points_{colour}",
+                data_name=dedup_export_token(f"{token}_points_{colour}", used_tokens),
             )
 
     @staticmethod

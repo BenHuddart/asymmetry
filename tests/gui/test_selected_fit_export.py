@@ -126,3 +126,70 @@ def test_multi_run_text_and_gle_preserve_fit_identity(fit_plot, tmp_path, monkey
 
     assert len(extract_gle_data_dependencies(script)) == 2
     assert list(empty_folder.glob("*.fit")) == []
+
+
+def test_vector_export_uses_the_mixed_run_fit_slot(fit_plot):
+    panel, (plain, other) = fit_plot
+    run = plain.run_number
+    projection = MuonDataset(
+        plain.time,
+        plain.asymmetry,
+        plain.error,
+        {"run_number": run, "grouping": {"vector_axis": "P_y"}},
+    )
+    panel.set_global_fits(
+        {run: (_TIME, np.full_like(_TIME, 3), "Projection only", [], None, "Projected", "P_y")},
+        fit_id=_SERIES,
+    )
+    panel._current_polarization_axis = "ALL"
+    panel.plot_vector_subplots({"P_y": [plain, projection], "P_z": [other]})
+    lines = [
+        line
+        for line, _, _ in panel._time_view.fits
+        if line.axes is panel._subplot_axes_by_polarization["P_y"]
+    ]
+
+    groups = dict(panel._export_axis_groups())
+    for payload, line, model, value in zip(
+        groups["P_y"], lines, ("Model B", "Projected"), (2, 3), strict=True
+    ):
+        (fit,) = payload["fits"]
+        assert fit["metadata"]["fit_function"] == model
+        np.testing.assert_array_equal(fit["y"], line.get_ydata())
+        np.testing.assert_array_equal(fit["y"], np.full_like(_TIME, value))
+
+
+def test_gle_reserves_normalised_fit_names_across_runs(fit_plot, tmp_path):
+    glp = pytest.importorskip("gleplot")
+    from asymmetry.gui.utils.gle_export import extract_gle_data_dependencies
+
+    panel, datasets = fit_plot
+    for dataset, label in zip(datasets, ("A", "A Main"), strict=True):
+        dataset.metadata["run_label"] = label
+    panel.set_global_fits(
+        {
+            run: (_TIME, np.full_like(_TIME, value), label)
+            for run, label, value in ((11, "Main Model", 3), (22, "Model", 4))
+        },
+        fit_id=_SERIES,
+    )
+    panel.set_global_fits(
+        {run: (_TIME, np.full_like(_TIME, value), "Other") for run, value in ((11, 5), (22, 6))}
+    )
+    panel.plot_datasets(datasets)
+    for dataset in datasets:
+        panel.set_shown_fits(dataset.run_number, [_SERIES, SINGLE_FIT_ID])
+
+    script = tmp_path / "fits.gle"
+    panel._gle_snapshot(panel._collect_export_payloads()).build(glp, script, tmp_path)
+
+    names = extract_gle_data_dependencies(script)
+    fits, data = names[:4], names[4:]
+    assert len(names) == len(set(names)) == 6
+    assert fits[2] == "a_main_main_model_fit_2.dat"
+    for name, y in zip(fits, (3, 5, 4, 6), strict=True):
+        np.testing.assert_array_equal(np.loadtxt(tmp_path / name, skiprows=1)[:, 1], y)
+    for name, dataset in zip(data, datasets, strict=True):
+        np.testing.assert_allclose(
+            np.loadtxt(tmp_path / name, comments="!")[:, 1], dataset.asymmetry
+        )

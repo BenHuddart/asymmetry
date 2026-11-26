@@ -3465,15 +3465,8 @@ class PlotPanel(QWidget):
         """Return current polarization selector key (``P_*`` or ``ALL``)."""
         return self._current_polarization_axis
 
-    def _axis_key_for_dataset(
-        self,
-        dataset: MuonDataset | None,
-        *,
-        axis_override: str | None = None,
-    ) -> str | None:
+    def _axis_key_for_dataset(self, dataset: MuonDataset | None) -> str | None:
         """Return canonical polarization axis for *dataset* when available."""
-        if axis_override is not None:
-            return self._axis_canonical_key(axis_override)
         if dataset is None:
             return None
 
@@ -3521,15 +3514,12 @@ class PlotPanel(QWidget):
     def _fit_storage_key_for_dataset(
         self,
         dataset: MuonDataset | None,
-        *,
-        axis_override: str | None = None,
-        fit_id: str = SINGLE_FIT_ID,
-    ) -> tuple[int, str | None, str] | None:
-        """Return axis-aware fit storage key for *dataset* under *fit_id*.
+    ) -> tuple[int, str | None] | None:
+        """Return the run and axis used to look up fits in the current view.
 
         A rotated projection keys on its own label (P′_x, P′_y), never the lab
         axis its clone was reduced on, so lab and rotated fits never overlay
-        each other's subplots.
+        each other's subplots. Grouped subplots use their synthetic run keys.
         """
         if dataset is None:
             return None
@@ -3537,12 +3527,13 @@ class PlotPanel(QWidget):
             run_number = int(dataset.run_number)
         except (TypeError, ValueError):
             return None
-        axis_key = (
-            dataset.metadata["projection"]
-            if FRAME_METADATA_KEY in dataset.metadata
-            else self._axis_key_for_dataset(dataset, axis_override=axis_override)
-        )
-        return run_number, axis_key, fit_id
+        if FRAME_METADATA_KEY in dataset.metadata:
+            axis_key = dataset.metadata["projection"]
+        elif self._grouped_time_subplot_datasets:
+            axis_key = self._grouped_subplot_axis_key(dataset)
+        else:
+            axis_key = self._axis_key_for_dataset(dataset)
+        return run_number, axis_key
 
     @staticmethod
     def _is_raw_counts_dataset(dataset: MuonDataset | None) -> bool:
@@ -3690,16 +3681,14 @@ class PlotPanel(QWidget):
     def _shown_fit_curves_for_dataset(
         self,
         dataset: MuonDataset | None,
-        *,
-        axis_override: str | None = None,
     ) -> list[tuple[tuple[int, str | None, str], tuple]]:
         """Return storage keys and display curves in drawing order."""
         if self._is_raw_counts_dataset(dataset):
             return []
-        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
+        storage_key = self._fit_storage_key_for_dataset(dataset)
         if storage_key is None:
             return []
-        run_number, axis_key, _ = storage_key
+        run_number, axis_key = storage_key
         curves = []
         for fit_id in self.shown_fit_ids(run_number):
             key = (run_number, axis_key, fit_id)
@@ -3718,7 +3707,9 @@ class PlotPanel(QWidget):
                     curve = self._fit_curve
             if curve is not None:
                 factor = self._fit_metadata_for_key(key).get("grouped_bunch_factor")
-                curves.append((key, rebin_grouped_fit_curve(dataset, curve, factor)))
+                displayed = rebin_grouped_fit_curve(dataset, curve, factor)
+                if displayed is not None:
+                    curves.append((key, displayed))
         return curves
 
     def _fit_metadata_for_key(self, key: tuple[int, str | None, str]) -> dict:
@@ -4171,7 +4162,6 @@ class PlotPanel(QWidget):
         axis_key: str | None,
         window: tuple[float, float] | None,
         *,
-        fit_axis: str | None,
         color_slots: list[tuple[int, int]],
     ) -> None:
         """Draw pre-materialised display *entries* on ``ax`` inside *window*.
@@ -4179,9 +4169,7 @@ class PlotPanel(QWidget):
         The arrays are materialised once by :meth:`_display_entries` — the same
         list feeds the x/y bounds the render resolves — so the analysis + RRF
         pipeline runs once per dataset per render. ``color_slots`` gives each
-        entry's ``(trace colour index, RG period-colour variant)``; ``fit_axis``
-        overrides the projection fits are looked up under (``None``: each
-        dataset's own).
+        entry's ``(trace colour index, RG period-colour variant)``.
         """
         # Handoff plot grammar: y = 0 reference line under the data (it is
         # excluded from autoscaling, so positive-only data never stretches).
@@ -4228,9 +4216,7 @@ class PlotPanel(QWidget):
                 label=self._dataset_label_for(dataset),
             )
 
-            for order, (_key, curve) in enumerate(
-                self._shown_fit_curves_for_dataset(dataset, axis_override=fit_axis)
-            ):
+            for order, (_key, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
                 fit_to_plot = rrf_display_fit_curve(self, curve, entry.analysis)
                 if fit_to_plot is None:
                     continue
@@ -4367,7 +4353,6 @@ class PlotPanel(QWidget):
                 entries_by_axis[axis_key],
                 axis_key,
                 window,
-                fit_axis=None,
                 color_slots=[run_slots[ds.run_number] for ds in members],
             )
             self._apply_projection_frame_tint(ax, axis_key)
@@ -4495,7 +4480,6 @@ class PlotPanel(QWidget):
                 entries_by_axis[axis_key],
                 axis_key,
                 window,
-                fit_axis=axis_key,
                 color_slots=[(0, 0)],
             )
             ax.set_title(str(dataset.run_label), loc="left", fontsize=10)
@@ -7528,7 +7512,7 @@ class PlotPanel(QWidget):
         self._gle_format_combo.setEnabled(has_data)
 
     def get_current_plot_export_data(
-        self, datasets: list[MuonDataset] | None = None, *, axis_override: str | None = None
+        self, datasets: list[MuonDataset] | None = None
     ) -> list[dict] | None:
         """Capture displayed results and resolved display metadata for export."""
         target_datasets = list(datasets) if datasets is not None else list(self._current_datasets)
@@ -7584,9 +7568,7 @@ class PlotPanel(QWidget):
                 dataset
             )
             fits = []
-            for key, curve in self._shown_fit_curves_for_dataset(
-                dataset, axis_override=axis_override
-            ):
+            for key, curve in self._shown_fit_curves_for_dataset(dataset):
                 t_fit, y_fit, fit_label = rrf_display_fit_curve(self, curve, analysis)
                 run_number, axis_key, fit_id = key
                 components = self._fit_components_by_key.get(key)
@@ -7762,7 +7744,7 @@ class PlotPanel(QWidget):
             order = self._projection_subplot_order(self._vector_subplot_datasets)
             first_axis = order[0] if order else None
             payloads = self.get_current_plot_export_data(
-                self._vector_subplot_datasets.get(first_axis, []), axis_override=first_axis
+                self._vector_subplot_datasets.get(first_axis, [])
             )
         return payloads
 
@@ -7779,7 +7761,7 @@ class PlotPanel(QWidget):
             groups: list[tuple[str | None, list[dict]]] = []
             for axis_key in order:
                 payloads = self.get_current_plot_export_data(
-                    self._vector_subplot_datasets[axis_key], axis_override=axis_key
+                    self._vector_subplot_datasets[axis_key]
                 )
                 if payloads:
                     groups.append((axis_key, payloads))

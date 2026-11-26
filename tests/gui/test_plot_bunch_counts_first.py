@@ -518,6 +518,43 @@ def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, tmp_path, comple
         assert "! Count overlay:" not in path.read_text()
 
 
+@pytest.mark.parametrize("source_factor", [1, 2], ids=["grouped-key", "finer-view"])
+def test_grouped_export_captures_only_fits_drawable_in_the_subplot(
+    qapp, tmp_path, monkeypatch, source_factor
+):
+    dataset = _histogram_run_dataset(np.full(64, 1200.0), np.full(64, 900.0))
+    group = build_grouped_time_domain_datasets(dataset)[0]
+    panel = PlotPanel()
+    run = group.run_number
+    generic = (group.time, np.full_like(group.time, 30), "Generic")
+    grouped = (group.time, np.full_like(group.time, 50), "Grouped")
+    panel.set_global_fits({run: generic}, grouped_bunch_factors={run: source_factor})
+    if source_factor == 1:
+        panel.set_global_fits({run: (*grouped, [], None, "Grouped", str(run))})
+    panel.plot_grouped_time_domain_subplots([group])
+
+    (payload,) = panel.get_current_plot_export_data()
+
+    if source_factor == 1:
+        ((line, _, _),) = panel._time_view.fits
+        (fit,) = payload["fits"]
+        assert fit["metadata"]["fit_function"] == "Grouped"
+        np.testing.assert_array_equal(fit["y"], line.get_ydata())
+        np.testing.assert_array_equal(fit["y"], grouped[1])
+    else:
+        assert panel._time_view.fits == []
+        assert payload["fits"] == []
+        target = tmp_path / "group.dat"
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data", False))
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a, **_k: (str(target), ""))
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *_a: None)
+        panel.export_plotted_data_as_text()
+        np.testing.assert_allclose(np.loadtxt(target, comments="!")[:, 1], group.asymmetry)
+        assert list(tmp_path.glob("*.fit")) == []
+    panel.close()
+    panel.deleteLater()
+
+
 def test_fb_toolbar_bunch_plot_and_text_export(mainwindow, tmp_path, monkeypatch):
     forward = np.arange(1.0, 257.0)
     backward = 2 * forward + 11
