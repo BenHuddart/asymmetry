@@ -27,6 +27,10 @@ and physical descriptions for every fit parameter are sourced from the
 is canonical: GUI labels, GLE export labels, and the autodoc parameter
 tables all derive from it.
 
+Importing ``asymmetry.core.fitting`` leaves the fitting modules unloaded.
+Public imports such as ``from asymmetry.core.fitting import FitEngine`` load
+the module that defines the requested object.
+
 Frequency-domain peak fitting reuses the same engine and composite-model path.
 The spectral helper module supplies the default Fourier-spectrum peak model,
 MHz/G conversion, and derived field parameters for trend tables.

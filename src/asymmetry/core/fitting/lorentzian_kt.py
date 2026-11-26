@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import brentq
 
 
 def lorentzian_zf_polarisation(t: NDArray, width: float, nu: float) -> NDArray:
@@ -23,6 +22,8 @@ def lorentzian_zf_polarisation(t: NDArray, width: float, nu: float) -> NDArray:
     if nu == 0.0:
         u = width * t
         return 1.0 / 3.0 + 2.0 / 3.0 * (1.0 - u) * np.exp(-u)
+    from scipy.optimize import brentq
+
     scale = max(width, nu)
     minimum = min(width, nu)
     ratio = minimum / scale

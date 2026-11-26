@@ -12,8 +12,6 @@ from __future__ import annotations
 import multiprocessing as mp
 import sys
 
-QApplication = None
-ProjectShell = None
 _SMOKE_QT_PREVIOUS_HANDLER = None
 _SMOKE_QT_MESSAGE_HANDLER = None
 
@@ -119,14 +117,33 @@ def _create_splash_screen(app, logo=None):
     Keep this dependency-light: it runs before importing ``MainWindow`` and the
     rest of the plotting/fitting stack.
     """
-    try:
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QColor, QPainter, QPixmap
-        from PySide6.QtWidgets import QSplashScreen
+    from PySide6.QtCore import QEvent, Qt, QTimer
+    from PySide6.QtGui import QColor, QPainter, QPixmap
+    from PySide6.QtWidgets import QWidget
 
-        from asymmetry.gui.styles import tokens
-    except (ImportError, ModuleNotFoundError):
-        return None
+    from asymmetry.gui.styles import tokens
+
+    class SplashWindow(QWidget):
+        def __init__(self, pixmap):
+            super().__init__(None, Qt.WindowType.SplashScreen | Qt.WindowType.FramelessWindowHint)
+            self.pixmap = pixmap
+            self.resize(pixmap.deviceIndependentSize().toSize())
+
+        def paintEvent(self, _event):  # noqa: N802 — Qt override
+            with QPainter(self) as painter:
+                painter.drawPixmap(0, 0, self.pixmap)
+
+        def mousePressEvent(self, _event):  # noqa: N802 — Qt override
+            self.hide()
+
+        def finish_when_painted(self, window):
+            window.installEventFilter(self)
+
+        def eventFilter(self, window, event):  # noqa: N802 — Qt override
+            if event.type() in (QEvent.Type.Paint, QEvent.Type.Close):
+                window.removeEventFilter(self)
+                QTimer.singleShot(0, self, self.close)
+            return False
 
     # Literal px here are intentional: the splash paints before QSettings /
     # QApplication font are read, so there is no UI scale to derive from yet.
@@ -173,10 +190,88 @@ def _create_splash_screen(app, logo=None):
     )
     painter.end()
 
-    splash = QSplashScreen(canvas)
+    # A plain widget publishes its first frame on Cocoa without waiting for
+    # the native window to be mapped inside Qt's splash Show handler.
+    splash = SplashWindow(canvas)
+    screen = app.primaryScreen()
+    if screen is not None:
+        splash.move(screen.geometry().center() - splash.rect().center())
     splash.show()
     app.processEvents()
     return splash
+
+
+def _prepare_startup(worker):
+    """Load definitions and prepare plot fonts before building the project window."""
+    from asymmetry.gui.styles.fonts import configure_plot_fonts
+    from asymmetry.gui.tasks import check_task_cancelled
+
+    configure_plot_fonts()
+    check_task_cancelled(worker)
+    from asymmetry.gui.shell import ProjectShell
+
+    check_task_cancelled(worker)
+    return ProjectShell, _load_bench_stylesheet()
+
+
+def _start_project_window(app, splash, *, smoke_test: bool) -> int:
+    """Keep the event loop running while startup dependencies load."""
+    from PySide6.QtCore import Qt, QTimer
+
+    from asymmetry.gui.tasks import TaskCancelledError, TaskRunner
+    from asymmetry.gui.ui_manager import set_base_stylesheet
+
+    startup = TaskRunner(app)
+    shell = None
+    failure = None
+
+    def fail(error: BaseException) -> None:
+        nonlocal failure
+        failure = error
+        app.exit(1)
+
+    def prepare(worker):
+        try:
+            return _prepare_startup(worker)
+        except TaskCancelledError:
+            raise
+        except BaseException as error:
+            return error
+
+    def show_project(prepared) -> None:
+        nonlocal shell
+        if isinstance(prepared, BaseException):
+            fail(prepared)
+            return
+        # Exceptions crossing a Qt slot boundary do not unwind app.exec().
+        try:
+            # Plugins register before the first model picker is constructed.
+            try:
+                from asymmetry.core.plugins import load_user_functions
+
+                load_user_functions()
+            except Exception:
+                pass
+            shell_type, stylesheet = prepared
+            set_base_stylesheet(app, stylesheet)
+            shell = shell_type()
+            shell.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            shell.add_project()
+            splash.finish_when_painted(shell)
+            shell.show()
+            if smoke_test:
+                QTimer.singleShot(0, shell, shell.close)
+        except BaseException as error:
+            fail(error)
+
+    QTimer.singleShot(0, app, lambda: startup.start(prepare, on_finished=show_project))
+    try:
+        exit_code = app.exec()
+    finally:
+        startup.shutdown()
+    if failure is not None:
+        raise failure
+    return exit_code
 
 
 def main() -> None:
@@ -186,8 +281,6 @@ def main() -> None:
         from asymmetry.gui.scientific_acceptance import main as acceptance_main
 
         sys.exit(acceptance_main([arg for arg in sys.argv[1:] if arg != "--scientific-acceptance"]))
-
-    global QApplication, ProjectShell
 
     smoke_test = "--smoke-test" in sys.argv
     root_smoke_test = "--smoke-test-root" in sys.argv
@@ -214,10 +307,7 @@ def main() -> None:
 
         _require_pyhdf()
 
-    if QApplication is None:
-        from PySide6.QtWidgets import QApplication as _QApplication
-
-        QApplication = _QApplication
+    from PySide6.QtWidgets import QApplication
 
     if smoke_test:
         _install_smoke_qt_message_filter()
@@ -232,62 +322,19 @@ def main() -> None:
 
     install_screen_change_guard(app)
 
+    splash = _create_splash_screen(app, _load_resource_pixmap("logo.png"))
+
     from asymmetry.gui.styles.palette import apply_bench_style
 
     apply_bench_style(app)
-
-    startup_pixmap = _load_startup_pixmap("logo.png")
-    if startup_pixmap is None:
-        startup_pixmap = _load_resource_pixmap("logo.png")
-    icon = _load_app_icon()
-    app.setWindowIcon(icon)
-
-    splash = _create_splash_screen(app, startup_pixmap)
-
+    app.setWindowIcon(_load_app_icon())
     app.setApplicationName("Asymmetry")
     app.setOrganizationName("Asymmetry")
 
-    from asymmetry.gui.styles.fonts import configure_plot_fonts, register_bundled_fonts
-    from asymmetry.gui.ui_manager import set_base_stylesheet
+    from asymmetry.gui.styles.fonts import register_bundled_fonts
 
     register_bundled_fonts()
-    configure_plot_fonts()
-
-    # Registered as the base, not set: the first MainWindow composes it with
-    # the scale block and applies the sheet once its widget tree is built.
-    set_base_stylesheet(app, _load_bench_stylesheet())
-
-    # Discover user functions before the main window is built so plugin
-    # components are in the registries when the pickers first render. The
-    # loader confines plugin failures to its report (surfaced in the log
-    # panel and Setup → User Functions…); the blanket guard here only covers
-    # discovery infrastructure itself — startup must never fail on user code.
-    try:
-        from asymmetry.core.plugins import load_user_functions
-
-        load_user_functions()
-    except Exception:
-        pass
-
-    if ProjectShell is None:
-        from asymmetry.gui.shell import ProjectShell as _ProjectShell
-
-        ProjectShell = _ProjectShell
-
-    from PySide6.QtCore import Qt, QTimer
-
-    shell = ProjectShell()
-    # Destroy the owned widget tree while Qt can still service layout callbacks.
-    shell.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-    shell.add_project()
-    shell.show()
-    if splash is not None:
-        splash.finish(shell)
-
-    if smoke_test:
-        QTimer.singleShot(0, shell.close)
-
-    sys.exit(app.exec())
+    sys.exit(_start_project_window(app, splash, smoke_test=smoke_test))
 
 
 if __name__ == "__main__":

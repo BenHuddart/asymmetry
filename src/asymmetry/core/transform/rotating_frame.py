@@ -31,7 +31,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import BSpline
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
@@ -443,6 +442,8 @@ def _carrier_baseline(curve: MuonDataset, nu: float) -> float:
     nutation, a decay, a detuning — is absorbed by c and d, so the signal
     cannot leak into b as it does into a mean of early, strong bins.
     """
+    from scipy.interpolate import BSpline
+
     t = curve.time
     lo, hi = float(t[0]), float(t[-1])
     intervals = max(4, math.ceil((hi - lo) * nu / _KNOT_TURNS))

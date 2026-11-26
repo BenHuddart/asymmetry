@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -14,7 +16,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QSplashScreen, QWidget
 
 import asymmetry.gui.app as app_module
 import asymmetry.gui.mainwindow as mw_module
@@ -411,106 +414,6 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     assert "Batch fit completed" in window.statusBar().currentMessage()
 
 
-def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _FakeApp:
-        def __init__(self, _argv):
-            self.name = None
-            self.org = None
-            # Screen-change signals consumed by install_screen_change_guard.
-            self.screenAdded = _DummySignal()
-            self.screenRemoved = _DummySignal()
-            self.primaryScreenChanged = _DummySignal()
-            self.aboutToQuit = _DummySignal()
-            events.append("app-init")
-
-        def setApplicationName(self, name):  # noqa: N802
-            self.name = name
-            events.append("set-name")
-
-        def setOrganizationName(self, org):  # noqa: N802
-            self.org = org
-
-        def setProperty(self, _name, _value):  # noqa: N802
-            return
-
-        def setWindowIcon(self, _icon):  # noqa: N802
-            events.append("set-icon")
-
-        def processEvents(self):  # noqa: N802
-            events.append("process-events")
-
-        def exec(self):
-            events.append("exec")
-            return 0
-
-    class _FakeShell:
-        def setAttribute(self, attribute):  # noqa: N802
-            assert attribute == Qt.WidgetAttribute.WA_DeleteOnClose
-
-        def __init__(self):
-            events.append("window-init")
-
-        def add_project(self):
-            events.append("add-project")
-            return object()
-
-        def show(self):
-            events.append("window-show")
-
-    class _FakeSplash:
-        def finish(self, _window):
-            events.append("splash-finish")
-
-    events = []
-    startup_pixmap = object()
-
-    def _fake_startup_pixmap(_filename):
-        events.append("load-startup-pixmap")
-        return startup_pixmap
-
-    def _fake_create_splash(_app, logo=None):
-        assert logo is startup_pixmap
-        events.append("splash-show")
-        return _FakeSplash()
-
-    monkeypatch.setattr(app_module, "QApplication", _FakeApp)
-    monkeypatch.setattr(app_module, "ProjectShell", _FakeShell)
-    monkeypatch.setattr(app_module, "_load_startup_pixmap", _fake_startup_pixmap)
-    monkeypatch.setattr(
-        app_module,
-        "_load_app_icon",
-        lambda _pixmap=None: events.append("load-icon") or object(),
-    )
-    monkeypatch.setattr(app_module, "_create_splash_screen", _fake_create_splash)
-
-    captured = {}
-
-    def _fake_exit(code):
-        captured["code"] = code
-        raise SystemExit(code)
-
-    monkeypatch.setattr(app_module.sys, "exit", _fake_exit)
-
-    with pytest.raises(SystemExit) as exc:
-        app_module.main()
-
-    assert exc.value.code == 0
-    assert captured["code"] == 0
-    assert events == [
-        "app-init",
-        "load-startup-pixmap",
-        "load-icon",
-        "set-icon",
-        "splash-show",
-        "set-name",
-        "window-init",
-        "add-project",
-        "window-show",
-        "splash-finish",
-        "exec",
-    ]
-
-
 @pytest.mark.parametrize("platform", ["win32", "darwin"])
 def test_app_icon_uses_packaged_small_renditions(monkeypatch, qapp, platform):
     from PySide6.QtCore import QSize
@@ -536,80 +439,172 @@ def test_missing_icon_rendition_names_the_broken_resource(monkeypatch, qapp):
 
 def test_startup_artwork_is_sharp_at_double_density(qapp):
     splash = app_module._create_splash_screen(qapp, app_module._load_resource_pixmap("logo.png"))
+    assert not isinstance(splash, QSplashScreen)
+    assert splash.isVisible()
     assert splash.size().width() == 420
     assert splash.size().height() == 300
-    assert splash.pixmap().devicePixelRatio() >= 2
-    assert splash.pixmap().width() >= 840
-    splash.close()
+    assert splash.pixmap.devicePixelRatio() >= 2
+    assert splash.pixmap.width() >= 840
+    QTest.mouseClick(splash, Qt.MouseButton.LeftButton)
+    assert not splash.isVisible()
 
 
-def test_main_uses_resource_fallback_for_splash_logo(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _FakeApp:
-        def __init__(self, _argv):
-            # Screen-change signals consumed by install_screen_change_guard.
-            self.screenAdded = _DummySignal()
-            self.screenRemoved = _DummySignal()
-            self.primaryScreenChanged = _DummySignal()
-            self.aboutToQuit = _DummySignal()
+def test_startup_splash_survives_until_the_window_paints(qapp):
+    splash = app_module._create_splash_screen(qapp)
+    splash_visibility_at_paint = []
 
-        def setApplicationName(self, _name):  # noqa: N802
-            return
+    class Window(QWidget):
+        def paintEvent(self, event):  # noqa: N802 — Qt override
+            splash_visibility_at_paint.append(splash.isVisible())
+            super().paintEvent(event)
 
-        def setOrganizationName(self, _name):  # noqa: N802
-            return
+    window = Window()
+    splash.finish_when_painted(window)
+    assert splash.isVisible()
+    window.show()
+    qapp.processEvents()
+    qapp.processEvents()
 
-        def setProperty(self, _name, _value):  # noqa: N802
-            return
+    assert splash_visibility_at_paint[0]
+    assert not splash.isVisible()
+    window.close()
 
-        def setWindowIcon(self, _icon):  # noqa: N802
-            return
 
-        def processEvents(self):  # noqa: N802
-            return
+def test_startup_splash_precedes_analysis_imports():
+    script = """
+import sys
+from asymmetry.gui import app
 
-        def exec(self):
-            return 0
+show_splash = app._create_splash_screen
 
-    class _FakeShell:
-        def setAttribute(self, attribute):  # noqa: N802
-            assert attribute == Qt.WidgetAttribute.WA_DeleteOnClose
+def check_splash(qapp, logo):
+    assert show_splash(qapp, logo).isVisible()
+    imported = {"matplotlib", "scipy", "asymmetry.gui.mainwindow"} & sys.modules.keys()
+    assert not imported, f"Already imported at splash: {sorted(imported)}"
+    print("Splash shown")
+    raise SystemExit(0)
 
+app._create_splash_screen = check_splash
+sys.argv = ["asymmetry-gui", "--smoke-test"]
+app.main()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Splash shown" in result.stdout
+
+
+def test_startup_splash_accepts_input_while_dependencies_load():
+    script = """
+import sys
+from threading import Event, current_thread, main_thread
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+from asymmetry.core import plugins
+from asymmetry.gui import app
+from asymmetry.gui.styles import fonts
+
+entered = Event()
+clicked = Event()
+plugins_loaded = Event()
+show_splash = app._create_splash_screen
+prepare_startup = app._prepare_startup
+
+def wait_for_click():
+    assert current_thread() is not main_thread()
+    entered.set()
+    assert clicked.wait(5), "The splash did not handle input during loading"
+
+def watch_splash(qapp, logo):
+    splash = show_splash(qapp, logo)
+    timer = QTimer(splash)
+
+    def click():
+        if entered.is_set():
+            timer.stop()
+            assert splash.isVisible()
+            QTest.mouseClick(splash, Qt.MouseButton.LeftButton)
+            assert not splash.isVisible()
+            clicked.set()
+            print("Splash handled input during loading", flush=True)
+
+    timer.timeout.connect(click)
+    timer.start(20)
+    return splash
+
+def load_plugins():
+    assert current_thread() is main_thread()
+    assert clicked.is_set()
+    plugins_loaded.set()
+
+def check_project(worker):
+    shell, stylesheet = prepare_startup(worker)
+
+    class CheckedShell(shell):
         def add_project(self):
-            return object()
+            from asymmetry.gui.recent_projects import recent_projects_broadcast
 
-        def show(self):
-            return
+            assert current_thread() is main_thread()
+            assert plugins_loaded.is_set()
+            project = super().add_project()
+            broadcast = recent_projects_broadcast()
+            assert broadcast.thread() is self.thread()
+            assert broadcast.parent() is QApplication.instance()
+            print("Initial project created", flush=True)
+            return project
 
-    class _FakeSplash:
-        def finish(self, _window):
-            return
+    return CheckedShell, stylesheet
 
-    startup_fallback = object()
-    seen: dict[str, object] = {}
+fonts.configure_plot_fonts = wait_for_click
+plugins.load_user_functions = load_plugins
+app._create_splash_screen = watch_splash
+app._prepare_startup = check_project
+sys.argv = ["asymmetry-gui", "--smoke-test"]
+app.main()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Splash handled input during loading" in result.stdout
+    assert "Initial project created" in result.stdout
 
-    monkeypatch.setattr(app_module, "QApplication", _FakeApp)
-    monkeypatch.setattr(app_module, "ProjectShell", _FakeShell)
+
+def test_startup_dependency_failure_exits_without_a_project():
+    script = """
+import sys
+from traceback import extract_tb
+from asymmetry.gui import app
+
+def fail_startup(worker):
+    raise RuntimeError("injected startup failure")
+
+app._prepare_startup = fail_startup
+sys.argv = ["asymmetry-gui", "--smoke-test"]
+sys.stderr = None
+try:
+    app.main()
+except RuntimeError as error:
+    assert str(error) == "injected startup failure"
+    assert any(frame.name == "fail_startup" for frame in extract_tb(error.__traceback__))
+    print("Original startup error reached the caller")
+else:
+    raise AssertionError("Startup did not raise the original error")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Original startup error reached the caller" in result.stdout
+
+
+def test_startup_logo_falls_back_to_package_resources(monkeypatch, qapp):
     monkeypatch.setattr(app_module, "_load_startup_pixmap", lambda _filename: None)
-    monkeypatch.setattr(
-        app_module,
-        "_load_resource_pixmap",
-        lambda _filename: startup_fallback,
-    )
-    monkeypatch.setattr(app_module, "_load_app_icon", lambda _pixmap=None: object())
 
-    def _fake_create_splash(_app, logo=None):
-        seen["logo"] = logo
-        return _FakeSplash()
+    logo = app_module._load_resource_pixmap("logo.png")
 
-    monkeypatch.setattr(app_module, "_create_splash_screen", _fake_create_splash)
-    monkeypatch.setattr(
-        app_module.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code))
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        app_module.main()
-
-    assert exc.value.code == 0
-    assert seen["logo"] is startup_fallback
+    assert logo is not None
+    assert not logo.isNull()

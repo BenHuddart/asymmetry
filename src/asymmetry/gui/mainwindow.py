@@ -304,6 +304,7 @@ from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID, PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
+from asymmetry.gui.recent_projects import recent_projects_broadcast
 from asymmetry.gui.scan.construction import ScanController
 from asymmetry.gui.screen_guard import place_window_on_screen
 from asymmetry.gui.styles import metrics, tokens
@@ -412,17 +413,6 @@ class _GlobalFitLaunch:
         """Whether the fit was launched against the frequency domain."""
         return self.domain == "frequency"
 
-
-class _RecentProjectsBroadcast(QObject):
-    """Process-wide signal so every open project's menu tracks the shared list."""
-
-    recent_projects_changed = Signal()
-
-
-# The recent-projects list lives in QSettings shared by every tab, so each
-# tab's menu must rebuild when any tab changes it. A QObject can be built
-# before the QApplication, so a module-level instance is safe at import time.
-_recent_projects_broadcast = _RecentProjectsBroadcast()
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
@@ -1214,7 +1204,7 @@ class MainWindow(QMainWindow):
         self._recent_menu = QMenu("Recent Projects", file_menu)
         file_menu.addMenu(self._recent_menu)
         self._update_recent_projects_menu()
-        _recent_projects_broadcast.recent_projects_changed.connect(
+        recent_projects_broadcast().recent_projects_changed.connect(
             self._update_recent_projects_menu
         )
         file_menu.addSeparator()
@@ -17085,7 +17075,7 @@ class MainWindow(QMainWindow):
         self._settings.setValue("project/recent_files", [path, *recent][:_MAX_RECENT_PROJECTS])
         # Flush so other tabs' QSettings instances see this write before the broadcast.
         self._settings.sync()
-        _recent_projects_broadcast.recent_projects_changed.emit()
+        recent_projects_broadcast().recent_projects_changed.emit()
 
     def _update_recent_projects_menu(self) -> None:
         """Rebuild the Recent Projects submenu from QSettings."""
@@ -17107,7 +17097,7 @@ class MainWindow(QMainWindow):
         """Remove all entries from the recent-projects list."""
         self._settings.remove("project/recent_files")
         self._settings.sync()
-        _recent_projects_broadcast.recent_projects_changed.emit()
+        recent_projects_broadcast().recent_projects_changed.emit()
 
     def _update_window_title(self) -> None:
         """Update window title to reflect the current project file name.

@@ -22,7 +22,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import brentq
 
 from asymmetry.core.instruments.source import beam_period_us
 from asymmetry.core.instruments.source import resolve_facility as resolve_facility
@@ -161,6 +160,8 @@ def fit_tail_background(
     on native bins. An omitted first good defaults to t0, clipped to observed
     support; an explicit fit start overrides the midpoint.
     """
+    from scipy.optimize import brentq
+
     source = GroupCounts.from_value(counts)
     n, supplied_variance = source.counts, source.variance
     width = float(bin_width_us)

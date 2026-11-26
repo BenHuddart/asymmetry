@@ -31,7 +31,6 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import CubicSpline
 from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.gaussian_width_kt import gaussian_width_polarisation
@@ -641,9 +640,10 @@ def static_lorentzian_kt_lf(
     gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
     omega0 = abs(gamma_mu * (float(B_L) * GAUSS_TO_TESLA))
     if a <= 0 or omega0 == 0.0:
-        # Exactly zero applied field has the analytic Lorentzian polarisation.
         gs = static_lorentzian_kt_zf(tt, 1.0, a, 0.0)
     else:
+        from scipy.interpolate import CubicSpline
+
         tmax = float(max(tt.max(), 1e-6))
         grid, gs_grid = _static_lorentzian_lf_grid(a, omega0, tmax)
         gs = CubicSpline(grid, gs_grid, bc_type=((1, -4.0 * a / 3.0), "not-a-knot"))(tt)
@@ -789,13 +789,14 @@ def _exponential_sum(t: NDArray, lam: NDArray, weights: NDArray) -> NDArray:
 
 
 @lru_cache(maxsize=KT_CACHE_ENTRIES)
-def _dynamic_kt_spline(kind: str, width: float, nu: float, B_L: float, tmax: float) -> CubicSpline:
+def _dynamic_kt_spline(kind: str, width: float, nu: float, B_L: float, tmax: float) -> Callable:
     """Gaussian polarisation or Lorentzian field correction on padded renewal grids.
 
-    The step depends continuously on width and field, not on fluctuation rate.
-    Adding an end sample does not move earlier nodes; padding keeps the requested
-    window clear of the cubic interpolant's far boundary condition.
+    The step depends on width and field. Padding keeps the requested window
+    clear of the far boundary condition while preserving the earlier nodes.
     """
+    from scipy.interpolate import CubicSpline
+
     omega0 = abs(LARMOR_RAD_PER_US_PER_GAUSS * B_L)
     h, n = _kt_time_grid(width, omega0, tmax, 2)
     initial_derivative = 0.0 if kind == "gaussian" else -4.0 * width / 3.0

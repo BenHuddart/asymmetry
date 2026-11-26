@@ -24,7 +24,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
 from asymmetry.core.fitting.component_tracking import (
     Component,
@@ -144,6 +143,8 @@ def _continuity_seed(angles: np.ndarray, values: np.ndarray) -> list[np.ndarray]
     per-curve values by nearest value (Hungarian), so a curve tracks its own
     component across a smooth crossing.
     """
+    from scipy.optimize import linear_sum_assignment
+
     order = np.argsort(angles, kind="stable")
     n_components = values.shape[1]
     assignment = [np.arange(n_components) for _ in range(len(angles))]
@@ -261,6 +262,8 @@ def _reassign(
     model: ParameterCompositeModel,
 ) -> tuple[list[np.ndarray], float]:
     """One-to-one reassign each point's components to curves; return cost."""
+    from scipy.optimize import linear_sum_assignment
+
     n_components = values.shape[1]
     assignment: list[np.ndarray] = []
     total = 0.0

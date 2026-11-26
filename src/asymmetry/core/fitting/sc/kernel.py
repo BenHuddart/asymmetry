@@ -23,11 +23,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import CubicHermiteSpline
 from scipy.special import expit, roots_legendre
+
+if TYPE_CHECKING:
+    from scipy.interpolate import CubicHermiteSpline
 
 from asymmetry.core.fitting.sc.bcs import delta_bcs
 from asymmetry.core.fitting.sc.gaps import GapForm
@@ -67,6 +70,8 @@ def thermal_integral(
 @lru_cache(maxsize=1)
 def _thermal_spline() -> CubicHermiteSpline:
     """Hermite table of I(d), with the derivative integrated analytically."""
+    from scipy.interpolate import CubicHermiteSpline
+
     d = np.linspace(0, 80, 16001)
     energy = np.hypot(d[:, None], _THERMAL_NODES)
     occupation = expit(-energy)

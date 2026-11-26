@@ -13,7 +13,6 @@ from itertools import product
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import least_squares
 from scipy.special import expit
 
 from asymmetry.core import computation
@@ -2633,10 +2632,8 @@ def _estimate_rf_resonance(
 ) -> dict[str, float]:
     """Seed ``RFResonanceMuP``: depths, widths, background and, with ``ν_RF`` known, the couplings.
 
-    The registered depths assume a paper-graded dip an integrated scan does not
-    have, so ``BG`` is the median value, ``ampl1 = ampl2`` the signed largest
-    excursion from it (peaks or dips alike), and each width a twentieth of the
-    field span.
+    Use the median for ``BG``, its largest signed excursion for both depths,
+    and one twentieth of the field span for both widths.
 
     Given ``nu_RF`` in *known*, the two strongest resonances of the scan are
     the fields where the two RF transitions equal ``ν_RF``: ``f₁`` (E₇−E₅) at
@@ -2667,6 +2664,8 @@ def _estimate_rf_resonance(
             cancel_check()
         f1, f2 = rf_transition_freqs(dip_fields, couplings[0], couplings[1])
         return np.array([f1[0] - nu_rf, f2[1] - nu_rf])
+
+    from scipy.optimize import least_squares
 
     defaults = PARAMETER_MODEL_COMPONENTS["RFResonanceMuP"].param_defaults
     solution = least_squares(

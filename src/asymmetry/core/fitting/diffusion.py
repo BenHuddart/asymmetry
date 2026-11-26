@@ -49,7 +49,6 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.integrate import quad
 from scipy.special import i0e
 
 from asymmetry.core.utils.constants import ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G
@@ -265,6 +264,8 @@ def _spectral_density_quad(omega: float, D_nD: float, D_perp: float = 0.0, n: in
     very-slow-diffusion corner, and as the global escape hatch. Callers must
     pass omega > 0.
     """
+    from scipy.integrate import quad
+
     w = abs(float(omega))
     t_max = _select_t_max_us(w, D_nD, D_perp, n)
 

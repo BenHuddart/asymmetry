@@ -19,11 +19,10 @@ import sys
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
-from asymmetry.gui import app
-from asymmetry.gui.shell import ProjectShell
+from asymmetry.gui import app, shell
 
 atexit.register(lambda: print("interpreter-exit", flush=True))
-class ClosingShell(ProjectShell):
+class ClosingShell(shell.ProjectShell):
     def __init__(self):
         super().__init__()
         self.destroyed.connect(lambda: print("shell-destroyed", flush=True))
@@ -44,7 +43,7 @@ class ClosingShell(ProjectShell):
         print("close-cancelled", flush=True)
         page._maybe_save = lambda _context: True
         QTimer.singleShot(0, self.close)
-app.ProjectShell = ClosingShell
+shell.ProjectShell = ClosingShell
 sys.argv = [sys.argv[1]] + (["--smoke-test"] if sys.argv[1] == "smoke" else [])
 try:
     app.main()

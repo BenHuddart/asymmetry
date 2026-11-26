@@ -26,10 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-# Module-level import: scipy.stats is not pulled in by any other eagerly
-# imported module, and a lazy in-function import would pay its ~1 s cold load
-# on the GUI thread the first time a verdict is rendered.
-from scipy.stats import chi2 as _chi2_dist
+from scipy.special import chdtr, gammaincinv
 
 _CONFIDENCE_MIN = 0.5
 _CONFIDENCE_MAX = 0.999
@@ -82,7 +79,7 @@ def assess_fit_quality(
             dof=nu,
         )
 
-    cdf = float(_chi2_dist.cdf(chi2_value, nu))
+    cdf = float(chdtr(nu, chi2_value))
     if cdf < alpha / 2.0:
         verdict: FitVerdict = "overdone"
     elif cdf > 1.0 - alpha / 2.0:
@@ -90,11 +87,12 @@ def assess_fit_quality(
     else:
         verdict = "good"
 
+    # The chi-square quantile is twice the unit-scale gamma quantile at ν/2.
     return FitQuality(
         verdict=verdict,
         chi2_reduced=chi2_value / nu,
-        band_low=float(_chi2_dist.ppf(alpha / 2.0, nu)) / nu,
-        band_high=float(_chi2_dist.ppf(1.0 - alpha / 2.0, nu)) / nu,
+        band_low=2.0 * float(gammaincinv(nu / 2.0, alpha / 2.0)) / nu,
+        band_high=2.0 * float(gammaincinv(nu / 2.0, 1.0 - alpha / 2.0)) / nu,
         confidence=confidence,
         dof=nu,
     )
