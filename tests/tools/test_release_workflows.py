@@ -159,6 +159,9 @@ def test_cut_release_tag_push_triggers_release() -> None:
     steps = [step for job in workflow["jobs"].values() for step in job.get("steps", [])]
     checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["token"] == "${{ secrets.RELEASE_TOKEN }}"
+    assert any(
+        "git add pyproject.toml CHANGELOG.md CITATION.cff" in step.get("run", "") for step in steps
+    )
     assert any("git push --atomic" in step.get("run", "") for step in steps)
 
 

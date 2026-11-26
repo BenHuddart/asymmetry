@@ -1,4 +1,4 @@
-"""Prepare a release: bump the project version and roll the changelog.
+"""Prepare the project version, changelog and citation for release.
 
 This is the mechanical half of cutting a release (see RELEASING.md for the
 process and the agent guidelines around it). It:
@@ -10,7 +10,8 @@ process and the agent guidelines around it). It:
    and no heading for the new version yet;
 4. rewrites ``pyproject.toml`` and inserts ``## [X.Y.Z] - YYYY-MM-DD``
    directly below ``## [Unreleased]`` (the roll style used by every previous
-   release), leaving a fresh empty ``[Unreleased]`` above it.
+   release), leaving a fresh empty ``[Unreleased]`` above it;
+5. writes the same version and date into ``CITATION.cff``.
 
 It never touches git: committing, tagging, and pushing belong to the
 ``cut-release`` workflow (or a human) so the script stays trivially testable.
@@ -117,20 +118,36 @@ def bump_pyproject(pyproject_text: str, version: str) -> str:
     return _VERSION_RE.sub(f'version = "{version}"', pyproject_text, count=1)
 
 
+def stamp_citation(citation_text: str, version: str, date: str) -> str:
+    """Set the top-level CFF release fields while preserving the other metadata."""
+    date_field = f"date-released: {date}"
+    citation, dates = re.subn(r"^date-released:.*$", date_field, citation_text, flags=re.M)
+    if dates > 1:
+        raise ReleasePrepError("expected at most one top-level date-released field in CITATION.cff")
+    version_fields = f"version: {version}"
+    if dates == 0:
+        version_fields += f"\n{date_field}"
+    citation, versions = re.subn(r"^version:.*$", version_fields, citation, flags=re.M)
+    if versions != 1:
+        raise ReleasePrepError("expected exactly one top-level version field in CITATION.cff")
+    return citation
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bump", choices=["major", "minor", "patch"])
     parser.add_argument("--version", help="explicit new version (X.Y.Z)")
     parser.add_argument(
         "--date",
-        default=_dt.date.today().isoformat(),
-        help="release date for the changelog heading (default: today)",
+        type=_dt.date.fromisoformat,
+        default=_dt.date.today(),
+        help="release date for the changelog and citation (default: today)",
     )
     parser.add_argument(
         "--root",
         type=Path,
         default=Path.cwd(),
-        help="repository root containing pyproject.toml and CHANGELOG.md",
+        help="repository root containing pyproject.toml, CHANGELOG.md and CITATION.cff",
     )
     parser.add_argument(
         "--dry-run",
@@ -141,31 +158,36 @@ def main(argv: list[str] | None = None) -> int:
 
     pyproject_path = args.root / "pyproject.toml"
     changelog_path = args.root / "CHANGELOG.md"
+    citation_path = args.root / "CITATION.cff"
     pyproject_text = pyproject_path.read_text(encoding="utf-8")
     changelog_text = changelog_path.read_text(encoding="utf-8")
+    citation_text = citation_path.read_text(encoding="utf-8")
+    date = args.date.isoformat()
 
     try:
         current = read_current_version(pyproject_text)
         new = compute_new_version(current, args.bump, args.version)
         version = ".".join(map(str, new))
         promoted = extract_unreleased_body(changelog_text)
-        new_changelog = roll_changelog(changelog_text, version, args.date)
+        new_changelog = roll_changelog(changelog_text, version, date)
         new_pyproject = bump_pyproject(pyproject_text, version)
+        new_citation = stamp_citation(citation_text, version, date)
     except ReleasePrepError as exc:
         print(f"release-prep: error: {exc}", file=sys.stderr)
         return 1
 
     current_str = ".".join(map(str, current))
     action = "would release" if args.dry_run else "releasing"
-    print(f"release-prep: {action} {current_str} -> {version} ({args.date})")
+    print(f"release-prep: {action} {current_str} -> {version} ({date})")
     print()
-    print(f"## [{version}] - {args.date}")
+    print(f"## [{version}] - {date}")
     print()
     print(promoted)
 
     if not args.dry_run:
         pyproject_path.write_text(new_pyproject, encoding="utf-8")
         changelog_path.write_text(new_changelog, encoding="utf-8")
+        citation_path.write_text(new_citation, encoding="utf-8")
 
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:

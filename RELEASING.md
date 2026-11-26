@@ -20,9 +20,9 @@ authorises the release and approves the protected PyPI deployment.
    `main` HEAD. This pre-flight check is an early refusal; publication is gated
    separately on the exact tagged commit. It then runs `tools/release_prep.py`, which bumps
    `pyproject.toml`, promotes `[Unreleased]` in `CHANGELOG.md` to
-   `## [X.Y.Z] - <date>`, and prints the promoted section into the run
-   summary for a quick eyeball. Finally it commits `release: X.Y.Z` to
-   `main` and pushes the `vX.Y.Z` tag atomically.
+   `## [X.Y.Z] - <date>`, writes the same version and date to `CITATION.cff`,
+   and prints the promoted section in the run summary. It commits `release: X.Y.Z`
+   to `main` and pushes the `vX.Y.Z` tag atomically.
 4. The tag push triggers `release.yml`, which builds and checks the Python
    distributions, macOS DMG, and Windows installer.
    `release.yml` checks that the tag matches `pyproject.toml` and the changelog
@@ -35,10 +35,24 @@ authorises the release and approves the protected PyPI deployment.
    Only then does the workflow publish the GitHub release, including Python
    artifacts and their records, and dispatch `docs-pages.yml` at that tag.
 
-There is no release PR and no manual tagging. Version numbers live in exactly
-one place (`pyproject.toml`); `asymmetry.__version__` reads it via package
-metadata, and the release workflows derive theirs from the tag, with the
-guard keeping the two honest.
+The Cut release workflow owns the release commit and tag. `pyproject.toml`
+supplies `asymmetry.__version__` via package metadata. The release workflow
+checks that the tag agrees with the package version.
+
+## Software citation and Zenodo
+
+1. Before dispatching Cut release, confirm the repository is enabled in Zenodo's
+   GitHub integration and validate `CITATION.cff` with `cffconvert --validate`.
+   Check the tagged copy against the CFF schema as well, and confirm its `version`
+   and `date-released` agree with the tag and changelog heading. The changelog
+   and citation use the date Cut release creates the tag. Leave the DOI field
+   absent until Zenodo assigns a version DOI.
+2. After Zenodo archives the published GitHub release, resolve the version DOI
+   and verify the record's title, author and version. Add the copyable citation
+   with the author, title, version, release year, Zenodo and version DOI to the
+   **Citing Asymmetry** section of the README on `main` and to the GitHub release
+   notes. Keep the archived tag intact. Follow the
+   [Zenodo citation file guide](https://help.zenodo.org/docs/github/describe-software/citation-file/).
 
 ## Non-publishing rehearsals and retries
 
