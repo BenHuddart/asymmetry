@@ -46,13 +46,16 @@ def test_frequency_fit_warns_at_padding_one_and_survives_payload():
         for ds in datasets
     ]
     assert not results[0].warnings
-    assert results[0].input_attribution["identity"] == results[1].input_attribution["identity"]
+    assert results[0].input_attribution["identity"] != results[1].input_attribution["identity"]
+    assert "spectral_weighting" not in results[0].input_attribution
+    assert results[1].input_attribution["spectral_weighting"]["policy"] == "diagonal"
     assert results[0].uncertainties == results[1].uncertainties
     assert any("Approximate spectral fit" in w for w in results[1].warnings)
     np.testing.assert_array_equal(results[0].covariance, results[1].covariance)
     assert results[0].chi_squared == results[1].chi_squared
     restored = _deserialize_fit_result(_serialize_fit_result(results[1]))
     assert fit_result_summary(restored)["warnings"] == results[1].warnings
+    assert restored.input_attribution == results[1].input_attribution
 
 
 def test_unknown_historical_scope_is_not_invented():
