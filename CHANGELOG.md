@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Run the full release test gate across six parallel CI runners.
 
+- Export every visible fit curve in plot text and GLE exports, with a separate
+  file for each fit and one data table per dataset.
+
 ## [0.29.0] - 2026-11-25
 
 - Derive the analytic RF comparison helper directly from spin perturbation theory,

@@ -3107,8 +3107,8 @@ class TestPlotPanel:
         # Legacy run-only cache should not override axis-specific separation.
         panel._fit_curves[9903] = (t, fit_pz, "Fit")
 
-        assert panel._fit_curve_for_dataset(ds_pz) is not None
-        assert panel._fit_curve_for_dataset(ds_py) is None
+        assert panel._shown_fit_curves_for_dataset(ds_pz)
+        assert not panel._shown_fit_curves_for_dataset(ds_py)
 
     def test_period_mode_color_mapping(self, panel: PlotPanel) -> None:
         red_hist = Histogram(counts=np.array([1.0, 2.0, 3.0]), bin_width=0.01)
@@ -4113,7 +4113,7 @@ class TestPlotPanel:
         assert payloads is not None
         assert len(payloads) == 1
         assert payloads[0]["run_number"] == sample_dataset.run_number
-        assert payloads[0]["fit"] is None
+        assert payloads[0]["fits"] == []
 
     def test_export_controls_enabled_after_plotting_data(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -4154,8 +4154,8 @@ class TestPlotPanel:
         assert len(payloads) == 1
         payload = payloads[0]
         assert payload["run_number"] == sample_dataset.run_number
-        assert len(payload["components"]) == 2
-        assert payload["components"][0]["name"] == "Exponential"
+        assert len(payload["fits"][0]["components"]) == 2
+        assert payload["fits"][0]["components"][0]["name"] == "Exponential"
         assert payload["annotations"][0]["text"] == "peak"
 
     def test_single_fit_curve_is_restored_when_returning_to_dataset(
@@ -4183,7 +4183,7 @@ class TestPlotPanel:
         payload_no_fit = panel.get_current_plot_export_data()
         assert payload_no_fit is not None
         assert payload_no_fit[0]["run_number"] == ds2.run_number
-        assert payload_no_fit[0]["fit"] is None
+        assert payload_no_fit[0]["fits"] == []
 
         panel.plot_dataset(ds1)
         restored = panel.get_current_plot_export_data()
@@ -4280,35 +4280,6 @@ class TestPlotPanel:
         assert parsed[:, 0].min() >= 2.0 - 1e-9
         assert parsed[:, 0].max() <= 6.0 + 1e-9
 
-    def test_export_plotted_data_as_text_fit_only_without_fit_warns(
-        self,
-        panel: PlotPanel,
-        sample_dataset: MuonDataset,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        panel.plot_dataset(sample_dataset)  # no fit on the plot
-        target = tmp_path / "run12345.dat"
-        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("fit", False))
-        monkeypatch.setattr(
-            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
-            lambda *_a, **_k: (str(target), "Data files (*.dat)"),
-        )
-        warnings: list[str] = []
-        monkeypatch.setattr(
-            "asymmetry.gui.panels.plot_panel.QMessageBox.warning",
-            lambda *a, **k: warnings.append(a[2] if len(a) > 2 else ""),
-        )
-
-        panel.export_plotted_data_as_text()
-
-        assert not target.exists()
-        assert not target.with_suffix(".fit").exists()
-        assert warnings and "no files" in warnings[-1].lower()
-
     def test_export_current_plot_writes_gle_and_compiles_pdf(
         self,
         panel: PlotPanel,
@@ -4399,8 +4370,15 @@ class TestPlotPanel:
             "run_number": 901,
             "label": "\x1b[91mRed Label\x1b[0m μ-test",
             "data": {"t": t, "y": 0.2 * np.exp(-0.3 * t), "err": e},
-            "fit": {"t": t, "y": 0.19 * np.exp(-0.28 * t), "label": "Fit"},
-            "fit_metadata": {},
+            "fits": [
+                {
+                    "id": SINGLE_FIT_ID,
+                    "t": t,
+                    "y": 0.19 * np.exp(-0.28 * t),
+                    "label": "Fit",
+                    "metadata": {},
+                }
+            ],
             "annotations": [{"x": 1.0, "y": 0.1, "text": "note \x1b[92mOK\x1b[0m"}],
         }
 

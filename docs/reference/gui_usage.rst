@@ -1416,6 +1416,10 @@ After a batch or global fit completes:
 *zoom. The button's menu would untick either curve to hide it without*
 *discarding it.*
 
+**Export plotted data (text)…** and **Export to GLE…** use the same fit
+selection as the plot. See :doc:`workflow_conveniences` for the export
+options and filenames.
+
 Fitting a group directly
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 

@@ -3687,161 +3687,49 @@ class PlotPanel(QWidget):
         """Fit ids this panel holds a curve for on *run_number*."""
         return self._stored_fit_ids_for_run(run_number)
 
-    def _fit_curve_for_dataset(
-        self,
-        dataset: MuonDataset | None,
-        *,
-        axis_override: str | None = None,
-        fit_id: str | None = None,
-    ) -> tuple | None:
-        """Return best-matching fit curve payload for *dataset*.
-
-        *fit_id* defaults to the dataset run's primary shown fit (the active
-        series' curve when it covers the run, else the run's single fit).
-        """
-        if self._is_raw_counts_dataset(dataset):
-            return None
-        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
-        if storage_key is not None:
-            run_number, axis_key, _ = storage_key
-            if fit_id is None:
-                shown = self.shown_fit_ids(run_number)
-                fit_id = shown[0] if shown else SINGLE_FIT_ID
-            key = (run_number, axis_key, fit_id)
-            fit_data = self._fit_curves_by_key.get(key)
-            if fit_data is None and axis_key is not None:
-                has_axis_specific_fit = any(
-                    key_run == run_number and key_axis is not None and key_fit == fit_id
-                    for key_run, key_axis, key_fit in self._fit_curves_by_key
-                )
-                if has_axis_specific_fit:
-                    return None
-
-                key = (run_number, None, fit_id)
-                fit_data = self._fit_curves_by_key.get(key)
-            if fit_data is not None:
-                return rebin_grouped_fit_curve(
-                    dataset,
-                    fit_data,
-                    self._fit_metadata_by_key.get(key, {}).get("grouped_bunch_factor"),
-                )
-
-            # Legacy per-run stores mirror the single fit only, so they can only
-            # answer for it.
-            if fit_id != SINGLE_FIT_ID:
-                return None
-
-            fit_data = self._fit_curves.get(run_number)
-            if fit_data is not None:
-                return fit_data
-
-            if self._fit_curve is not None and self._fit_curve_run_number == run_number:
-                return self._fit_curve
-
-        return None
-
     def _shown_fit_curves_for_dataset(
         self,
         dataset: MuonDataset | None,
         *,
         axis_override: str | None = None,
-    ) -> list[tuple[str, tuple]]:
-        """Return ``(fit_id, curve)`` for every fit shown on *dataset*'s run.
-
-        The active series' curve comes first; the caller draws it in the fit
-        colour and the rest in trace colours.
-        """
-        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
-        if storage_key is None:
-            return []
-        curves: list[tuple[str, tuple]] = []
-        for fit_id in self.shown_fit_ids(storage_key[0]):
-            curve = self._fit_curve_for_dataset(dataset, axis_override=axis_override, fit_id=fit_id)
-            if curve is not None:
-                curves.append((fit_id, curve))
-        return curves
-
-    def _fit_components_for_dataset(
-        self,
-        dataset: MuonDataset | None,
-        *,
-        axis_override: str | None = None,
-    ) -> list[tuple[str, object]]:
-        """Return best-matching additive component curves for *dataset*.
-
-        Shading follows the run's primary shown fit — only one fit's components
-        can be legible at a time.
-        """
+    ) -> list[tuple[tuple[int, str | None, str], tuple]]:
+        """Return storage keys and display curves in drawing order."""
         if self._is_raw_counts_dataset(dataset):
             return []
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
-        if storage_key is not None:
-            run_number, axis_key, _ = storage_key
-            shown = self.shown_fit_ids(run_number)
-            fit_id = shown[0] if shown else SINGLE_FIT_ID
-            components = self._fit_components_by_key.get((run_number, axis_key, fit_id))
-            if components:
-                return list(components)
-
-            if axis_key is not None:
-                has_axis_specific_components = any(
-                    key_run == run_number and key_axis is not None and key_fit == fit_id
-                    for key_run, key_axis, key_fit in self._fit_components_by_key
-                )
-                if has_axis_specific_components:
-                    return []
-
-                components = self._fit_components_by_key.get((run_number, None, fit_id))
-                if components:
-                    return list(components)
-
-            if fit_id != SINGLE_FIT_ID:
-                return []
-
-            components = self._fit_components_by_run.get(run_number)
-            if components:
-                return list(components)
-
-            if self._fit_components and self._fit_curve_run_number == run_number:
-                return list(self._fit_components)
-
-        return []
-
-    def _fit_metadata_for_dataset(
-        self,
-        dataset: MuonDataset | None,
-        *,
-        axis_override: str | None = None,
-    ) -> dict:
-        """Return best-matching fit metadata for *dataset*'s primary shown fit."""
-        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is None:
-            return {}
-
+            return []
         run_number, axis_key, _ = storage_key
-        shown = self.shown_fit_ids(run_number)
-        fit_id = shown[0] if shown else SINGLE_FIT_ID
-        meta = self._fit_metadata_by_key.get((run_number, axis_key, fit_id))
-        if isinstance(meta, dict):
-            return meta
+        curves = []
+        for fit_id in self.shown_fit_ids(run_number):
+            key = (run_number, axis_key, fit_id)
+            curve = self._fit_curves_by_key.get(key)
+            if curve is None and axis_key is not None:
+                if any(
+                    r == run_number and axis is not None and fid == fit_id
+                    for r, axis, fid in self._fit_curves_by_key
+                ):
+                    continue
+                key = (run_number, None, fit_id)
+                curve = self._fit_curves_by_key.get(key)
+            if curve is None and fit_id == SINGLE_FIT_ID:
+                curve = self._fit_curves.get(run_number)
+                if curve is None and self._fit_curve_run_number == run_number:
+                    curve = self._fit_curve
+            if curve is not None:
+                factor = self._fit_metadata_for_key(key).get("grouped_bunch_factor")
+                curves.append((key, rebin_grouped_fit_curve(dataset, curve, factor)))
+        return curves
 
-        if axis_key is not None:
-            has_axis_specific_meta = any(
-                key_run == run_number and key_axis is not None and key_fit == fit_id
-                for key_run, key_axis, key_fit in self._fit_metadata_by_key
-            )
-            if has_axis_specific_meta:
-                return {}
-
-            meta = self._fit_metadata_by_key.get((run_number, None, fit_id))
-            if isinstance(meta, dict):
-                return meta
-
-        if fit_id != SINGLE_FIT_ID:
-            return {}
-
-        meta = self._fit_metadata.get(run_number)
-        return meta if isinstance(meta, dict) else {}
+    def _fit_metadata_for_key(self, key: tuple[int, str | None, str]) -> dict:
+        """Return metadata for the resolved curve, including legacy single fits."""
+        run_number, axis_key, fit_id = key
+        legacy = (
+            self._fit_metadata.get(run_number, {})
+            if axis_key is None and fit_id == SINGLE_FIT_ID
+            else {}
+        )
+        return self._fit_metadata_by_key.get(key, legacy)
 
     def _active_y_axis(self) -> str | None:
         """The axis whose y-limits the manual controls reflect and drive.
@@ -4340,7 +4228,7 @@ class PlotPanel(QWidget):
                 label=self._dataset_label_for(dataset),
             )
 
-            for order, (_fit_id, curve) in enumerate(
+            for order, (_key, curve) in enumerate(
                 self._shown_fit_curves_for_dataset(dataset, axis_override=fit_axis)
             ):
                 fit_to_plot = rrf_display_fit_curve(self, curve, entry.analysis)
@@ -5267,7 +5155,7 @@ class PlotPanel(QWidget):
             # Overlay each shown fit: the active series' in the dataset's own
             # colour (excluded from the legend by "_nolegend_"), any further
             # shown fit in a trace colour with its own legend entry.
-            for order, (_fit_id, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
+            for order, (_key, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
                 fit_to_plot = rrf_display_fit_curve(self, curve, analysis_dataset)
                 if fit_to_plot is None:
                     continue
@@ -5550,7 +5438,7 @@ class PlotPanel(QWidget):
         # Re-plot every fit shown on this run: the active series' (or the run's
         # single fit) in the fit colour, then any other shown fit in a trace
         # colour. Each carries its own legend entry here, where there is room.
-        for order, (_fit_id, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
+        for order, (_key, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
             fit_to_plot = rrf_display_fit_curve(self, curve, analysis_dataset)
             if fit_to_plot is None:
                 continue
@@ -7276,8 +7164,6 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
 
-        # Store fit curve data for persistence across redraws (single fit)
-        self._fit_curve = (t_fit, y_fit, label)
         explicit_run = run_number
         run_number = None
         if self._current_dataset is not None:
@@ -7314,7 +7200,10 @@ class PlotPanel(QWidget):
             target = self.fit_target_projection()
             if target is not None:
                 axis_key = target
-        self._fit_curve_run_number = run_number
+        if fit_id == SINGLE_FIT_ID:
+            self._fit_curve = (t_fit, y_fit, label)
+            self._fit_curve_run_number = run_number
+            self._fit_components = list(component_curves or [])
 
         if run_number is not None:
             # The legacy per-run stores mirror the single fit only; a series'
@@ -7326,16 +7215,13 @@ class PlotPanel(QWidget):
             self._fit_components_by_key[(run_number, axis_key, fit_id)] = list(
                 component_curves or []
             )
-            if fit_result is not None or fit_function:
-                self._store_fit_metadata(
-                    run_number,
-                    fit_result,
-                    fit_function=fit_function,
-                    axis_key=axis_key,
-                    fit_id=fit_id,
-                )
-
-        self._fit_components = list(component_curves or [])
+            self._store_fit_metadata(
+                run_number,
+                fit_result,
+                fit_function=fit_function,
+                axis_key=axis_key,
+                fit_id=fit_id,
+            )
 
         self._update_export_enabled()
         self._refresh_fits_button()
@@ -7642,7 +7528,7 @@ class PlotPanel(QWidget):
         self._gle_format_combo.setEnabled(has_data)
 
     def get_current_plot_export_data(
-        self, datasets: list[MuonDataset] | None = None
+        self, datasets: list[MuonDataset] | None = None, *, axis_override: str | None = None
     ) -> list[dict] | None:
         """Capture displayed results and resolved display metadata for export."""
         target_datasets = list(datasets) if datasets is not None else list(self._current_datasets)
@@ -7694,51 +7580,55 @@ class PlotPanel(QWidget):
                     if grouped_total is not None and grouped_total > 0:
                         histogram_info["events_grouped"] = grouped_total
 
-            rn = dataset.run_number
-            fit_data = self._fit_curve_for_dataset(dataset)
-            fit_data = rrf_display_fit_curve(self, fit_data, analysis)
-
-            t_fit = None
-            y_fit = None
-            fit_label = "Fit"
-            if fit_data is not None:
-                t_fit, y_fit, fit_label = fit_data
-            component_data = self._fit_components_for_dataset(dataset)
-            if t_fit is not None and component_data:
-                wrapped_components = []
-                for name, y_vals in component_data:
-                    shown = rrf_display_fit_curve(self, (t_fit, y_vals, name), analysis)
-                    wrapped_components.append((name, shown[1] if shown is not None else y_vals))
-                component_data = wrapped_components
-
-            label_text = self._dataset_label_for(dataset)
-
             is_frequency = self._is_frequency_plot_panel() or self._is_frequency_domain_dataset(
                 dataset
             )
-
-            fit_payload = (
-                {"t": t_fit, "y": y_fit, "label": fit_label}
-                if t_fit is not None and y_fit is not None
-                else None
-            )
+            fits = []
+            for key, curve in self._shown_fit_curves_for_dataset(
+                dataset, axis_override=axis_override
+            ):
+                t_fit, y_fit, fit_label = rrf_display_fit_curve(self, curve, analysis)
+                run_number, axis_key, fit_id = key
+                components = self._fit_components_by_key.get(key)
+                if components is None and axis_key is None and fit_id == SINGLE_FIT_ID:
+                    components = self._fit_components_by_run.get(run_number)
+                    if components is None and self._fit_curve_run_number == run_number:
+                        components = self._fit_components
+                fit = {
+                    "id": fit_id,
+                    "t": t_fit,
+                    "y": self._convert_frequency_values_for_display(y_fit, dataset),
+                    "label": fit_label,
+                    "metadata": self._fit_metadata_for_key(key),
+                    "components": [
+                        {
+                            "name": name,
+                            "y": self._convert_frequency_values_for_display(
+                                rrf_display_fit_curve(self, (t_fit, values, name), analysis)[1],
+                                dataset,
+                            ),
+                        }
+                        for name, values in components or ()
+                    ],
+                }
+                if is_frequency:
+                    fit["x_display"] = self._convert_frequency_axis_for_display(t_fit, dataset)
+                fits.append(fit)
 
             payload = {
-                "run_number": rn,
+                "run_number": dataset.run_number,
                 "computation_revision": analysis.computation_revision,
                 "effective_recipe": analysis.effective_recipe.publishable()
                 if analysis.effective_recipe is not None
                 else None,
-                "label": label_text,
+                "label": self._dataset_label_for(dataset),
                 "domain": "frequency" if is_frequency else "time",
                 "data": {
                     "t": analysis.time,
                     "y": analysis.asymmetry,
                     "err": analysis.error,
                 },
-                "fit": fit_payload,
-                "components": [{"name": name, "y": y_vals} for name, y_vals in component_data],
-                "fit_metadata": self._fit_metadata_for_dataset(dataset),
+                "fits": fits,
                 "grouping": grouping,
                 "run_metadata": run_metadata,
                 "histogram_info": histogram_info,
@@ -7785,19 +7675,6 @@ class PlotPanel(QWidget):
                         ),
                         "err": self._convert_frequency_values_for_display(analysis.error, dataset),
                     }
-                    if fit_payload is not None:
-                        fit_payload["y"] = self._convert_frequency_values_for_display(
-                            fit_payload["y"], dataset
-                        )
-                    payload["components"] = [
-                        {
-                            "name": component["name"],
-                            "y": self._convert_frequency_values_for_display(
-                                component["y"], dataset
-                            ),
-                        }
-                        for component in payload["components"]
-                    ]
                     effective_unit = (
                         "mhz"
                         if self._frequency_axis_is_correlation
@@ -7814,10 +7691,6 @@ class PlotPanel(QWidget):
                     if key.startswith("fourier_")
                     and isinstance(dataset.metadata[key], (str, int, float, bool))
                 }
-                if fit_payload is not None:
-                    fit_payload["x_display"] = self._convert_frequency_axis_for_display(
-                        t_fit, dataset
-                    )
             # Mirror the waterfall stack the current render actually drew: the
             # offset comes from the per-dataset draw record, never from the
             # checkbox, so a non-stacked view (single run, grouped subplots,
@@ -7840,18 +7713,6 @@ class PlotPanel(QWidget):
             p["annotations"] = annotations
 
         return payloads
-
-    def _write_fit_file(
-        self,
-        fit_path: Path,
-        payload: dict,
-        *,
-        x_range: tuple[float, float] | None = None,
-        bake_waterfall_offset: bool = True,
-    ) -> None:
-        return self._plot_export_context()._write_fit_file(
-            fit_path, payload, x_range=x_range, bake_waterfall_offset=bake_waterfall_offset
-        )
 
     def _write_data_file(
         self,
@@ -7901,7 +7762,7 @@ class PlotPanel(QWidget):
             order = self._projection_subplot_order(self._vector_subplot_datasets)
             first_axis = order[0] if order else None
             payloads = self.get_current_plot_export_data(
-                self._vector_subplot_datasets.get(first_axis) if first_axis else []
+                self._vector_subplot_datasets.get(first_axis, []), axis_override=first_axis
             )
         return payloads
 
@@ -7918,7 +7779,7 @@ class PlotPanel(QWidget):
             groups: list[tuple[str | None, list[dict]]] = []
             for axis_key in order:
                 payloads = self.get_current_plot_export_data(
-                    self._vector_subplot_datasets.get(axis_key, [])
+                    self._vector_subplot_datasets[axis_key], axis_override=axis_key
                 )
                 if payloads:
                     groups.append((axis_key, payloads))
@@ -8005,7 +7866,16 @@ class PlotPanel(QWidget):
                 x1 = self._convert_frequency_control_value_to_axis_limit(x1)
             x_range = (x0, x1)
 
+        if content == "fit" and not any(p["fits"] for _, payloads in axis_groups for p in payloads):
+            QMessageBox.warning(
+                self,
+                "Nothing written",
+                "No files were written because no fit is shown on the plot.",
+            )
+            return
+
         total_series = sum(len(payloads) for _, payloads in axis_groups)
+        writer = self._plot_export_context()
 
         if total_series == 1:
             axis_key, payloads = axis_groups[0]
@@ -8021,9 +7891,7 @@ class PlotPanel(QWidget):
                 return
             remember_export_path(path)
             base = Path(path).with_suffix("")
-            written = self._write_payload_text_files(
-                base, payload, content, x_range, axis_key=axis_key
-            )
+            written = writer.write_text_files(base, payload, content, x_range, axis_key=axis_key)
         else:
             directory = QFileDialog.getExistingDirectory(
                 self,
@@ -8045,7 +7913,7 @@ class PlotPanel(QWidget):
                     name = f"{label}_{suffix}" if suffix else label
                     token = dedup_export_token(safe_file_token(name), used_tokens)
                     written.extend(
-                        self._write_payload_text_files(
+                        writer.write_text_files(
                             export_dir / token,
                             payload,
                             content,
@@ -8054,50 +7922,12 @@ class PlotPanel(QWidget):
                         )
                     )
 
-        if not written:
-            QMessageBox.warning(
-                self,
-                "Nothing written",
-                "The selected content produced no files (for example 'fit only' "
-                "with no fit on the plot).",
-            )
-            return
         files_text = "\n".join(str(p) for p in written)
         self._show_export_result_dialog(
             "Export Successful",
             f"Wrote {len(written)} text file(s).",
             files_text,
         )
-
-    def _write_payload_text_files(
-        self,
-        base: Path,
-        payload: dict,
-        content: str,
-        x_range: tuple[float, float] | None,
-        axis_key: str | None = None,
-    ) -> list[Path]:
-        """Write the .dat and/or .fit text files for one payload."""
-        written: list[Path] = []
-        if content in ("data", "data_fit"):
-            dat_path = base.with_suffix(".dat")
-            self._write_data_file(
-                dat_path,
-                payload,
-                label_text=payload.get("label"),
-                x_range=x_range,
-                axis_key=axis_key,
-            )
-            if dat_path.exists():
-                written.append(dat_path)
-        if content in ("data_fit", "fit"):
-            fit = payload.get("fit") or {}
-            if fit.get("t") is not None and fit.get("y") is not None:
-                fit_path = base.with_suffix(".fit")
-                self._write_fit_file(fit_path, payload, x_range=x_range)
-                if fit_path.exists():
-                    written.append(fit_path)
-        return written
 
     def export_plots_to_gle(self) -> None:
         """Export the visible curves as GLE with their plotted errors and bands."""
@@ -8140,10 +7970,7 @@ class PlotPanel(QWidget):
         axes = []
         grouped_limits = {}
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
-            for key in self._projection_subplot_order(self._vector_subplot_datasets):
-                axes.append(
-                    (key, self.get_current_plot_export_data(self._vector_subplot_datasets[key]), "")
-                )
+            axes.extend((key, group, "") for key, group in self._export_axis_groups())
         elif self._grouped_time_subplot_datasets:
             for dataset, payload in zip(self._grouped_time_subplot_datasets, payloads, strict=True):
                 key = self._grouped_subplot_axis_key(dataset)

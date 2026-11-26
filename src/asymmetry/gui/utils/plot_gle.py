@@ -15,7 +15,7 @@ from asymmetry.gui.utils.gle_export import (
     safe_file_token,
 )
 from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots, save_gle_figure
-from asymmetry.gui.utils.plot_export_data import PlotExportData
+from asymmetry.gui.utils.plot_export_data import PlotExportData, fit_sidecar_stems
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,9 @@ class PlotGleSnapshot(PlotExportData):
                 colors=colors,
                 show_legend=(
                     len(payloads) > 1
-                    or (self.connect_points and any(p.get("fit") for p in payloads))
+                    or any(
+                        len(p["fits"]) > 1 or (self.connect_points and p["fits"]) for p in payloads
+                    )
                 )
                 and index == 0,
                 used_tokens=tokens,
@@ -144,17 +146,13 @@ class PlotGleSnapshot(PlotExportData):
                 raw_token = f"run_{raw_token}"
             token = dedup_export_token(raw_token, used_tokens)
             data_color = colors[i % len(colors)] if is_multi else "black"
-            fit_color = data_color if is_multi else "red"
             suppress_subplot_labels = axis_key in {"P_x", "P_y", "P_z"} and not show_legend
             data_label = None if suppress_subplot_labels else safe_label
 
             data = payload.get("data") or {}
-            fit = payload.get("fit") or {}
             t_data = data.get("t")
             y_data = data.get("y")
             y_err = data.get("err")
-            t_fit = fit.get("t")
-            y_fit = fit.get("y")
             # Script offsets preserve raw scientific values in the sidecars.
             gle_offset = float(payload.get("waterfall_offset", 0.0))
 
@@ -217,34 +215,36 @@ class PlotGleSnapshot(PlotExportData):
                             data_name=token,
                         )
 
-            fit_path = gle_path.parent / f"{token}.fit"
-            if t_fit is not None and y_fit is not None:
-                self._write_fit_file(fit_path, payload, bake_waterfall_offset=False)
+            fits = payload["fits"]
+            for order, (stem, fit) in enumerate(fit_sidecar_stems(token, fits)):
+                fit_path = gle_path.parent / f"{stem}.fit"
+                self._write_fit_file(fit_path, payload, fit, bake_waterfall_offset=False)
                 written_files.append(fit_path)
 
-                fit_label = fit.get("label", "Fit")
-                if self.connect_points:
+                fit_label = fit["label"]
+                if suppress_subplot_labels:
+                    fit_label = None
+                elif self.connect_points or (is_multi and order > 0):
                     identity = f"{safe_label} - {fit_label}" if is_multi else fit_label
                     fit_label = self._sanitize_gle_text(f"Fit: {identity}")
-                    if suppress_subplot_labels:
-                        fit_label = None
-                elif is_multi or suppress_subplot_labels:
+                elif is_multi:
                     fit_label = None
                 else:
                     fit_label = self._sanitize_gle_text(fit_label, fallback="Fit")
-                if payload.get("domain") == "frequency" and fit.get("x_display") is not None:
-                    x_fit = np.asarray(fit.get("x_display"), dtype=float)
-                else:
-                    x_fit = t_fit
+                fit_color = (
+                    (data_color if is_multi else "red")
+                    if order == 0
+                    else colors[(i + order + 1) % len(colors)]
+                )
                 ax.plot(
-                    x_fit,
-                    y_fit,
+                    fit.get("x_display", fit["t"]),
+                    fit["y"],
                     color=fit_color,
                     linewidth=2.0 if self.connect_points else 1.6,
                     zorder=2,
                     label=fit_label,
                     offset=gle_offset,
-                    data_name=f"{token}_fit",
+                    data_name=f"{stem}_fit",
                 )
 
         annotations = payloads[0].get("annotations") or []

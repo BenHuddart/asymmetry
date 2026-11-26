@@ -26,7 +26,9 @@ def connector_snapshot(*, stacked=False, offset=False):
             "label": f"Run {run}",
             "data": {"t": time, "y": values + run, "err": error},
             "connector_low_mask": np.arange(12) < 2,
-            "fit": {"t": time, "y": values + run, "label": "Model"},
+            "fits": [
+                {"id": "single", "t": time, "y": values + run, "label": "Model", "metadata": {}}
+            ],
             "waterfall_offset": float(run * 3) if offset else 0.0,
         }
         for run in (1, 2)

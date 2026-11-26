@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from asymmetry.core.transform.grouping import (
 )
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.gui.tasks import TaskCancelledError
+from asymmetry.gui.utils.gle_export import dedup_export_token, safe_file_token
 from asymmetry.gui.utils.recipe_export import write_recipe_header
 
 _DENSITY_COLUMN_NAME = {
@@ -30,6 +31,15 @@ _FREQUENCY_SHIFT_X_COLUMN_NAME = {
     "field_gauss": "shift_G",
     "field_tesla": "shift_T",
 }
+
+
+def fit_sidecar_stems(base: str, fits: list[dict]) -> Iterator[tuple[str, dict]]:
+    """Name visible fits without colliding with other dataset stems."""
+    used: set[str] = set()
+    for fit in fits:
+        # Dataset tokens collapse repeated underscores, reserving "__" for fits.
+        stem = f"{base}__{safe_file_token(fit['label'].casefold())}" if len(fits) > 1 else base
+        yield dedup_export_token(stem, used), fit
 
 
 @dataclass(frozen=True)
@@ -329,10 +339,38 @@ class PlotExportData:
                     continue
                 f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
+    def write_text_files(
+        self,
+        base: Path,
+        payload: dict,
+        content: str,
+        x_range: tuple[float, float] | None,
+        axis_key: str | None = None,
+    ) -> list[Path]:
+        """Write the selected dataset table and fit sidecars."""
+        written = []
+        if content in ("data", "data_fit"):
+            dat_path = base.parent / f"{base.name}.dat"
+            self._write_data_file(
+                dat_path,
+                payload,
+                label_text=payload["label"],
+                x_range=x_range,
+                axis_key=axis_key,
+            )
+            written.append(dat_path)
+        if content in ("data_fit", "fit"):
+            for stem, fit in fit_sidecar_stems(base.name, payload["fits"]):
+                fit_path = base.parent / f"{stem}.fit"
+                self._write_fit_file(fit_path, payload, fit, x_range=x_range)
+                written.append(fit_path)
+        return written
+
     def _write_fit_file(
         self,
         fit_path: Path,
         payload: dict,
+        fit: dict,
         *,
         x_range: tuple[float, float] | None = None,
         bake_waterfall_offset: bool = True,
@@ -349,21 +387,18 @@ class PlotExportData:
         (``let``) instead, keeping the sidecar values raw. The header records
         the offset either way.
         """
-        fit = payload.get("fit") or {}
-        t_fit = fit.get("t")
-        y_fit = fit.get("y")
-        if t_fit is None or y_fit is None:
-            return
-
         # Match the drawn fit curve's waterfall offset (see _write_data_file).
+        t_fit, y_fit = fit["t"], fit["y"]
         waterfall_offset = float(payload.get("waterfall_offset", 0.0))
         if waterfall_offset and bake_waterfall_offset:
             y_fit = np.asarray(y_fit, dtype=float) + waterfall_offset
 
-        meta = payload.get("fit_metadata") or {}
+        meta = fit["metadata"]
         with open(fit_path, "w", encoding="utf-8") as f:
             f.write(f"! Fit curve for {payload.get('label', 'dataset')}\n")
             f.write(f"! run_number: {payload.get('run_number', '')}\n")
+            f.write(f"! fit_id: {fit['id']}\n")
+            f.write(f"! fit_label: {fit['label']}\n")
             source_factor = meta.get("grouped_bunch_factor")
             display_factor = payload.get("display_bunch_factor")
             if (
