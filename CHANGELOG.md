@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Show how to fit the three-field Al-LLZ measurements and check the sensitivity
+  of the activation energy to the temperature interval and plateau estimate.
+
 - Add machine-readable citation metadata for researchers citing Asymmetry.
 
 - Use the exact Poisson deviance for occupied bins with very small positive
