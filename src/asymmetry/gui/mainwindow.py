@@ -1518,7 +1518,7 @@ class MainWindow(QMainWindow):
     def _capture_fb_view(self) -> dict:
         return {
             "bunch_factor": self._plot_panel.get_bunch_factor(),
-            "axis_limits": self._plot_panel.axis_limit_state(),
+            "axis_limits": self._plot_panel.axis_limit_state(fb_only=True),
         }
 
     def _collect_view_modes_state(self) -> dict:
@@ -1537,7 +1537,7 @@ class MainWindow(QMainWindow):
         if mode is None:
             return False
         self._view_modes[self._active_view_mode_index] = None
-        self._plot_panel.restore_axis_limits(mode["axis_limits"])
+        self._plot_panel.restore_axis_limits(mode["axis_limits"], fb_only=True)
         self._plot_panel.set_bunch_factor(mode["bunch_factor"], emit_signal=False)
         self._set_view_bunch_spin_value(mode["bunch_factor"])
         return True
@@ -9851,13 +9851,7 @@ class MainWindow(QMainWindow):
         # RRF controls show only on the FB-asymmetry representation (W16).
         if getattr(self._plot_panel, "_rrf_controls", None) is not None:
             self._plot_panel._rrf_controls.set_active_view_token(view)
-        # Keep the spectrum dock's stacked panel in lockstep with the view for
-        # every transition: leaving "maxent" for a time view must restore the
-        # FFT controls (and the "Fourier" title), or FFT status messages land
-        # on the hidden page while stale MaxEnt controls stay visible.
         self._sync_spectrum_panel_for_view(view)
-        # Keep the MaxEnt panel's reconstruction toggle in step with the active
-        # view, however the view was reached (toggle, domain button, restore).
         if hasattr(self._maxent_panel, "set_show_reconstruction"):
             self._maxent_panel.set_show_reconstruction(view == "reconstruction")
         if view == "reconstruction":

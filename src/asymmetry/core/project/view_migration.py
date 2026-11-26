@@ -5,6 +5,36 @@ from math import isfinite
 VIEW_MODE_COUNT = 3
 
 
+def is_asymmetry_axis_id(axis_id: object) -> bool:
+    """Identify shared time X or an asymmetry Y pane by its plot-policy key."""
+    if not isinstance(axis_id, str):
+        return False
+    if axis_id in {"x", "y"}:
+        return True
+    label = axis_id.removeprefix("y:")
+    synthetic_run = label.removesuffix(":raw").removeprefix("-")
+    return (
+        bool(label)
+        and label != axis_id
+        and not label.startswith(("recon:", "group:"))
+        and not (label.startswith("-") and synthetic_run.isdecimal())
+    )
+
+
+def _declared_projection_axis_ids(data: dict, plot: dict) -> set[str]:
+    labels = set(plot.get("projection_selection") or ())
+    labels.add(plot.get("polarization_axis"))
+    for selection in (plot.get("projection_memory") or {}).values():
+        labels.update(selection)
+    groupings = list(data.get("grouping_profiles") or ())
+    for key in ("datasets", "combined_datasets"):
+        groupings.extend(entry.get("grouping_overrides") or {} for entry in data.get(key) or ())
+    for grouping in groupings:
+        labels.update(p.get("label") for p in grouping.get("projections") or ())
+        labels.add(grouping.get("vector_axis"))
+    return {f"y:{label}" for label in labels if label and label != "ALL"}
+
+
 def migrate_display_bunching(data: dict) -> dict:
     """Preserve recorded bin widths without applying toolbar grouping factors twice."""
     migrated = dict(data, schema_version=29)
@@ -70,15 +100,17 @@ def migrate_saved_views(data: dict) -> None:
         plot.get("time_view_mode", "fb_asymmetry") == "fb_asymmetry"
         and workspace.get("active_view") != "reconstruction"
     )
-    fb_axes = (
-        panel_axes
-        if is_fb
-        else {
-            key: entry
-            for key, entry in panel_axes.items()
-            if key == "x" or str(entry.get("quantity")).startswith("fb_asymmetry|")
-        }
-    )
+    declared = _declared_projection_axis_ids(data, plot)
+    fb_axes = {}
+    for key, entry in panel_axes.items():
+        if not is_asymmetry_axis_id(key):
+            continue
+        quantity = entry["quantity"]
+        valid_y = str(quantity).startswith("fb_asymmetry|") or (
+            quantity is None and (is_fb or key in declared)
+        )
+        if key == "x" or (valid_y and (key != "y" or is_fb)):
+            fb_axes[key] = entry
     slots: list[dict | None] = [None] * VIEW_MODE_COUNT
     for index in range(VIEW_MODE_COUNT):
         if index >= len(modes) and index != active:

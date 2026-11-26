@@ -24,7 +24,7 @@ from asymmetry.core.instruments.source import SourceAssessment
 from asymmetry.core.project.calibration import PreparedGrouping, calibration_values
 from asymmetry.core.project.json_values import decode_non_finite
 from asymmetry.core.project.profiles import GroupingProfile
-from asymmetry.core.project.view_migration import VIEW_MODE_COUNT
+from asymmetry.core.project.view_migration import VIEW_MODE_COUNT, is_asymmetry_axis_id
 from asymmetry.core.representation.container import DatasetRepresentations
 from asymmetry.core.representation.global_fit_study import GlobalFitStudy
 from asymmetry.core.representation.group import DataGroup
@@ -592,6 +592,8 @@ def _ui_shape(state):
                 {"bunch_factor": mode.get("bunch_factor"), "axis_limits": mode.get("axis_limits")},
                 slot,
             )
+            if any(not is_asymmetry_axis_id(key) for key in mode["axis_limits"]["axes"]):
+                raise ProjectValidationError(f"{slot}.axis_limits: expected F-B axis identities")
 
 
 def prepare_project(

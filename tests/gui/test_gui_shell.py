@@ -253,10 +253,10 @@ class _StubPlotPanel(QWidget):
         if emit_signal:
             self.bunch_factor_changed.emit(value)
 
-    def axis_limit_state(self):
+    def axis_limit_state(self, *, fb_only=False):
         return self._axis_limits
 
-    def restore_axis_limits(self, state):
+    def restore_axis_limits(self, state, *, fb_only=False):
         self._axis_limits = state
 
     def get_analysis_dataset(self, dataset):

@@ -361,3 +361,92 @@ def test_saved_auto_y_follows_a_run_without_the_saved_projections(mainwindow):
     first.click()
     assert panel._auto_y_btn.isChecked()
     assert panel._ax.get_ylim()[1] > 14.0
+
+
+@pytest.mark.parametrize("view", ["raw_counts", "groups"])
+def test_fb_recall_preserves_count_y_limits_without_drawing_outgoing_counts(
+    mainwindow, source, monkeypatch, view
+):
+    mainwindow._load_files([source])
+    panel = mainwindow._plot_panel
+    first, second, _ = mainwindow._view_mode_buttons
+    _auto(panel, False, True)
+    second.click()
+    mainwindow._view_bunch_spin.setValue(4)
+    views = mainwindow._domain_buttons_by_token
+    enter_counts = (
+        mainwindow._raw_counts_action.trigger if view == "raw_counts" else views["groups"].click
+    )
+    enter_counts()
+    assert mainwindow._plot_workspace.active_view() == view
+    count_limits = (850.0, 1500.0)
+    count_axis = next(iter(panel._subplot_axes_by_polarization))
+    panel.set_fit_target_projection(count_axis)
+    _hold(panel, "y", count_limits)
+    mainwindow._view_bunch_spin.setValue(2)
+    mainwindow._on_view_mode_button_clicked(0)
+    assert second.isChecked()
+    assert panel._ax.get_ylim() == pytest.approx(count_limits)
+    assert panel.get_bunch_factor() == 2
+
+    original_draw = panel.plot_grouped_time_domain_subplots
+    count_draws = []
+
+    def record_draw(datasets):
+        count_draws.append(mainwindow._plot_workspace.active_view())
+        original_draw(datasets)
+
+    monkeypatch.setattr(panel, "plot_grouped_time_domain_subplots", record_draw)
+    views["fb_asymmetry"].click()
+    assert count_draws == []
+    assert panel.get_bunch_factor() == 4
+    first.click()
+    assert panel._auto_y_btn.isChecked()
+    state = mainwindow.collect_project_state()
+    saved_axes = state["view_modes_state"]["modes"][1]["axis_limits"]["axes"]
+    assert f"y:{count_axis}" not in saved_axes
+
+    enter_counts()
+    assert count_draws == [view]
+    assert not panel._auto_y_btn.isChecked()
+    assert panel._ax.get_ylim() == pytest.approx(count_limits)
+
+
+def test_fb_recall_preserves_reconstruction_y_limits(mainwindow, source, monkeypatch):
+    mainwindow._load_files([source])
+    dataset = mainwindow._current_dataset
+    monkeypatch.setattr(mainwindow, "_maxent_reconstruction_datasets", lambda _run: [dataset])
+    panel = mainwindow._plot_panel
+    first, second, _ = mainwindow._view_mode_buttons
+    _auto(panel, False, True)
+    second.click()
+    mainwindow._view_bunch_spin.setValue(4)
+    views = mainwindow._domain_buttons_by_token
+    views["groups"].click()
+    reconstruction = mainwindow._maxent_panel._show_reconstruction_check
+    reconstruction.click()
+    assert mainwindow._plot_workspace.active_view() == "reconstruction"
+    axis_key = next(iter(panel._subplot_axes_by_polarization))
+    panel.set_fit_target_projection(axis_key)
+    limits = (-7.0, 9.0)
+    _hold(panel, "y", limits)
+    assert panel._ax.get_ylim() == pytest.approx(limits)
+    assert panel.axis_limit_state()["axes"][f"y:{axis_key}"]["auto"] is False
+
+    draw = panel.plot_maxent_reconstruction
+    calls = []
+
+    def record_draw(*args, **kwargs):
+        calls.append(mainwindow._plot_workspace.active_view())
+        draw(*args, **kwargs)
+
+    monkeypatch.setattr(panel, "plot_maxent_reconstruction", record_draw)
+    views["fb_asymmetry"].click()
+    first.click()
+    assert panel._auto_y_btn.isChecked()
+    assert calls == []
+    assert panel.axis_limit_state()["axes"][f"y:{axis_key}"]["auto"] is False
+    reconstruction.click()
+    assert calls == ["reconstruction"]
+    assert not panel._auto_y_btn.isChecked()
+    assert panel._ax.get_ylim() == pytest.approx(limits)

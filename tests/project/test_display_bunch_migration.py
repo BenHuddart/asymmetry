@@ -77,3 +77,51 @@ def test_legacy_active_count_limits_keep_only_recoverable_asymmetry_bounds():
         "axis_limits": {"axes": {"x": time, "y:P_z": asymmetry}},
     }
     assert result["plot_state"] == project["plot_state"]
+
+
+@pytest.mark.parametrize("view", ["fb_asymmetry", "raw_counts"])
+def test_saved_slots_exclude_count_and_reconstruction_axis_identities(view):
+    asymmetry = {"auto": False, "held": [-10.0, 20.0], "quantity": "fb_asymmetry|False|None"}
+    untyped = {"auto": False, "held": [-5.0, 10.0], "quantity": None}
+    project = {
+        "schema_version": 42,
+        "datasets": [
+            {"run_number": 1, "grouping_overrides": {"projections": [{"label": "Counter pair"}]}}
+        ],
+        "plot_state": {
+            "time_view_mode": view,
+            "axis_limits": {
+                "axes": {
+                    "y": untyped,
+                    "y:Counter pair": untyped,
+                    "y:-1001": asymmetry,
+                    "y:-1001:raw": asymmetry,
+                    "y:recon:combined:1": asymmetry,
+                }
+            },
+        },
+    }
+    result = migrate_to_current(project)
+    axes = result["view_modes_state"]["modes"][0]["axis_limits"]["axes"]
+    expected = {"y:Counter pair": untyped}
+    if view == "fb_asymmetry":
+        expected["y"] = untyped
+    assert axes == expected
+    assert result["plot_state"] == project["plot_state"]
+
+
+def test_v17_count_project_recovers_its_declared_projection():
+    project = {
+        "schema_version": 17,
+        "datasets": [],
+        "plot_state": {
+            "time_view_mode": "raw_counts",
+            "projection_selection": ["Counter pair"],
+            "y_min": 850.0,
+            "y_max": 1500.0,
+            "y_limits_by_polarization": {"Counter pair": [-5.0, 10.0], "-1001": [850.0, 1500.0]},
+        },
+    }
+    axes = migrate_to_current(project)["view_modes_state"]["modes"][0]["axis_limits"]["axes"]
+    assert axes["y:Counter pair"] == {"auto": False, "held": [-5.0, 10.0], "quantity": None}
+    assert set(axes) == {"x", "y:Counter pair"}
