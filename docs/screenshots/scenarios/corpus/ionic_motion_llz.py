@@ -285,16 +285,17 @@ def _triplet_fit_window(scenario: CorpusScenario) -> QWidget:
     datasets = _load_triplet(FIRST_TEMPERATURE, _llz_reduction())
     scenario.add_to_browser(window, datasets)
     run_numbers = [int(ds.run_number) for ds in datasets]
-    window._data_browser.create_data_group(run_numbers, name="Al-LLZ 160 K (0/5/10 G)")
-    window._data_browser._table.selectAll()
-    window._on_dataset_selected(run_numbers[0])
+    browser = window._data_browser
+    browser.create_data_group(run_numbers, name="Al-LLZ 160 K (0/5/10 G)")
+    browser.select_runs([run_numbers[0]])
 
     fit_panel = window._fit_panel
     global_tab = fit_panel._global_tab
     fit_panel._tabs.setCurrentWidget(global_tab)
     fit_panel.set_batch_fit_range(0.0, FIT_TMAX)
-    fit_panel.set_datasets(window._selected_time_fit_datasets())
-    global_tab.set_current_dataset(datasets[0])
+    browser.select_runs(run_numbers)
+    if {ds.run_number for ds in fit_panel.batch_datasets()} != set(run_numbers):
+        raise RuntimeError("The Al-LLZ Batch setup must include all three runs.")
     global_tab._set_composite_model(_keren_model())
 
     table = global_tab._param_table
