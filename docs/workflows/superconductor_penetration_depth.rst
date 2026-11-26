@@ -23,8 +23,9 @@ ISIS MuSR at 400 G and 200 G over 10–125 K.
 The same workflow reappears, with material-specific twists, in two further
 examples cross-referenced at the end: the iron-pnictide LiFeAs, where
 the linewidth is reported as a field width :math:`B_\mathrm{rms}(T)`, and the
-noncentrosymmetric superconductor Re₆Zr, where the TF superfluid density sits
-alongside a zero-field time-reversal-symmetry-breaking signal.
+noncentrosymmetric superconductor Re₆Zr, where a fitted TF Gaussian
+linewidth is shown alongside a zero-field time-reversal-symmetry-breaking
+signal.
 
 Physical motivation
 -------------------
@@ -333,38 +334,49 @@ temperature-independent nuclear width, :math:`\sigma^2 = \sigma_\mathrm{VL}^2
 
 .. _re6zr-penetration-depth:
 
-Cross-reference — Re₆Zr, superfluid density and a TRSB step
+Re₆Zr transverse-field linewidth and zero-field relaxation
 -----------------------------------------------------------
 
-For the noncentrosymmetric superconductor Re₆Zr, Singh, Hillier *et al.*
-measured the superfluid density in transverse field and found evidence of
-broken time-reversal symmetry in zero field. The measurements come from the
-`ISIS dataset for MuSR runs 38176–38275
+The illustrative transverse-field scan fits one asymmetry trace per
+40 mT run (38180–38219) with **Oscillatory × Gaussian + Constant**.
+Its Gaussian component applies
+the envelope :math:`\exp[-(\sigma_G t)^2]`, so the fit parameter
+``sigma`` gives the linewidth :math:`\sigma_G` directly. The runs come from
+the `ISIS dataset for MuSR runs 38176–38275
 <https://doi.org/10.5286/ISIS.E.24088625>`__.
 
 .. figure:: /_generated/corpus_screenshots/corpus_trsb_sigma_sc_t.png
-   :alt: Re6Zr TF superfluid-density σ_sc(T) melting through T_c in the trend panel
+   :alt: Fitted Re₆Zr transverse-field Gaussian linewidth σ_G(T) in µs⁻¹ at 40 mT, falling to a finite normal-state width
    :width: 100%
 
-   The TF depolarisation rate :math:`\sigma_{sc}(T)` at 40 mT, falling from
-   ≈ 0.45 μs⁻¹ at base temperature toward a ≈ 0.17 μs⁻¹ normal-state
-   plateau through :math:`T_c = 6.75\;\mathrm{K}`. The low-:math:`T` plateau
-   and the melt between ~3 and ~7 K are the s-wave superfluid-density
-   signature.
+   The **Fit Parameters** panel shows the fitted Gaussian linewidth
+   :math:`\sigma_G(T)` in μs⁻¹ at 40 mT. Each point comes from a successful
+   fit and its error bar shows the reported fit standard error. The
+   width decreases through :math:`T_c=6.75\,\mathrm{K}`
+   and retains a finite normal-state value.
+
+Singh *et al.* formed two orthogonal virtual detectors. Their Eq. (1)
+uses :math:`\exp[-(\sigma_\mathrm{sc} t)^2/2]` for the precessing sample
+signal and models the silver holder as a second, undamped precession.
+For the same sample envelope, their
+convention gives :math:`\sigma_\mathrm{sc}=\sqrt{2}\sigma_G`. This factor
+matches the envelope definitions. The constant offset in the illustrative
+fit leaves any precessing background unresolved, and the fitted linewidth
+includes the residual broadening seen above :math:`T_c`. Isolating the
+vortex contribution requires accounting for both effects. The single
+isotropic s-wave gap interpretation comes from the paper's fit in Fig. 2(b).
 
 .. figure:: /_generated/corpus_screenshots/corpus_trsb_sigma_t_step.png
    :alt: Re6Zr zero-field Gaussian Kubo-Toyabe σ(T) showing the small TRSB step below T_c
    :width: 100%
 
-   The zero-field Gaussian Kubo–Toyabe rate :math:`\sigma(T)`, framed on a
-   tight 0.250–0.270 μs⁻¹ axis to resolve the small spontaneous rise below
-   :math:`T_c = 6.75\;\mathrm{K}` (:math:`\Delta\sigma \approx
-   0.006\text{–}0.01\;\mu\mathrm{s}^{-1}`). The onset of static spontaneous
-   fields at :math:`T_c` — decoupled by a 10 mT longitudinal field — is the
-   time-reversal-symmetry-breaking signature. Unlike the TF superfluid
-   density, this small zero-field step is the headline physics of that
-   example, and Asymmetry renders it legibly only because the axis is framed
-   to the signal.
+   The separate zero-field measurement uses the Gaussian Kubo–Toyabe
+   width :math:`\sigma(T)`, ``Delta`` in Asymmetry. This width enters the
+   Kubo–Toyabe function in Eq. (2) of Singh *et al.* The 0.250–0.270 μs⁻¹
+   axis resolves the small increase below :math:`T_c = 6.75\,\mathrm{K}`.
+   Together with :ref:`decoupling in a 10 mT longitudinal field <re6zr-lf>`,
+   this increase is evidence for spontaneous quasistatic fields and broken
+   time-reversal symmetry.
 
 Interpretation
 --------------
@@ -374,7 +386,7 @@ compare its shape with the candidate gap models.
 
 - Exponential saturation at low temperature. A single isotropic s-wave gap
   (``SC_SWave``); the :math:`\Delta/k_B T_c` value distinguishes
-  weak-coupling (BCS, 1.764) from strong-coupling (Re₆Zr reaches 2.1).
+  weak coupling (BCS, 1.764) from stronger coupling.
 - A linear decrease with temperature at low temperature. Line nodes in the gap
   (``SC_DWave``); the hallmark of a d-wave order parameter, as in the
   cuprates.
@@ -426,7 +438,9 @@ References
   :math:`\lambda_{ab}`.
 - R\. P. Singh, A. D. Hillier, B. Mazidian, J. Quintanilla, J. F. Annett, D.
   McK. Paul, G. Balakrishnan, and M. R. Lees, Phys. Rev. Lett. **112**,
-  107002 (2014) — Re₆Zr TRSB and superfluid density.
+  `107002 (2014) <https://doi.org/10.1103/PhysRevLett.112.107002>`__ —
+  Re₆Zr Gaussian TF signal and silver background (Eq. (1), Fig. 2), and
+  zero-field Kubo–Toyabe relaxation (Eqs. (2)–(3), Fig. 4).
 - S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
   Ch. 9 (superconductors), especially Ch. 9.5 (penetration depth and gap

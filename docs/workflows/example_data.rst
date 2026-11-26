@@ -95,6 +95,6 @@ ISIS DataGateway
   the individual files and the calibration run.
 - The `Re₆Zr dataset <https://doi.org/10.5286/ISIS.E.24088625>`__ contains
   MuSR runs 38176–38275. See the
-  :ref:`penetration-depth example <re6zr-penetration-depth>` for the
-  temperature scans and the :ref:`longitudinal-field example <re6zr-lf>` for
-  the zero-field and 10 mT spectra.
+  :ref:`Re₆Zr temperature scans <re6zr-penetration-depth>` for the linewidth
+  trends and the :ref:`longitudinal-field example <re6zr-lf>` for the
+  zero-field and 10 mT spectra.
