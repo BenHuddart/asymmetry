@@ -25,9 +25,13 @@ from asymmetry.core.project.instrument_migration import (
     migrate_instrument_identities,
 )
 from asymmetry.core.project.json_values import encode_non_finite, json_default
+from asymmetry.core.project.spectral_fit_migration import (
+    migrate_historical_spectral_weights,
+    runs_with_cached_spectra,
+)
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 43
+CURRENT_SCHEMA_VERSION: int = 44
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -167,6 +171,7 @@ def migrate_to_current(data: dict) -> dict:
     for prior, convert in (
         (41, migrate_fit_statistic_applicability),
         (42, migrate_trend_column_floor),
+        (43, migrate_historical_spectral_weights),
     ):
         if version == prior:
             convert(migrated)
@@ -490,7 +495,7 @@ def _migrate_v5_to_v6(data: dict) -> dict:
     fourier_config = _fourier_recipe_from_state(migrated.get("fourier_state"))
     # Only runs that actually had a generated spectrum get an FFT recipe, so a
     # migrated project does not start recomputing FFTs for every run.
-    spectra_runs = _runs_with_cached_spectra(migrated.get("fourier_spectra_state"))
+    spectra_runs = runs_with_cached_spectra(migrated.get("fourier_spectra_state"))
 
     updated: list[dict] = []
     for entry in datasets:
@@ -1612,18 +1617,6 @@ def _resolve_single_state_for_run(single_state: object, run_number: int) -> dict
     ):
         return single_state
     return None
-
-
-def _runs_with_cached_spectra(spectra_state: object) -> set[int]:
-    """Return the run numbers that had a generated FFT spectrum in v5."""
-    runs: set[int] = set()
-    if isinstance(spectra_state, dict):
-        for run_key in spectra_state:
-            try:
-                runs.add(int(run_key))
-            except (TypeError, ValueError):
-                continue
-    return runs
 
 
 def _fourier_recipe_from_state(fourier_state: object) -> dict:

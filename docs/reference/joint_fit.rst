@@ -316,6 +316,18 @@ uncertainty, under that series' own parameter name in
 knows about ordinary :class:`~asymmetry.core.fitting.results.FitResult` objects needs
 to know nothing about joint fitting to read a jointly fitted run.
 
+The Python API also accepts spectral datasets. The fitted members retain their
+effective weights and parameter error scope, as described in
+:doc:`frequency_domain_fitting`. The minimised sum is available as
+``result.objective_value``. If a unit-weight spectrum contributes, the total
+``chi_squared`` and ``reduced_chi_squared`` are unavailable, as is reduced χ²
+for any series that includes unit-weight spectra. ``result.quality_reason``
+explains the applicability of χ² diagnostics. When every spectral member uses
+diagonal errors, its chi-square contribution remains approximate because of
+spectral correlations. In the shared covariance matrix, unavailable rows and
+columns are represented by ``NaN``. Independent measured blocks retain their
+conditional covariance.
+
 :func:`asymmetry.core.fitting.joint.suggest_shared_parameters` is the autodetection
 behind the window's **Suggest** button: pass it the member models (in series
 order) and, for each, a ``{parameter name: role}`` mapping, and it returns a

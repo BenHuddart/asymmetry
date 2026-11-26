@@ -43,12 +43,17 @@ from asymmetry.core.fitting.engine import (
     FitResult,
     SharedColumn,
 )
-from asymmetry.core.fitting.fit_quality import reduced_statistic
+from asymmetry.core.fitting.fit_quality import quality_inapplicability_reason, reduced_statistic
 from asymmetry.core.fitting.parameter_carry import ComponentParameter
 from asymmetry.core.fitting.parameters import (
     ParameterSet,
     get_param_info,
     split_parameter_name,
+)
+from asymmetry.core.fitting.spectral_weights import (
+    SpectralWeightPolicy,
+    spectral_quality_reason,
+    spectral_weight_policy,
 )
 
 #: The series-level role a parameter must carry to be shareable (D4). Local and
@@ -123,7 +128,7 @@ class JointFitResult:
     shared_parameters: ParameterSet
     #: 1σ on each shared quantity, ``{shared name: sigma}``.
     shared_uncertainties: dict[str, float] = field(default_factory=dict)
-    #: Covariance over the shared columns, in the order they were passed.
+    #: Covariance in shared-column order. Unavailable rows and columns are NaN.
     shared_covariance: NDArray | None = None
     #: ``{series key: {run number: FitResult}}``.
     series_results: dict[Hashable, dict[int, FitResult]] = field(default_factory=dict)
@@ -134,13 +139,17 @@ class JointFitResult:
     #: shared column counts against every series that contributes to it), so it
     #: reads as the familiar per-series goodness of fit.
     series_reduced_chi_squared: dict[Hashable, float] = field(default_factory=dict)
-    #: Σ χ² over every run of every series.
+    #: Σ χ² over every run of every series, unavailable with spectral unit weights.
     chi_squared: float = 0.0
     #: ΣN − (number of fitted columns), a shared column counted once.
     dof: int = 0
     reduced_chi_squared: float = 0.0
     message: str = ""
     computation_revision: str | None = None
+    #: Minimized sum across every series on the scales used in the objective.
+    objective_value: float = 0.0
+    #: Why a calibrated χ² interpretation is unavailable, if applicable.
+    quality_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -256,6 +265,24 @@ def fit_joint(
         cancel_callback=cancel_callback,
     )
 
+    attributions = [
+        result.input_attribution
+        for series in solution.series_results.values()
+        for result in series.values()
+    ]
+    policies = {spectral_weight_policy(attribution) for attribution in attributions}
+    reason = (
+        "The joint objective includes unit-weight spectral residuals. χ² is unavailable."
+        if SpectralWeightPolicy.UNIT in policies
+        else next(
+            (
+                reason
+                for attribution in attributions
+                if (reason := spectral_quality_reason(attribution))
+            ),
+            None,
+        )
+    )
     return JointFitResult(
         success=solution.success,
         shared_parameters=solution.shared_parameters,
@@ -272,6 +299,8 @@ def fit_joint(
         reduced_chi_squared=reduced_statistic(solution.chi_squared, solution.dof),
         message=solution.message,
         computation_revision=computation.COMPUTATION_REVISION,
+        objective_value=solution.objective_value,
+        quality_reason=quality_inapplicability_reason(solution.dof, reason),
     )
 
 

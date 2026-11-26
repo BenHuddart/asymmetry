@@ -59,6 +59,15 @@ When asymmetric errors are present the parameter table shows them inline as
 fit report carry both sides. A parameter whose MINOS scan fails (it diverges, or
 hits a bound it cannot cross) silently keeps its Hessian error for that row.
 
+Frequency-domain fits report **Approximate spectral fit errors/statistics** when
+they use positive spectral-bin errors. That assumption supplies conditional
+parameter errors, including any MINOS intervals, without a calibrated χ²
+verdict. If **Unit weights** appears, quote the peak values as exploratory
+estimates. Parameter errors and MINOS intervals are unavailable, and the
+**Residual sum of squares** depends on the spectrum's amplitude units. See
+:doc:`frequency_domain_fitting` for the rule when a window contains both present
+and missing bin errors.
+
 .. image:: /_generated/screenshots/fit_asymmetric_errors.png
    :alt: Fit panel after a converged EuO fit with the Asymmetric errors
          checkbox ticked; each parameter in the table shows its value with an
@@ -162,9 +171,10 @@ the MINOS intervals) rather than in a side file.
 
 When you want that record outside the project — to paste into a logbook or grep
 across runs — **Analysis ▸ Export fit report…** writes a human-readable block per
-saved single fit, titled with its run, view and name: model, parameters with
-their symmetric and (when present) asymmetric errors, and the
-:math:`\chi^2_r` with its quality verdict.
+saved single fit and spectral series member, titled with its run, view, and
+name. It gives the model, parameter estimates, available errors, the recorded
+fit statistic, and any applicable quality verdict. Spectral records also give
+the effective weighting.
 
 See also
 --------

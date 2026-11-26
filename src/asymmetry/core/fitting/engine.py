@@ -15,7 +15,11 @@ from numpy.typing import NDArray
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.fit_quality import reduced_statistic
-from asymmetry.core.fitting.global_covariance import CurvatureUnavailableError, observed_covariance
+from asymmetry.core.fitting.global_covariance import (
+    CurvatureUnavailableError,
+    member_jacobian_sparsity,
+    observed_covariance,
+)
 from asymmetry.core.fitting.input_attribution import fit_input_attribution
 from asymmetry.core.fitting.likelihood import (
     FitInputError,
@@ -32,6 +36,13 @@ from asymmetry.core.fitting.likelihood import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.results import FitResult
+from asymmetry.core.fitting.spectral_weights import (
+    SpectralWeightPolicy,
+    check_coupled_spectral_support,
+    coupled_spectral_scope,
+    spectral_oversampling_correction,
+    spectral_weight_policy,
+)
 from asymmetry.core.transform.corrections import (
     correction_metadata,
     correction_warnings,
@@ -441,53 +452,6 @@ def drive_minuit(
     return out or None
 
 
-def _oversampling_correction(
-    *,
-    chi_squared: float,
-    ndata: int,
-    nfree: int,
-    uncertainties: dict[str, float],
-    covariance: NDArray[np.float64] | None,
-    minos_errors: dict[str, tuple[float, float]] | None,
-    error_oversampling: float,
-) -> tuple[
-    float,
-    float,
-    int,
-    dict[str, float],
-    NDArray[np.float64] | None,
-    dict[str, tuple[float, float]] | None,
-    str | None,
-]:
-    """Apply heuristic scalar padding rescaling without reconstructing covariance."""
-    s = float(error_oversampling)
-    sqrt_s = math.sqrt(s)
-    ndata_eff = max(int(round(ndata / s)), 1)
-    corrected_dof = ndata_eff - nfree
-    corrected_chi2 = chi_squared / s
-    corrected_reduced_chi2 = reduced_statistic(corrected_chi2, corrected_dof)
-    scaled_uncertainties = {name: value * sqrt_s for name, value in uncertainties.items()}
-    scaled_covariance = None if covariance is None else np.asarray(covariance, dtype=float) * s
-    scaled_minos = None
-    if minos_errors:
-        scaled_minos = {
-            name: (lower * sqrt_s, upper * sqrt_s) for name, (lower, upper) in minos_errors.items()
-        }
-    message = (
-        f"Heuristic zero-padding rescaling: errors ×{sqrt_s:.3g}, χ² ÷{s:g}; "
-        "no covariance reconstruction."
-    )
-    return (
-        corrected_chi2,
-        corrected_reduced_chi2,
-        corrected_dof,
-        scaled_uncertainties,
-        scaled_covariance,
-        scaled_minos,
-        message,
-    )
-
-
 # --- selectable fit cost ----------------------------------------------------
 
 
@@ -847,6 +811,7 @@ def _build_coupled_problem(
             columns.update(dataset_param_indices[ds.run_number].values())
             dataset_columns.append(tuple(sorted(columns)))
 
+    check_coupled_spectral_support(fitted_datasets, observations, dataset_columns)
     return _CoupledGlobalProblem(
         blocks=blocks,
         observations=observations,
@@ -929,26 +894,9 @@ def _coupled_jacobian_sparsity(problem: _CoupledGlobalProblem):
     which is the whole reason a wide series is affordable at all.
     """
 
-    from scipy.sparse import csr_matrix
-
-    n_rows = int(sum(problem.dataset_point_counts))
-    n_cols = len(problem.param_names)
-    rows: list[NDArray[np.int64]] = []
-    cols: list[NDArray[np.int64]] = []
-    offset = 0
-    for count, columns in zip(problem.dataset_point_counts, problem.dataset_columns, strict=True):
-        if columns:
-            block = np.asarray(columns, dtype=np.int64)
-            rows.append(np.repeat(np.arange(offset, offset + count, dtype=np.int64), block.size))
-            cols.append(np.tile(block, count))
-        offset += count
-
-    if not rows:
-        return csr_matrix((n_rows, n_cols), dtype=np.int8)
-    row_index = np.concatenate(rows)
-    col_index = np.concatenate(cols)
-    data = np.ones(row_index.size, dtype=np.int8)
-    return csr_matrix((data, (row_index, col_index)), shape=(n_rows, n_cols))
+    return member_jacobian_sparsity(
+        problem.dataset_point_counts, problem.dataset_columns, len(problem.param_names)
+    )
 
 
 #: Least-squares convergence tolerances. ``xtol``/``gtol`` are scipy's 1e-8
@@ -1257,9 +1205,10 @@ def _pack_coupled_block(
     global_columns = problem.block_global_columns[block.key]
     first_params = initial_params[block.datasets[0].run_number]
     minos_raw = solution.minos_errors
+    unscaled_columns, connected_runs = coupled_spectral_scope(problem)
 
     def _minos_for(column: int) -> tuple[float, float] | None:
-        if not minos_raw:
+        if not minos_raw or column in unscaled_columns:
             return None
         return minos_raw.get(problem.param_names[column])
 
@@ -1281,8 +1230,7 @@ def _pack_coupled_block(
             if not initial_params[ds.run_number][pname].fixed
         )
         fitted_global.add(Parameter(name=pname, value=float(values[column]), min=p.min, max=p.max))
-        sigma = solution.uncertainty(column)
-        if sigma is not None:
+        if column not in unscaled_columns and (sigma := solution.uncertainty(column)) is not None:
             global_uncertainties[pname] = sigma
 
     results: dict[int, FitResult] = {}
@@ -1326,8 +1274,7 @@ def _pack_coupled_block(
                 continue
             idx = problem.dataset_param_indices[ds.run_number][pname]
             result_params.add(Parameter(name=pname, value=float(values[idx]), min=p.min, max=p.max))
-            sigma = solution.uncertainty(idx)
-            if sigma is not None:
+            if idx not in unscaled_columns and (sigma := solution.uncertainty(idx)) is not None:
                 uncertainties[pname] = sigma
             interval = _minos_for(idx)
             if interval is not None:
@@ -1341,7 +1288,10 @@ def _pack_coupled_block(
         # Each dataset contributes the same statistic to the joint objective.
         param_dict = {p.name: p.value for p in result_params}
         record = problem.observations[ds.run_number]
-        observed = record.values if isinstance(record, GaussianObservations) else record.counts
+        gaussian = record if isinstance(record, GaussianObservations) else None
+        unit_weights = gaussian is not None and gaussian.uses_unit_weights
+        member_oversampling = 1.0 if unit_weights else error_oversampling
+        observed = gaussian.values if gaussian is not None else record.counts
         model_vals = np.asarray(block.model_fn(record.time, **param_dict), dtype=float)
         residuals = observed - model_vals
         dataset_chi2 = (
@@ -1373,10 +1323,10 @@ def _pack_coupled_block(
         nfree = nfree_global + nfree_local
 
         dataset_dof = ndata - nfree
-        red_chi2 = reduced_statistic(dataset_chi2, dataset_dof)
+        red_chi2 = math.nan if unit_weights else reduced_statistic(dataset_chi2, dataset_dof)
         minos_errors_result = minos_errors or None
         dataset_warnings = [*correction_warnings(ds.metadata), *solution.warnings]
-        if error_oversampling > 1.0:
+        if member_oversampling > 1.0:
             (
                 dataset_chi2,
                 red_chi2,
@@ -1385,14 +1335,14 @@ def _pack_coupled_block(
                 covariance_subset,
                 minos_errors_result,
                 oversampling_message,
-            ) = _oversampling_correction(
+            ) = spectral_oversampling_correction(
                 chi_squared=dataset_chi2,
                 ndata=ndata,
                 nfree=nfree,
                 uncertainties=uncertainties,
                 covariance=covariance_subset,
                 minos_errors=minos_errors_result,
-                error_oversampling=error_oversampling,
+                error_oversampling=member_oversampling,
             )
             if oversampling_message:
                 dataset_warnings.append(oversampling_message)
@@ -1405,7 +1355,11 @@ def _pack_coupled_block(
         results[ds.run_number] = FitResult(
             computation_revision=computation.COMPUTATION_REVISION,
             input_attribution=fit_input_attribution(
-                record, ds, window=(block.t_min, block.t_max), error_oversampling=error_oversampling
+                record,
+                ds,
+                window=(block.t_min, block.t_max),
+                error_oversampling=member_oversampling,
+                coupled_unit_weights=not unit_weights and ds.run_number in connected_runs,
             ),
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=solution.success and global_model_error is None and invalid_model is None,
@@ -1418,14 +1372,14 @@ def _pack_coupled_block(
             covariance_parameters=covariance_order,
             residuals=residuals,
             residual_time=record.time,
-            residual_sigma=record.sigma if isinstance(record, GaussianObservations) else None,
-            observation_report=record.report if isinstance(record, GaussianObservations) else None,
+            residual_sigma=gaussian.stated_sigma if gaussian is not None else None,
+            observation_report=gaussian.report if gaussian is not None else None,
             message=invalid_model or global_model_error or solution.message,
             function_calls=solution.function_calls,
             gradient_calls=solution.gradient_calls,
             hessian_calls=solution.hessian_calls,
             edm=solution.edm,
-            covariance_accurate=solution.covariance_accurate,
+            covariance_accurate=solution.covariance_accurate and covariance_subset is not None,
             dof=dataset_dof,
             minos_errors=minos_errors_result,
             warnings=dataset_warnings,
@@ -1459,7 +1413,7 @@ class CoupledFitSolution:
     shared_uncertainties: dict[str, float]
     #: The shared columns' block of the full covariance, in shared-column order.
     shared_covariance: NDArray[np.float64] | None
-    #: Σ χ² over every dataset of every block.
+    #: Σ χ² over all datasets, unavailable if any member uses spectral unit weights.
     chi_squared: float
     #: ΣN − (number of fitted columns), counting each shared column once.
     dof: int
@@ -1468,6 +1422,16 @@ class CoupledFitSolution:
     #: every block that contributes to it, so these do not sum to :attr:`dof`:
     #: each is "what this series' reduced χ² would mean on its own".
     series_dof: dict[Hashable, int]
+
+    @property
+    def objective_value(self) -> float:
+        """Sum of all objective contributions on the scales actually minimised."""
+        return float(
+            sum(
+                sum(run.chi_squared for run in block.values())
+                for block in self.series_results.values()
+            )
+        )
 
 
 class FitEngine:
@@ -1517,10 +1481,10 @@ class FitEngine:
         Parameters
         ----------
         dataset : MuonDataset
-            The data to fit. The engine uses the dataset object's ``time``,
-            ``asymmetry``, and ``error`` arrays as provided, optionally clipped
-            only by ``t_min``/``t_max``. Those arrays are **in percent (0–100)**
-            by the :class:`~asymmetry.core.data.dataset.MuonDataset` scale
+            The data to fit. ``t_min`` and ``t_max`` select the fit window.
+            For spectra, bins with finite positive errors are used with those
+            errors. A window without positive errors uses unit weights.
+            Time-domain asymmetry and errors are **in percent (0–100)** by the :class:`~asymmetry.core.data.dataset.MuonDataset` scale
             convention, so parameter seeds must be percent-scale too (the
             built-in models default ``A0`` to ``25``); a fraction-scale seed
             against percent data converges to the wrong minimum and trips
@@ -1559,8 +1523,9 @@ class FitEngine:
             ``s > 1``, the effective point count is ``max(round(ndata / s), 1)``
             and ``dof = ndata_eff - nfree``. The reported chi-squared is
             ``m.fval / s``; reduced chi-squared requires positive effective dof.
-            HESSE/MINOS errors scale by ``sqrt(s)`` and covariance by ``s``;
-            fitted parameter values remain unchanged. ``FitResult.warnings``
+            HESSE/MINOS errors scale by ``sqrt(s)`` and covariance by ``s``.
+            Unit-weight spectra report the raw residual sum of squares.
+            Fitted parameter values remain unchanged. ``FitResult.warnings``
             records this heuristic; it does not recover covariance or establish coverage.
 
         Returns
@@ -1679,9 +1644,11 @@ class FitEngine:
         input_window=None,
     ) -> FitResult:
         """Minimize checked observations and retain their attribution."""
-        cost_factory = (
-            GAUSSIAN_COST if isinstance(observations, GaussianObservations) else POISSON_COST
-        )
+        gaussian = observations if isinstance(observations, GaussianObservations) else None
+        unit_weights = gaussian is not None and gaussian.uses_unit_weights
+        if unit_weights:
+            error_oversampling, minos = 1.0, False
+        cost_factory = GAUSSIAN_COST if gaussian is not None else POISSON_COST
         attribution = fit_input_attribution(
             observations, field_source, window=input_window, error_oversampling=error_oversampling
         )
@@ -1722,19 +1689,17 @@ class FitEngine:
             )
 
         free = parameters.free_parameters
-        if (
-            isinstance(observations, GaussianObservations)
-            and observations.report is not None
-            and len(time) <= len(free)
-        ):
+        if gaussian is not None and (message := gaussian.insufficient_bins_message(len(free))):
             return FitResult(
                 computation_revision=computation.COMPUTATION_REVISION,
+                input_attribution=attribution,
                 success=False,
                 objective=Objective.GAUSSIAN,
+                chi_squared=math.nan,
+                reduced_chi_squared=math.nan,
                 parameters=parameters,
-                observation_report=observations.report,
-                message="Insufficient usable Gaussian observations for free parameters. "
-                + observations.report.summary(),
+                observation_report=gaussian.report,
+                message=message,
             )
         fixed_kw = {p.name: p.value for p in parameters if p.fixed}
         followers = parameters.link_followers()
@@ -1951,8 +1916,10 @@ class FitEngine:
         )
         chi_squared = float("inf") if invalid_model else m.fval
         dof = ndata - nfree
-        red_chi2 = reduced_statistic(chi_squared, dof)
-        covariance = m.covariance if m.valid else None
+        red_chi2 = math.nan if unit_weights else reduced_statistic(chi_squared, dof)
+        covariance = m.covariance if m.valid and not unit_weights else None
+        if unit_weights:
+            uncertainties.clear()
         minos_errors_result = minos_errors or None
         result_warnings = list(
             dict.fromkeys(
@@ -1975,7 +1942,7 @@ class FitEngine:
                 covariance,
                 minos_errors_result,
                 oversampling_message,
-            ) = _oversampling_correction(
+            ) = spectral_oversampling_correction(
                 chi_squared=chi_squared,
                 ndata=ndata,
                 nfree=nfree,
@@ -2000,15 +1967,11 @@ class FitEngine:
             parameters=result_params,
             uncertainties=uncertainties,
             covariance=covariance,
-            covariance_parameters=list(param_names) if m.valid else [],
+            covariance_parameters=list(param_names) if m.valid and not unit_weights else [],
             residuals=residuals,
             residual_time=observations.time,
-            residual_sigma=observations.sigma
-            if isinstance(observations, GaussianObservations)
-            else None,
-            observation_report=observations.report
-            if isinstance(observations, GaussianObservations)
-            else None,
+            residual_sigma=gaussian.stated_sigma if gaussian is not None else None,
+            observation_report=gaussian.report if gaussian is not None else None,
             message=invalid_model
             or _minuit_status_message(
                 m,
@@ -2534,8 +2497,13 @@ class FitEngine:
             )
             series_results[block.key] = results
             series_global_parameters[block.key] = fitted_global
-            series_chi_squared[block.key] = float(
-                sum(result.chi_squared for result in results.values())
+            series_chi_squared[block.key] = (
+                math.nan
+                if any(
+                    spectral_weight_policy(result.input_attribution) is SpectralWeightPolicy.UNIT
+                    for result in results.values()
+                )
+                else float(sum(result.chi_squared for result in results.values()))
             )
             n_points = sum(len(problem.observations[ds.run_number].time) for ds in block.datasets)
             block_columns = set(problem.block_global_columns[block.key].values())
@@ -2545,6 +2513,7 @@ class FitEngine:
 
         shared_parameters = ParameterSet()
         shared_uncertainties: dict[str, float] = {}
+        unscaled_columns, _ = coupled_spectral_scope(problem)
         for column_index, column in enumerate(shared_columns):
             shared_parameters.add(
                 Parameter(
@@ -2554,14 +2523,17 @@ class FitEngine:
                     max=column.max,
                 )
             )
-            sigma = solution.uncertainty(column_index)
-            if sigma is not None:
+            if (
+                column_index not in unscaled_columns
+                and (sigma := solution.uncertainty(column_index)) is not None
+            ):
                 shared_uncertainties[column.name] = sigma
 
         shared_covariance = None
-        if shared_columns and solution.covariance is not None:
-            n_shared = len(shared_columns)
-            shared_covariance = solution.covariance(list(range(n_shared)))
+        available = sorted(set(range(len(shared_columns))) - unscaled_columns)
+        if available and solution.covariance is not None:
+            shared_covariance = np.full((len(shared_columns), len(shared_columns)), math.nan)
+            shared_covariance[np.ix_(available, available)] = solution.covariance(available)
 
         total_points = int(sum(problem.dataset_point_counts))
         return CoupledFitSolution(

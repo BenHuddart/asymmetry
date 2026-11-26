@@ -91,24 +91,44 @@ Errors and fit statistics
 -------------------------
 
 .. image:: /_generated/screenshots/spectral_fit_errors.png
-   :alt: Frequency-fit result with the approximate spectral fit errors/statistics warning
+   :alt: Frequency-fit results for unit weights and stated diagonal spectral errors
    :width: 100%
 
+The selected frequency window determines the effective weights in **Single**
+and **Batch**.
 
-The result warning starts **Approximate spectral fit errors/statistics**. Fits use
-diagonal spectral-bin weights. FFT cross-bin correlations, estimated phase,
-upstream calibration/background, and MaxEnt reconstruction uncertainty are not
-fully propagated. Scalar padding rescaling changes reported errors, covariance,
-MINOS intervals, chi-square, and effective degrees of freedom while leaving the
-objective and fitted values unchanged. It is a heuristic, not a general covariance
-correction: errors can be too small or too large, even with no padding.
+* With no positive errors in the window, **Unit weights** gives every bin equal
+  weight. Use the fitted peak centre, width, or height as exploratory estimates.
+  The **Residual sum of squares** is expressed in squared spectrum-amplitude
+  units. Changing amplitude units changes its value. Parameter uncertainties,
+  MINOS intervals, and a χ² verdict are unavailable.
+* When some bins have positive errors, **Diagonal spectral errors** uses only
+  those bins. A bin with stated error :math:`\sigma_i` contributes its squared
+  residual divided by :math:`\sigma_i^2`. The result gives the numbers of
+  retained and omitted bins. If too few bins remain for the free parameters,
+  widen the fit range or fix parameters. In a coupled fit, only runs that vary
+  a shared parameter contribute to its fitted support.
+* When every bin in the window has a positive error, **Diagonal spectral
+  errors** applies the same weighting to all bins. Changing the fit range
+  leaves each shared bin's stated error intact.
 
-Chi-square verdicts, MINOS intervals, model rankings, and subsequent weighted
-trends retain these limitations; a converged fit or green verdict does not certify
-a spectral likelihood or interval coverage. The warning travels with newly
-computed results and their recorded summaries. No scope is invented for historical
-results that did not record it. The selected displayed-spectrum peak parameters
-also retain the conditioning assumptions described below.
+**Approximate spectral fit errors/statistics** describes the conditional
+parameter errors and χ² diagnostics from diagonal weights. FFT cross-bin
+correlations, estimated phase, upstream calibration and background, and MaxEnt
+reconstruction uncertainty are only partly represented. Scalar padding
+rescaling adjusts reported errors, covariance, MINOS intervals, chi-square,
+and effective degrees of freedom. It leaves the objective and fitted values
+unchanged. These quantities can understate or overstate uncertainty even with
+no padding, so the result gives no calibrated χ² band or verdict.
+
+In coupled fits, a unit-weight member also makes parameter uncertainties
+unavailable for fitted parameters connected to it through shared free
+parameters. Those shared estimates are exploratory because amplitude units
+affect a unit-weight member's contribution to the objective. Independent
+diagonally weighted members retain their conditional errors. The saved project and **Export fit report…** retain the weight policy
+for every single fit and spectral series member. **Spectral weighting unknown**
+identifies historical fits whose original weights cannot be recovered. Their
+stored values are retained.
 
 Compared with other programs
 ----------------------------
@@ -124,9 +144,8 @@ Project files
 
 Project files store frequency-fit state separately from time-domain fit state.
 This lets a project reopen with both a time-domain model and a spectral peak
-model intact.  Cached Fourier spectra are still stored in the Fourier spectrum
-state; raw detector arrays remain referenced by source-file path rather than
-embedded in the project.
+model intact. The project stores the FFT recipe, the fit results, and references
+to the raw detector files.
 
 .. note::
 

@@ -25,7 +25,12 @@ import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from asymmetry.core.fitting.result_summary import reduced_statistic_label
+from asymmetry.core.fitting.result_summary import fit_statistic_labels
+from asymmetry.core.fitting.spectral_weights import (
+    SpectralWeightPolicy,
+    spectral_weight_policy,
+    spectral_weighting_detail,
+)
 
 #: Provenance keys this module reads/writes on a fit-summary dict. Additive — they
 #: ride alongside the canonical summary fields and round-trip through ``.asymp``.
@@ -103,10 +108,14 @@ class FitLog:
         if record.get("success") is False:
             lines.append("Status: fit did not converge")
 
-        statistic = record.get("chi_squared")
-        if statistic is not None:
-            label = reduced_statistic_label(record.get("objective"), ascii=True).removesuffix("/nu")
+        attribution = record.get("input_attribution")
+        if weighting := spectral_weighting_detail(attribution):
+            lines.append(weighting)
+        if (statistic := record.get("chi_squared")) is not None:
+            label, _ = fit_statistic_labels(record, ascii=True)
             lines.append(f"{label} = {_fmt(statistic, self._value_format)}")
+        if scope := (attribution or {}).get("uncertainty_scope"):
+            lines.append(scope)
         chi_line = self._chi_line(record)
         if chi_line:
             lines.append(chi_line)
@@ -145,14 +154,21 @@ class FitLog:
 
     def _chi_line(self, record: Mapping[str, Any]) -> str:
         reduced = record.get("reduced_chi_squared")
-        if "reduced_chi_squared" not in record:
-            return ""
+        _, label = fit_statistic_labels(record, ascii=True)
+        reason = record.get("quality_reason") or ""
+        if label is None or "reduced_chi_squared" not in record:
+            return str(reason)
+        if (
+            reduced is None
+            and spectral_weight_policy(record.get("input_attribution"))
+            is SpectralWeightPolicy.UNKNOWN
+        ):
+            reduced = record.get("historical_reduced_chi_squared")
         objective = record.get("objective")
         quality = (record.get("quality") or {}) if objective is not None else {}
         dof = record.get("ndof")
         if dof is None and isinstance(quality, Mapping):
             dof = quality.get("dof")
-        label = reduced_statistic_label(objective, ascii=True)
         value = (
             "unavailable"
             if reduced is None or not math.isfinite(float(reduced))
@@ -185,7 +201,7 @@ class FitLog:
         for name, value in parameters.items():
             text = f"  {str(name):<{width}} = {_fmt(value, self._value_format)}"
             sigma = uncertainties.get(name)
-            if sigma is not None:
+            if sigma is not None and math.isfinite(float(sigma)):
                 text += f" +/- {_fmt(sigma, self._value_format)}"
             interval = asymmetric.get(name)
             if interval is not None and len(interval) == 2:

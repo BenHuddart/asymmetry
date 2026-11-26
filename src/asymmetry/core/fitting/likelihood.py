@@ -2,7 +2,8 @@
 
 Poisson deviance follows Baker & Cousins, Nucl. Instrum. Methods Phys. Res.
 221, 437–442 (1984), doi:10.1016/0167-5087(84)90016-4. Gaussian errors are
-independent stated standard deviations; their data-only normalization cancels.
+independent stated standard deviations whose data-only normalisation cancels.
+Spectral least squares records the applicable weights and their interpretation.
 """
 
 from __future__ import annotations
@@ -14,6 +15,11 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from asymmetry.core.data.ratio_validity import ObservationReport, RatioReason
+from asymmetry.core.fitting.spectral_weights import (
+    SpectralWeighting,
+    SpectralWeightPolicy,
+    spectral_fit_weights,
+)
 
 
 class Objective(str, Enum):
@@ -63,7 +69,7 @@ def _point_label(run_number, point, time):
 
 @dataclass(frozen=True)
 class GaussianObservations:
-    """Owned read-only observations with finite, strictly positive stated errors."""
+    """Owned read-only least-squares observations with positive denominators."""
 
     time: NDArray[np.float64]
     values: NDArray[np.float64]
@@ -72,6 +78,29 @@ class GaussianObservations:
     t_min: InitVar[float | None] = None
     t_max: InitVar[float | None] = None
     report: ObservationReport | None = None
+    spectral_weighting: SpectralWeighting | None = None
+
+    @property
+    def stated_sigma(self) -> NDArray[np.float64] | None:
+        """The stated bin errors, when the objective used them."""
+        return None if self.uses_unit_weights else self.sigma
+
+    @property
+    def uses_unit_weights(self) -> bool:
+        return (
+            self.spectral_weighting is not None
+            and self.spectral_weighting.policy is SpectralWeightPolicy.UNIT
+        )
+
+    def insufficient_bins_message(self, n_free: int) -> str | None:
+        if self.spectral_weighting is not None:
+            return self.spectral_weighting.insufficient_bins_message(len(self.time), n_free)
+        if self.report is not None and len(self.time) <= n_free:
+            return (
+                "Insufficient usable Gaussian observations for free parameters. "
+                + self.report.summary()
+            )
+        return None
 
     def __post_init__(self, t_min, t_max):
         time, values, sigma = _observation_arrays(
@@ -102,6 +131,7 @@ class GaussianObservations:
             None,
             None,
             self.report,
+            self.spectral_weighting,
         )
 
 
@@ -133,7 +163,24 @@ def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
 
 
 def dataset_observations(dataset, t_min=None, t_max=None):
-    """Select known histogram ratios once; generic curves retain strict validation."""
+    """Resolve spectral weights or known histogram support before validation."""
+    if dataset.metadata.get("plot_domain") == "frequency":
+        mask = gaussian_selection(dataset, t_min, t_max).mask
+        time, values = dataset.time[mask], dataset.asymmetry[mask]
+        error = np.asarray(dataset.error, dtype=float)
+        if dataset.error is None or error.size == 0:
+            error = np.zeros_like(dataset.time)
+        if error.shape != dataset.time.shape:
+            raise FitInputError("spectral errors must be absent or align with the frequency bins")
+        error = error[mask]
+        weighting, used = spectral_fit_weights(error)
+        return GaussianObservations(
+            time[used],
+            values[used],
+            np.ones_like(time) if weighting.policy is SpectralWeightPolicy.UNIT else error[used],
+            run_number=dataset.run_number,
+            spectral_weighting=weighting,
+        )
     if dataset.ratio_validity is None:
         return GaussianObservations(
             dataset.time,

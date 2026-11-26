@@ -8,10 +8,13 @@ import numpy as np
 from asymmetry.core import computation
 from asymmetry.core.data.reduction_recipe import numerical_recipe
 from asymmetry.core.fitting.likelihood import GaussianObservations, dataset_observations
+from asymmetry.core.fitting.spectral_weights import SpectralWeightPolicy, spectral_weight_policy
 from asymmetry.core.fourier.uncertainty import FIT_UNCERTAINTY_SCOPE
 
 
-def fit_input_attribution(observations, dataset=None, *, window=None, error_oversampling=1.0):
+def fit_input_attribution(
+    observations, dataset=None, *, window=None, error_oversampling=1.0, coupled_unit_weights=False
+):
     """Capture sampled values, errors and omission support without archiving arrays.
 
     Labels and model-screening metadata do not identify observations. The recipe
@@ -26,6 +29,11 @@ def fit_input_attribution(observations, dataset=None, *, window=None, error_over
             observations.time,
             observations.counts,
         )
+    )
+    spectral = (
+        observations.spectral_weighting.to_dict()
+        if gaussian and observations.spectral_weighting is not None
+        else None
     )
     recipe = dataset.effective_recipe if dataset is not None else None
     interpretation = numerical_recipe(recipe.to_dict()) if recipe is not None else None
@@ -52,6 +60,8 @@ def fit_input_attribution(observations, dataset=None, *, window=None, error_over
         else None,
         "interpretation": interpretation,
     }
+    if spectral is not None:
+        context["spectral_weighting"] = spectral
     digest = sha256(json.dumps(context, sort_keys=True, separators=(",", ":")).encode())
     for array in arrays:
         values = np.ascontiguousarray(array, dtype="<f8")
@@ -77,8 +87,10 @@ def fit_input_attribution(observations, dataset=None, *, window=None, error_over
         "max": float(support.max()),
         "effective_recipe": recipe.to_dict() if recipe is not None else None,
         "uncertainty_scope": FIT_UNCERTAINTY_SCOPE
-        if dataset is not None and dataset.metadata.get("plot_domain") == "frequency"
+        if spectral is not None and not observations.uses_unit_weights
         else None,
+        **({"spectral_weighting": spectral} if spectral is not None else {}),
+        **({"coupled_unit_weights": True} if coupled_unit_weights else {}),
     }
 
 
@@ -86,7 +98,9 @@ def saved_fit_matches(slot, dataset):
     """Verify current observations before drawing historical residuals."""
     recorded = (slot.result or {}).get("input_attribution")
     if (
-        recorded is None
+        dataset is None
+        or recorded is None
+        or spectral_weight_policy(recorded) is SpectralWeightPolicy.UNKNOWN
         or not computation.is_current((slot.result or {}).get("computation_revision"))
         or (slot.result or {}).get("objective") != "gaussian"
     ):
@@ -95,20 +109,21 @@ def saved_fit_matches(slot, dataset):
 
     window = {"min": recorded["min"], "max": recorded["max"]}
     selection = gaussian_selection(dataset, window["min"], window["max"])
-    if (
-        not selection.used
-        or not all(
-            np.all(np.isfinite(a[selection.mask]))
-            for a in (dataset.time, dataset.asymmetry, dataset.error)
-        )
-        or np.any(dataset.error[selection.mask] <= 0)
+    mask = selection.mask
+    if not selection.used or not (
+        np.isfinite(dataset.time[mask]).all() and np.isfinite(dataset.asymmetry[mask]).all()
     ):
         return False
+    if dataset.metadata.get("plot_domain") != "frequency" and not (
+        np.isfinite(dataset.error[mask]).all() and np.all(dataset.error[mask] > 0)
+    ):
+        return False
+    observations = dataset_observations(dataset, window["min"], window["max"])
     current = fit_input_attribution(
-        dataset_observations(dataset, window["min"], window["max"]),
+        observations,
         dataset,
         window=(window["min"], window["max"]),
-        error_oversampling=max(float(dataset.metadata.get("fourier_padding", 1) or 1), 1.0),
+        error_oversampling=recorded.get("error_oversampling", 1.0),
     )
     return current["identity"] == recorded["identity"] and same_source_context(current, recorded)
 

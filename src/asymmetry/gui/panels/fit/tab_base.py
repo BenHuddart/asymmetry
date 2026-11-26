@@ -91,14 +91,12 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
-from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import (
     AffineTie,
     Parameter,
     ParameterSet,
-    get_param_info,
 )
-from asymmetry.core.fitting.result_summary import fit_result_summary, reduced_statistic_label
+from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
@@ -106,8 +104,6 @@ from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.typography import footer_font
 from asymmetry.gui.styles.widgets import (
-    FIT_VERDICT_CHIP_COLOURS,
-    NEUTRAL_CHIP_COLOURS,
     apply_param_table_style,
     build_segmented_button_qss,
     configure_formula_label,
@@ -115,18 +111,15 @@ from asymmetry.gui.styles.widgets import (
     style_group_state_button,
     warning_html,
 )
-from asymmetry.gui.utils.formatting import format_fit_statistic, format_param_label
+from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
-from asymmetry.gui.windows.fit_results_window import (
-    FitParameterRow,
-    FitRangeResults,
-    FitResults,
-)
+
+from .result_readout import fit_results_snapshot as fit_results_snapshot
 
 
 def _grouped_formula_string(model: CompositeModel) -> str:
@@ -583,64 +576,6 @@ def _apply_fit_range_display(
         min_spin.setValue(float(x_min))
     with QSignalBlocker(max_spin):
         max_spin.setValue(float(x_max))
-
-
-def fit_results_snapshot(
-    result,
-    *,
-    title: str,
-    model: str,
-    fit_range: str,
-    runs: str,
-) -> FitResults:
-    """Freeze fitted values and likelihoods; launch strings supply their provenance."""
-    rows = []
-    free_names = {param.name for param in result.parameters.free_parameters}
-    for param in result.parameters:
-        info = get_param_info(param.name)
-        rows.append(
-            FitParameterRow(
-                name=param.name,
-                symbol=info.unicode_label(include_unit=False),
-                unit=info.unit or "",
-                value=float(param.value),
-                error=result.uncertainties.get(param.name),
-                fixed=param.name not in free_names,
-            )
-        )
-
-    summary = _fit_summary(result)
-    quality = summary["quality"]
-    if quality is None:
-        verdict, colours = summary["quality_reason"] or "no verdict", NEUTRAL_CHIP_COLOURS
-        if summary["reduced_chi_squared"] is None:
-            raw_label = reduced_statistic_label(result.objective).removesuffix("/ν")
-            verdict = f"{verdict} {raw_label} = {result.chi_squared:.6g}."
-    else:
-        band = f"{quality['band_low']:.2g}–{quality['band_high']:.2g}"
-        verdict = f"{quality['verdict']} fit (band {band} at {quality['confidence'] * 100:g} %)"
-        colours = FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
-
-    statistic_label = reduced_statistic_label(result.objective)
-    if result.objective is Objective.GAUSSIAN:
-        statistic_label = "χ²ᵣ"
-    return FitResults(
-        title=title,
-        parameter_name="",
-        x_label="",
-        runs=runs,
-        ranges=(
-            FitRangeResults(
-                model=model,
-                chi_squared=f"{statistic_label} {format_fit_statistic(summary['reduced_chi_squared'], '.3g')}",
-                verdict=verdict,
-                colours=colours,
-                bounds=fit_range,
-                error_mode="",
-                parameters=tuple(sorted(rows, key=lambda row: row.fixed)),
-            ),
-        ),
-    )
 
 
 def _fit_result_is_usable(result) -> bool:

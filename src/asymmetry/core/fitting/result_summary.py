@@ -22,11 +22,17 @@ from asymmetry.core.fitting.fit_quality import (
 )
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.member_quality import member_quality_flags, parameters_at_bound
+from asymmetry.core.fitting.spectral_weights import (
+    SpectralWeightPolicy,
+    spectral_quality_reason,
+    spectral_weight_policy,
+)
 
 __all__ = [
     "fit_result_summary",
     "fit_result_covariance_map",
     "fit_result_uncertainties",
+    "fit_statistic_labels",
     "parameters_at_bound",
     "reduced_statistic_label",
     "reduced_statistic_summary",
@@ -67,10 +73,35 @@ def reduced_statistic_label(objective: Objective | str | None, *, ascii: bool = 
     return "chi^2/nu" if ascii else "χ²/ν"
 
 
+def fit_statistic_labels(summary: Mapping, *, ascii: bool = False) -> tuple[str, str | None]:
+    """Label the objective value and any meaningful reduced statistic."""
+    policy = spectral_weight_policy(summary.get("input_attribution"))
+    if policy is SpectralWeightPolicy.UNIT:
+        return "Residual sum of squares", None
+    if policy is SpectralWeightPolicy.UNKNOWN:
+        return (
+            "Historical fit statistic",
+            "Historical fit statistic/nu" if ascii else "Historical fit statistic/ν",
+        )
+    reduced = reduced_statistic_label(summary.get("objective"), ascii=ascii)
+    if policy is not None:
+        reduced = f"Approximate {reduced}"
+    return reduced.removesuffix("/nu" if ascii else "/ν"), reduced
+
+
 def reduced_statistic_summary(summaries: Sequence[Mapping], *, mean: bool = False) -> str:
     """Describe homogeneous reduced statistics without pooling unknown likelihoods."""
     if not summaries:
         return ""
+    policies = {spectral_weight_policy(summary.get("input_attribution")) for summary in summaries}
+    if SpectralWeightPolicy.UNIT in policies:
+        if len(policies) == 1:
+            return "Unit weights · residual sums of squares"
+        return "Mixed spectral weights · see member results."
+    if SpectralWeightPolicy.UNKNOWN in policies:
+        return "Spectral weighting unknown."
+    if None in policies and len(policies) > 1:
+        return "Mixed fit objectives."
     objectives = {summary.get("objective") for summary in summaries}
     if len(objectives) != 1:
         return "Mixed fit objectives."
@@ -85,7 +116,7 @@ def reduced_statistic_summary(summaries: Sequence[Mapping], *, mean: bool = Fals
     ]
     if not values:
         return ""
-    label = reduced_statistic_label(objective)
+    _, label = fit_statistic_labels(summaries[0])
     if mean:
         return f"average {label} = {sum(values) / len(values):.4f}"
     extent = f"{min(values):.3g}–{max(values):.3g}" if len(values) > 1 else f"{values[0]:.3g}"
@@ -94,6 +125,8 @@ def reduced_statistic_summary(summaries: Sequence[Mapping], *, mean: bool = Fals
 
 def _observation_quality_reason(fit_result: FitResult) -> str | None:
     """Explain when the selected likelihood has no displayed χ² approximation."""
+    if reason := spectral_quality_reason(fit_result.input_attribution):
+        return reason
     if fit_result.objective is Objective.POISSON:
         minimum = fit_result.minimum_expected_count
         if minimum is None:

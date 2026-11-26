@@ -65,7 +65,7 @@ from asymmetry.gui.styles.widgets import (
     verdict_chip_qss,
 )
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.utils.formatting import format_fit_statistic, format_value_uncertainty
+from asymmetry.gui.utils.formatting import format_value_uncertainty
 from asymmetry.gui.widgets.fit_results_card import FitCardSummary, FitResultsCard
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -73,6 +73,7 @@ from asymmetry.gui.widgets.series_dialogs import SAVED_FIT, confirm_delete, prom
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
+from .result_readout import fit_statistic_text
 from .tab_base import (
     USER,
     FitParameterTable,
@@ -566,9 +567,7 @@ class SingleFitTab(FitTabBase):
         npar = len(result.parameters.free_parameters)
         summary = _fit_summary(result)
         ndof = summary["ndof"] if summary["ndof"] is not None else "unknown"
-        detail = f"χ²/ν {format_fit_statistic(summary['reduced_chi_squared'], '.4f')}"
-        if summary["reduced_chi_squared"] is None:
-            detail += f" · χ² {result.chi_squared:.6g}"
+        detail = fit_statistic_text(summary, ".4f", include_raw=True)
         if result.edm is not None:
             detail += f" · Δ‖p‖ {result.edm:.2e}"
         detail += fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
