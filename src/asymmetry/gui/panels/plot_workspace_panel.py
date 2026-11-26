@@ -16,6 +16,7 @@ class PlotWorkspacePanel(QWidget):
     """Own the main-window plot stack and active-domain state."""
 
     active_domain_changed = Signal(str)
+    active_view_leaving = Signal(str)
     active_view_changed = Signal(str)
 
     _VIEW_TOKENS = (
@@ -168,6 +169,7 @@ class PlotWorkspacePanel(QWidget):
             return
 
         prev_domain = self.active_domain()
+        self.active_view_leaving.emit(self._active_view)
         self._active_view = token
         # Only the primary time views (fb_asymmetry / groups) are remembered as
         # the fallback; the MaxEnt reconstruction overlay is a diagnostic, not a

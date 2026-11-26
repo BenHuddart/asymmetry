@@ -468,6 +468,26 @@ one is the only thing that forgets held limits; project files otherwise
 remember each axis's Auto/Held state (and its held value), so reopening a
 saved project restores the same view.
 
+.. _gui-usage-saved-views:
+
+Saved views
+~~~~~~~~~~~
+
+In **F-B asymmetry**, the main toolbar's **Saved views:** buttons **1**,
+**2**, and **3** switch between three views in the current project. The
+first visit to a slot starts with the current view. Changes to **Bunch:**,
+axis limits, **Auto X**, and **Auto Y** are kept in the selected slot as
+you work. Axis limits retain their subplot when several projections are
+displayed.
+
+On a run change, a held axis keeps its range and an automatic axis follows
+the new data. Saving the project keeps all three slots and the current
+selection. The fit window and the run's recorded grouping are independent
+of the saved view.
+
+The numbered buttons are disabled in other representations. **Bunch:**
+is also available in **Individual groups** and **Raw counts**.
+
 Connecting data points
 ~~~~~~~~~~~~~~~~~~~~~~
 

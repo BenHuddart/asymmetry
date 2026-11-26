@@ -496,6 +496,7 @@ def test_single_fit_reopens_and_exports_applicable_statistics(
             state = window.collect_project_state()
             if historical:
                 state["schema_version"] = 41
+                state.pop("view_modes_state")
             save_project(state, project, backup=False)
             json.loads(project.read_text(), parse_constant=lambda token: pytest.fail(token))
             restored = MainWindow()

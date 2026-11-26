@@ -89,7 +89,11 @@ The main toolbar's **Bunch:** control merges that many recorded output bins.
 Its tooltip is ``Merge this many recorded output bins.`` The grouping dialog
 sets the base binning; the toolbar composes with it. Fixed factor 4 and
 **Bunch:** 2 therefore combine eight acquisition bins per displayed point.
-The display factor is stored independently in each saved view mode.
+In **F-B asymmetry**, each of the three :ref:`Saved views <gui-usage-saved-views>`
+keeps its own display factor. Selecting an unused slot copies the current
+factor and axis settings. The numbered buttons are available in **F-B
+asymmetry**, and **Bunch:** also works in **Raw counts** and **Individual
+groups**.
 
 For histogram-backed F–B asymmetry, **Fixed**, **Variable** and **Constant error**
 all merge counts and their shared-background uncertainty before forming the

@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep frequency-waterfall data and fit curves aligned in plain-text exports by
   applying the displayed vertical offset to both.
 
+- Keep three project-local **F-B asymmetry** views with independent axis
+  settings and **Bunch:** factors across run changes and project reloads.
+
 - Recover marginal errors for coupled global fits with stable curvature at
   strictly interior parameter values near a bound.
 

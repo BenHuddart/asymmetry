@@ -24,6 +24,7 @@ from asymmetry.core.instruments.source import SourceAssessment
 from asymmetry.core.project.calibration import PreparedGrouping, calibration_values
 from asymmetry.core.project.json_values import decode_non_finite
 from asymmetry.core.project.profiles import GroupingProfile
+from asymmetry.core.project.view_migration import VIEW_MODE_COUNT, is_asymmetry_axis_id
 from asymmetry.core.representation.container import DatasetRepresentations
 from asymmetry.core.representation.global_fit_study import GlobalFitStudy
 from asymmetry.core.representation.group import DataGroup
@@ -236,6 +237,10 @@ def _curve_shape(curve, path):
 
 def _plot_shape(plot, path):
     _fields(plot, ("connect_points",), bool, path, nullable=False)
+    if "bunch_factor" in plot:
+        factor = _identity(plot["bunch_factor"], int, f"{path}.bunch_factor")
+        if not 1 <= factor <= 1000:
+            raise ProjectValidationError(f"{path}.bunch_factor: expected 1 to 1000")
     _fields(
         plot,
         (
@@ -571,7 +576,24 @@ def _ui_shape(state):
         _fit_editor_shape(state["multi_group_fit_state"], "project.multi_group_fit_state")
     views = state.get("view_modes_state")
     if views is not None:
-        _rows(views, "modes", "project.view_modes_state")
+        path = "project.view_modes_state"
+        active = _identity(views.get("active_index"), int, f"{path}.active_index")
+        modes = _shape(views.get("modes"), list, f"{path}.modes")
+        if len(modes) != VIEW_MODE_COUNT or not 0 <= active < VIEW_MODE_COUNT:
+            raise ProjectValidationError(
+                f"{path}: expected {VIEW_MODE_COUNT} slots and a valid index"
+            )
+        for index, mode in enumerate(modes):
+            if mode is None:
+                continue
+            slot = f"{path}.modes[{index}]"
+            _shape(mode, dict, slot)
+            _plot_shape(
+                {"bunch_factor": mode.get("bunch_factor"), "axis_limits": mode.get("axis_limits")},
+                slot,
+            )
+            if any(not is_asymmetry_axis_id(key) for key in mode["axis_limits"]["axes"]):
+                raise ProjectValidationError(f"{slot}.axis_limits: expected F-B axis identities")
 
 
 def prepare_project(

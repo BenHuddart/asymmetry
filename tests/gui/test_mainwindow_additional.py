@@ -3649,20 +3649,6 @@ class TestMainWindowBasic:
         assert mainwindow._view_mode_buttons[0].isChecked()
         assert mainwindow._view_bunch_spin.value() == 1
 
-    def test_view_modes_restore_per_mode_limits_and_bunch(self, mainwindow: MainWindow) -> None:
-        """Switching between view modes should restore the saved limits and bunch factor."""
-        mainwindow._plot_panel.set_view_limits(0.5, 8.0, -5.0, 12.0)
-        mainwindow._view_bunch_spin.setValue(3)
-
-        mainwindow._view_mode_buttons[1].click()
-        mainwindow._plot_panel.set_view_limits(1.0, 4.0, -2.0, 6.0)
-        mainwindow._view_bunch_spin.setValue(5)
-
-        mainwindow._view_mode_buttons[0].click()
-
-        assert mainwindow._view_bunch_spin.value() == 3
-        assert mainwindow._plot_panel.get_view_limits() == pytest.approx((0.5, 8.0, -5.0, 12.0))
-
     def test_toolbar_bunch_merges_recorded_bins(self, mainwindow: MainWindow) -> None:
         """Toolbar bunching composes with the recorded grouping factor."""
         dataset = _make_dataset(4101, with_grouping=True)
@@ -3673,18 +3659,6 @@ class TestMainWindowBasic:
 
         assert dataset.run.grouping["bunching_factor"] == 1
         assert mainwindow._plot_panel.get_bunch_factor() == 4
-
-    def test_collect_project_state_includes_view_modes(self, mainwindow: MainWindow) -> None:
-        """Project state should persist saved view modes and the active mode index."""
-        mainwindow._plot_panel.set_view_limits(0.25, 7.5, -4.0, 9.0)
-        mainwindow._view_bunch_spin.setValue(2)
-
-        state = mainwindow.collect_project_state()
-
-        assert state["view_modes_state"]["active_index"] == 0
-        assert state["view_modes_state"]["modes"][0]["bunch_factor"] == 2
-        assert state["view_modes_state"]["modes"][0]["x_min"] == pytest.approx(0.25)
-        assert state["view_modes_state"]["modes"][0]["x_max"] == pytest.approx(7.5)
 
     def test_toolbar_omits_inspector_panel_actions(self, mainwindow: MainWindow) -> None:
         """Fit/FFT/Params live in the right-hand inspector deck, not the toolbar."""

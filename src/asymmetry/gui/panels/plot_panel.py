@@ -45,6 +45,7 @@ from asymmetry.core.fourier.units import (
     shift_axis_label,
 )
 from asymmetry.core.fourier.units import convert as convert_field_unit
+from asymmetry.core.project.view_migration import diagnostic_axis_id, is_asymmetry_axis_id
 from asymmetry.core.transform.corrections import CorrectionOutcomes, CorrectionStatus
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
@@ -282,7 +283,7 @@ class PlotPanel(QWidget):
     #: than the project's own (the Batch tab's series window, D8). The project
     #: range is untouched; whoever set the guide owns the new window.
     fit_range_guide_changed = Signal(float, float)
-    view_limits_changed = Signal(float, float, float, float)
+    view_limits_edited = Signal()
     polarization_axis_changed = Signal(str)
     #: Emitted with the projection label when a stacked subplot is clicked to
     #: become the single-fit target (multi-subplot / ALL view only).
@@ -685,13 +686,7 @@ class PlotPanel(QWidget):
         self._y_min.editingFinished.connect(self._on_y_limit_field_edited)
         self._y_max.editingFinished.connect(self._on_y_limit_field_edited)
 
-        # Bunching has a single user-facing control — the toolbar "Bunch:"
-        # spinbox (mainwindow), which drives this panel via set_bunch_factor().
-        # This hidden spinbox is NOT a second UI path: it is the canonical
-        # backing store for the panel's bunch value, read by get/set_bunch_factor
-        # and persisted in project state (the "bunch_factor" key). It is kept as
-        # a (hidden) QSpinBox rather than a plain int so the existing value/
-        # signal API and saved-project schema stay stable. Never show it.
+        # The main toolbar edits this plot's bunch factor via set_bunch_factor.
         self._bunch_factor = QSpinBox()
         self._bunch_factor.setRange(1, 1000)
         self._bunch_factor.setValue(1)
@@ -2034,13 +2029,13 @@ class PlotPanel(QWidget):
         self._set_navigation_mode("zoom" if checked else "none")
 
     def _y_axis_id(self, axis_key: str | None) -> str:
-        """The policy axis id for the y axis of the pane keyed *axis_key*.
-
-        The single view keys on the current polarization axis, so per-projection
-        y memory is simply "a different id"; stacked views key on each subplot's
-        own key. ``None`` (no projection at all) is the plain ``"y"`` axis.
-        """
-        return "y" if axis_key is None else f"y:{axis_key}"
+        """Use separate policy keys for F–B projections and diagnostic panes."""
+        if axis_key is None:
+            return "y"
+        axis_id = f"y:{axis_key}"
+        if self._grouped_time_subplot_datasets or self._maxent_reconstruction is not None:
+            return diagnostic_axis_id(axis_id)
+        return axis_id
 
     def _displayed_y_axes(self) -> dict[str | None, object]:
         """Axis key → Matplotlib axes for every y axis currently on screen."""
@@ -2181,7 +2176,9 @@ class PlotPanel(QWidget):
         """Prepare bounds inside the resolved x window only if this y needs them."""
         if self._time_view is not None:
             self._time_view.y_bounds[axis_id] = bounds
-        return self._limits.resolve({axis_id: bounds}, {axis_id: self._y_quantity()})
+        # A reconstruction pane's identity already determines its ordinate.
+        quantities = {axis_id: self._y_quantity()} if self._maxent_reconstruction is None else None
+        return self._limits.resolve({axis_id: bounds}, quantities)
 
     def _apply_limits(self, limits: dict[str, tuple[float, float]]) -> None:
         """Apply a resolved limit dict to the axes, mirror the fields, draw once.
@@ -2207,7 +2204,6 @@ class PlotPanel(QWidget):
         self._mirror_limit_fields(limits)
         self._draw_fit_range_artists()
         self._canvas.draw()
-        self._emit_view_limits_changed()
 
     def _reapply_held_limits(self) -> None:
         """Re-resolve with no data — a blank canvas keeps every held value.
@@ -2243,6 +2239,7 @@ class PlotPanel(QWidget):
     def _on_auto_button_clicked(self, _checked: bool) -> None:
         """Re-render; the render's resolve reads the buttons for the Auto flags."""
         self._refresh_view_for_limits()
+        self.view_limits_edited.emit()
 
     def _on_x_limit_field_edited(self) -> None:
         """Hold x at the typed pair and turn Auto X off."""
@@ -2251,6 +2248,7 @@ class PlotPanel(QWidget):
         with QSignalBlocker(self._auto_x_btn):
             self._auto_x_btn.setChecked(False)
         self._refresh_view_for_limits()
+        self.view_limits_edited.emit()
 
     def _on_y_limit_field_edited(self) -> None:
         """Hold the focused pane's y at the typed pair and turn Auto Y off."""
@@ -2259,6 +2257,7 @@ class PlotPanel(QWidget):
         with QSignalBlocker(self._auto_y_btn):
             self._auto_y_btn.setChecked(False)
         self._refresh_view_for_limits()
+        self.view_limits_edited.emit()
 
     def _active_label_field_key(self) -> str:
         """Return the label field that should currently be shown/used.
@@ -2525,6 +2524,10 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(previous)
         self._current_time_view_mode = normalized
+        if normalized == "fb_asymmetry" and (
+            self._grouped_time_subplot_datasets or self._maxent_reconstruction is not None
+        ):
+            self._current_polarization_axis = None
         self._refresh_log_counts_visibility()
 
     def _refresh_log_counts_visibility(self) -> None:
@@ -3301,13 +3304,43 @@ class PlotPanel(QWidget):
             self._auto_y_btn.setChecked(False)
         self._refresh_view_for_limits()
 
-    def reset_view_limits(self) -> None:
-        """Forget every held axis limit, so the next render frames afresh.
+    def axis_limit_state(self, *, fb_only: bool = False) -> dict:
+        """Capture limits in control units, optionally dropping non-F–B Y panes."""
+        axes = self._limits.state()["axes"] if self._has_mpl else {}
+        if fb_only:
+            axes = {
+                key: entry if key == "x" else dict(entry, auto=self._auto_y_btn.isChecked())
+                for key, entry in axes.items()
+                if is_asymmetry_axis_id(key)
+            }
+        return {"axes": axes}
 
-        Project teardown only (close / new project): a blank canvas or a run
-        switch never resets a held value.
-        """
-        self._limits.reset()
+    def restore_axis_limits(self, state: dict, *, fb_only: bool = False) -> None:
+        """Restore Auto/Hold before the next render resolves its data bounds."""
+        if self._has_mpl:
+            axes = state["axes"]
+            if fb_only:
+                other_axes = {
+                    key: entry
+                    for key, entry in self._limits.state()["axes"].items()
+                    if not is_asymmetry_axis_id(key)
+                }
+                self._limits.restore({"axes": other_axes | axes})
+            else:
+                self._limits.restore(state)
+            y_id = self._y_axis_id(self._active_y_axis())
+            y_ids = [y_id] if y_id in axes else [key for key in axes if key != "x"]
+            self._mirror_auto_buttons(y_ids)
+
+    def reset_view_limits(self) -> None:
+        """Return to the initial Auto/Hold policy at project teardown."""
+        if not self._has_mpl:
+            return
+        self._limits = AxisLimitPolicy()
+        with QSignalBlocker(self._auto_x_btn), QSignalBlocker(self._auto_y_btn):
+            self._auto_x_btn.setChecked(False)
+            self._auto_y_btn.setChecked(False)
+        self._sync_auto_from_buttons(["y"])
         self.set_connect_points_enabled(False)
 
     def get_bunch_factor(self) -> int:
@@ -3339,7 +3372,7 @@ class PlotPanel(QWidget):
         self.connect_points_changed.emit(self._connect_points)
 
     def set_bunch_factor(self, value: int, *, emit_signal: bool = True) -> None:
-        """Set the plot-panel bunch factor and optionally emit the normal signal."""
+        """Set the factor, with a redraw and notification when signals are enabled."""
         if not self._has_mpl:
             return
         bunch_factor = max(1, int(value))
@@ -3347,10 +3380,8 @@ class PlotPanel(QWidget):
             self._bunch_factor.setValue(bunch_factor)
             return
 
-        previous = self._bunch_factor.blockSignals(True)
-        self._bunch_factor.setValue(bunch_factor)
-        self._bunch_factor.blockSignals(previous)
-        self._redraw_current_view()
+        with QSignalBlocker(self._bunch_factor):
+            self._bunch_factor.setValue(bunch_factor)
 
     def _redraw_current_view(self) -> None:
         """Redraw using the active single- or multi-dataset context."""
@@ -3423,12 +3454,6 @@ class PlotPanel(QWidget):
         self._persistent_frequency_markers = []
         if self._has_mpl and self.has_plot_content():
             self._redraw_current_view()
-
-    def _emit_view_limits_changed(self) -> None:
-        """Broadcast the current view limits to external UI owners."""
-        if not self._has_mpl:
-            return
-        self.view_limits_changed.emit(*self.get_view_limits())
 
     def _set_alpha_label(self, text: str | None) -> None:
         """Update the header metadata label with alpha / unit info."""
@@ -3723,14 +3748,8 @@ class PlotPanel(QWidget):
         return self._fit_metadata_by_key.get(key, legacy)
 
     def _active_y_axis(self) -> str | None:
-        """The axis whose y-limits the manual controls reflect and drive.
-
-        In the stacked multi-subplot view that is the selected (fit-target)
-        subplot; otherwise it is the single visible polarization axis.
-        """
-        if self._subplot_axes_by_polarization:
-            return self.fit_target_projection()
-        return self._current_polarization_axis
+        """Use the fit-target subplot, falling back to the visible primary pane."""
+        return self.fit_target_projection() or self._current_polarization_axis
 
     def _mirror_y_fields_for_axis(self, axis_key: str | None) -> None:
         """Show *axis_key*'s held y limits in the Y fields (a selection switch).
@@ -4114,16 +4133,7 @@ class PlotPanel(QWidget):
         return "Asymmetry (%)"
 
     def _ensure_single_axis_mode(self) -> None:
-        """Recreate a single-axis figure when leaving any multi-axis mode.
-
-        The single-dataset path always renders onto exactly one ``self._ax``, so
-        the postcondition is one tracked axis. Rebuild whenever that does not
-        already hold: tracked vector subplots, *any* lingering extra axes (e.g. a
-        dual-pane left behind when a projection was cleared without replotting),
-        or a stale ``self._ax`` detached from the figure. Relying solely on
-        ``_subplot_axes_by_polarization`` was fragile — clearing the vector state
-        without clearing that dict still left the panes on the canvas.
-        """
+        """Leave one tracked axis, including after projection subplots are cleared."""
         already_single = (
             not self._subplot_axes_by_polarization
             and len(self._figure.axes) == 1
@@ -4426,10 +4436,22 @@ class PlotPanel(QWidget):
         else:
             self._refresh_fit_target_decoration()
 
+    def _prepare_subplot_limits(self, keys: list[str]) -> None:
+        y_ids = [diagnostic_axis_id(f"y:{key}") for key in keys]
+        if set(y_ids).isdisjoint(map(self._y_axis_id, self._displayed_y_axes())):
+            axes = self._limits.state()["axes"]
+            remembered = [axes[axis_id]["auto"] for axis_id in y_ids if axis_id in axes]
+            if remembered:
+                with QSignalBlocker(self._auto_y_btn):
+                    self._auto_y_btn.setChecked(all(remembered))
+        self._sync_auto_from_buttons(y_ids)
+
     def plot_grouped_time_domain_subplots(self, datasets: list[MuonDataset]) -> None:
         """Render grouped time-domain traces as stacked subplots."""
         if not self._has_mpl or not datasets:
             return
+        ordered_keys = [self._grouped_subplot_axis_key(dataset) for dataset in datasets]
+        self._prepare_subplot_limits(ordered_keys)
         self._set_canvas_minimum_height_for_axes(len(datasets))
 
         self._set_alpha_label(None)
@@ -4445,10 +4467,6 @@ class PlotPanel(QWidget):
         if hasattr(self, "_projection_bar"):
             self._projection_bar.hide()
 
-        # Raw and corrected builds share synthetic run numbers but live on very
-        # different y scales; qualify the key so a y limit held for one mode is
-        # never applied to the other.
-        ordered_keys = [self._grouped_subplot_axis_key(dataset) for dataset in datasets]
         entries_by_axis = {
             axis_key: self._display_entries([dataset])
             for axis_key, dataset in zip(ordered_keys, datasets)
@@ -4458,7 +4476,6 @@ class PlotPanel(QWidget):
             for axis_key, entries in entries_by_axis.items()
         }
         self._current_polarization_axis = ordered_keys[0] if ordered_keys else None
-        self._sync_auto_from_buttons([self._y_axis_id(key) for key in ordered_keys])
         resolved, window = self._resolve_x(self._stacked_x_bounds(arrays_by_axis))
 
         self._figure.clf()
@@ -4529,31 +4546,24 @@ class PlotPanel(QWidget):
     def plot_maxent_reconstruction(
         self, datasets: list[MuonDataset], *, combined: bool = False
     ) -> None:
-        """Overlay the MaxEnt time-domain reconstruction on the measured data.
+        """Plot observed data and model over residuals in units of σ.
 
-        Each dataset carries the observed signal in ``asymmetry`` and the
-        forward-model reconstruction + weighted residual in
-        ``metadata['maxent_model']`` / ``['maxent_residual']``.  Two layouts
-        share the same data and χ²:
-
-        - *per-group* (default): one main axis (data points + model line) above
-          a residuals strip per group, stacked vertically;
-        - *combined* (``combined=True``): every group's data+model overlaid on a
-          single colour-coded axis above one shared residuals strip.
-
-        The displayed χ² is the engine's by construction (the residuals are
-        ``(data − model)/σ``), so both layouts report the same total.
+        Combined and per-group layouts display the same total χ².
         """
         if not self._has_mpl or not datasets:
             return
         self._clear_waterfall_render_record()
-        # Remember the layout so a zoom/pan (or any other re-render) rebuilds
-        # the reconstruction instead of falling through to a plain dataset plot.
+        axis_keys = (
+            [f"recon:combined:{datasets[0].run_number}"]
+            if combined
+            else [f"recon:{ds.run_number}:{index}" for index, ds in enumerate(datasets)]
+        )
+        self._prepare_subplot_limits(axis_keys)
         self._maxent_reconstruction = (list(datasets), bool(combined))
         if combined:
-            self._plot_maxent_reconstruction_combined(datasets)
+            self._plot_maxent_reconstruction_combined(datasets, axis_keys[0])
         else:
-            self._plot_maxent_reconstruction_per_group(datasets)
+            self._plot_maxent_reconstruction_per_group(datasets, axis_keys)
 
     @staticmethod
     def _maxent_curves(
@@ -4583,8 +4593,10 @@ class PlotPanel(QWidget):
         pad = (hi - lo) * 0.05 if hi > lo else max(abs(hi) * 0.05, 1e-6)
         return lo - pad, hi + pad
 
-    def _plot_maxent_reconstruction_per_group(self, datasets: list[MuonDataset]) -> None:
-        """Stacked per-group data+model axes, each above its own residuals strip."""
+    def _plot_maxent_reconstruction_per_group(
+        self, datasets: list[MuonDataset], axis_keys: list[str]
+    ) -> None:
+        """Stack each group's data and model above its residuals."""
         self._set_canvas_minimum_height_for_axes(len(datasets))
         self._set_alpha_label(None)
         self._figure.clf()
@@ -4600,9 +4612,7 @@ class PlotPanel(QWidget):
 
         n = len(datasets)
         curves = [self._maxent_curves(dataset) for dataset in datasets]
-        axis_keys = [f"recon:{dataset.run_number}:{idx}" for idx, dataset in enumerate(datasets)]
         self._current_polarization_axis = axis_keys[0]
-        self._sync_auto_from_buttons([self._y_axis_id(key) for key in axis_keys])
         resolved, _window = self._resolve_x(
             self._default_x_limits(
                 np.concatenate([time for time, _, _, _ in curves]),
@@ -4667,14 +4677,10 @@ class PlotPanel(QWidget):
             self._last_plot_time = last_time
         self._apply_limits(resolved)
 
-    def _plot_maxent_reconstruction_combined(self, datasets: list[MuonDataset]) -> None:
-        """All groups' data+model on one colour-coded axis + a shared residuals strip.
-
-        Each group keeps a distinct colour (matplotlib's default cycle) shared
-        between its data points, model line and residual trace, so the combined
-        fit quality is legible at a glance.  The total χ² equals the per-group
-        layout's by construction.
-        """
+    def _plot_maxent_reconstruction_combined(
+        self, datasets: list[MuonDataset], axis_key: str
+    ) -> None:
+        """Draw every group's data and model above a shared residuals axis."""
         self._set_canvas_minimum_height_for_axes(2)
         self._set_alpha_label(None)
         self._figure.clf()
@@ -4693,12 +4699,10 @@ class PlotPanel(QWidget):
         style_axes(ax_main)
         style_axes(ax_res)
         self._ax = ax_main
-        axis_key = f"recon:combined:{datasets[0].run_number}"
         self._subplot_axes_by_polarization[axis_key] = ax_main
         self._current_polarization_axis = axis_key
 
         curves = [self._maxent_curves(dataset) for dataset in datasets]
-        self._sync_auto_from_buttons([self._y_axis_id(axis_key)])
         resolved, _window = self._resolve_x(
             self._default_x_limits(
                 np.concatenate([time for time, _, _, _ in curves]),
@@ -7027,22 +7031,14 @@ class PlotPanel(QWidget):
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
         if self._current_navigation_mode() != "none":
-            # A completed pan/zoom gesture is the user choosing a window, exactly
-            # like typing in a limit field. The toolbar's own release handler has
-            # already applied the zoom rectangle / pan by the time this runs, so
-            # comparing the axes against the button-press snapshot holds only the
-            # axes the gesture actually moved — a horizontal zoom leaves Auto Y
-            # on. Only interactive gestures reach here; a programmatic set_xlim
-            # never produces a button_release.
             after = self._axis_limits_snapshot()
-            y_ids = [axis_id for axis_id in after if axis_id != "x"]
-            # Buttons in, policy decides what moved, buttons out: syncing first
-            # means a toggle changed since the last render cannot be written
-            # back stale by the mirror below.
-            self._sync_auto_from_buttons(y_ids)
-            self._limits.record_gesture(self._gesture_start, after)
-            self._mirror_auto_buttons(y_ids)
-            self._refresh_view_for_limits()
+            if after != self._gesture_start:
+                y_ids = [axis_id for axis_id in after if axis_id != "x"]
+                self._sync_auto_from_buttons(y_ids)
+                self._limits.record_gesture(self._gesture_start, after)
+                self._mirror_auto_buttons(y_ids)
+                self._refresh_view_for_limits()
+                self.view_limits_edited.emit()
             return
 
         if self._active_fit_handle is not None:
@@ -8059,9 +8055,7 @@ class PlotPanel(QWidget):
                 "offset": self.waterfall_offset(),
             },
             "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
-            # One per-axis Auto/Hold snapshot replaces the old x_min/x_max/
-            # y_min/y_max + auto flags + per-projection y cache (schema v18).
-            "axis_limits": self._limits.state(),
+            "axis_limits": self.axis_limit_state(),
             "polarization_axis": self._current_polarization_axis,
             "projection_selection": list(self._selected_projection_labels),
             "projection_memory": {
@@ -8199,14 +8193,8 @@ class PlotPanel(QWidget):
             str(key): [str(label) for label in selected]
             for key, selected in (state.get("projection_memory") or {}).items()
         }
-        # The per-axis Auto/Hold snapshot IS the restored view: the buttons
-        # mirror its Auto flags and the replot below resolves through it, so
-        # there is no separate lock and no post-plot re-apply.
-        # Optional like every other key here: partial states are a legal input
-        # (the file boundary migrates real projects to a complete block).
         if "axis_limits" in state:
-            self._limits.restore(state["axis_limits"])
-        self._mirror_auto_buttons([self._y_axis_id(self._active_y_axis())])
+            self.restore_axis_limits(state["axis_limits"])
 
         # Adopt the saved current selection as the default when valid, then let the
         # combo target that intent. A saved *custom* column that the host has not
@@ -8278,10 +8266,7 @@ class PlotPanel(QWidget):
                 *self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
             )
 
-        # Keep bunch factor at default in restored projects; control is hidden.
-        self._bunch_factor.blockSignals(True)
-        self._bunch_factor.setValue(1)
-        self._bunch_factor.blockSignals(False)
+        self.set_bunch_factor(state.get("bunch_factor", 1), emit_signal=False)
 
         fit_x_min = state.get("fit_x_min")
         fit_x_max = state.get("fit_x_max")

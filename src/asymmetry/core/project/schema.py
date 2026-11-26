@@ -29,9 +29,10 @@ from asymmetry.core.project.spectral_fit_migration import (
     migrate_historical_spectral_weights,
     runs_with_cached_spectra,
 )
+from asymmetry.core.project.view_migration import migrate_display_bunching, migrate_saved_views
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 44
+CURRENT_SCHEMA_VERSION: int = 45
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -118,7 +119,7 @@ def migrate_to_current(data: dict) -> dict:
         (25, _migrate_v25_to_v26),
         (26, _migrate_v26_to_v27),
         (27, migrate_fit_objectives),
-        (28, _migrate_v28_to_v29),
+        (28, migrate_display_bunching),
     ):
         if version == prior:
             migrated = convert(migrated)
@@ -172,6 +173,7 @@ def migrate_to_current(data: dict) -> dict:
         (41, migrate_fit_statistic_applicability),
         (42, migrate_trend_column_floor),
         (43, migrate_historical_spectral_weights),
+        (44, migrate_saved_views),
     ):
         if version == prior:
             convert(migrated)
@@ -203,27 +205,6 @@ def _migrate_channel_membership(data: dict) -> dict:
         return result
 
     return visit(data)
-
-
-def _migrate_v28_to_v29(data: dict) -> dict:
-    """Preserve recorded bin widths without applying toolbar grouping factors twice."""
-    migrated = dict(data, schema_version=29)
-    views = data.get("view_modes_state")
-    if not isinstance(views, dict) or not isinstance(views.get("modes"), list):
-        return migrated
-    plot = data.get("plot_state")
-    panel_factor = plot.get("bunch_factor", 1) if isinstance(plot, dict) else 1
-    active = views.get("active_index", 0)
-    migrated["view_modes_state"] = dict(
-        views,
-        modes=[
-            dict(mode, bunch_factor=panel_factor if index == active else 1)
-            if isinstance(mode, dict)
-            else mode
-            for index, mode in enumerate(views["modes"])
-        ],
-    )
-    return migrated
 
 
 def _wizard_sample_count(row: dict, recorded: int | None) -> int | None:

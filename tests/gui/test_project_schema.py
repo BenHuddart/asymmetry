@@ -1164,7 +1164,7 @@ class TestPlotPanelState:
         assert set(state["axis_limits"]["axes"]) >= {"x"}
         assert set(state["axis_limits"]["axes"]["x"]) == {"auto", "held", "quantity"}
 
-    def test_restore_state_accepts_legacy_bunch_factor_key(self, qapp):
+    def test_restore_state_recovers_bunch_factor(self, qapp):
         from asymmetry.gui.panels.plot_panel import PlotPanel
 
         panel = PlotPanel()
@@ -1185,7 +1185,7 @@ class TestPlotPanelState:
             }
         )
         state = panel.get_state()
-        assert state["bunch_factor"] == 1
+        assert state["bunch_factor"] == 4
 
     def test_restore_state_restores_fit_curve(self, qapp):
         from asymmetry.gui.panels.plot_panel import PlotPanel
@@ -1609,17 +1609,11 @@ class _StubFitParamsWithCrossGroup(_StubFitParamsClear):
 
 
 class _StubPlotPanelWithState(_StubPlotPanel):
-    def get_bunch_factor(self):
-        return self.get_state()["bunch_factor"]
-
     def get_state(self):
         return {
             "current_run_number": None,
-            "bunch_factor": 1,
-            "x_min": 0.0,
-            "x_max": 10.0,
-            "y_min": -30.0,
-            "y_max": 30.0,
+            "bunch_factor": self.get_bunch_factor(),
+            "axis_limits": self.axis_limit_state(),
             "fit_curve": None,
             "fit_curves": {},
         }
