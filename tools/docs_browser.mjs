@@ -26,6 +26,19 @@ const searchCases = [
   ['alpha calibration', 'reference/data_reduction/alpha_calibration.html'],
   ['asymmetry.core.transform.deadtime', 'api/transforms.html'],
 ];
+const apiMathCases = {
+  'api/fitting/models.html': [
+    {anchor: 'asymmetry.core.fitting.models.abragam'},
+    {anchor: 'asymmetry.core.fitting.models.risch_kehr'},
+  ],
+  'api/fitting/sc.html': [
+    {anchor: 'asymmetry.core.fitting.sc.bcs.delta_generalized', precedingInlineMath: 2},
+    {
+      anchor: 'asymmetry.core.fitting.sc.models.sc_two_gap_ss',
+      followingParagraph: 'MgB₂-style alpha-model decomposition',
+    },
+  ],
+};
 const pages = values.page || [
   'index.html', 'getting_started/quickstart.html', 'explanation/reduction_pipeline.html',
   'reference/fourier_analysis.html', 'reference/parameter_trending.html', 'explanation/comparison.html',
@@ -35,6 +48,9 @@ const rows = [];
 let failed = false;
 let environment;
 for (const page of pages) {
+  const url = new URL(page, base).href;
+  const apiMath = Object.entries(apiMathCases).find(([path]) =>
+    new URL(url).pathname === new URL(path, base).pathname)?.[1] ?? [];
   const profile = await mkdtemp(join(tmpdir(), 'asymmetry-docs-browser-'));
   const chrome = spawn(values.chrome, [
     '--headless', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=0',
@@ -133,7 +149,6 @@ for (const page of pages) {
         await call('Page.navigate', {url: 'about:blank'});
         requests = [];
         httpStatus = null;
-        const url = new URL(page, base).href;
         const navigation = await call('Page.navigate', {url});
         if (navigation.errorText) throw new Error(navigation.errorText);
         const deadline = Date.now() + 15000;
@@ -160,6 +175,27 @@ for (const page of pages) {
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const nav = performance.getEntriesByType('navigation')[0];
           const article = document.querySelector('[itemprop="articleBody"]');
+          const apiMathFailures = ${JSON.stringify(apiMath)}.flatMap(({anchor, precedingInlineMath, followingParagraph}) => {
+            const entry = document.getElementById(anchor)?.nextElementSibling;
+            if (!entry?.matches('dd')) return [{anchor, problems: ['Missing API description']}];
+            const problems = [];
+            const display = entry.querySelector(':scope > div.math');
+            if (!display?.querySelector(':scope > mjx-container[display="true"] > mjx-math'))
+              problems.push('Missing typeset display equation');
+            if (precedingInlineMath) {
+              const before = display?.previousElementSibling;
+              const rendered = before?.querySelectorAll('span.math > mjx-container:not([display="true"]) > mjx-math');
+              if (!before?.matches('p') || rendered.length !== precedingInlineMath)
+                problems.push('Missing typeset inline equations before display equation');
+            }
+            if (followingParagraph) {
+              const after = display?.nextElementSibling;
+              if (!after?.matches('p') || !after.textContent.includes(followingParagraph))
+                problems.push('Missing prose paragraph after display equation');
+            }
+            if (entry.querySelector('mjx-merror')) problems.push('MathJax error');
+            return problems.length ? [{anchor, problems}] : [];
+          });
           let cls = 0, session = 0, start = 0, previous = -Infinity;
           for (const shift of docsMetrics.shifts) {
             if (shift.time - previous > 1000 || shift.time - start > 5000) {session = 0; start = shift.time;}
@@ -175,6 +211,7 @@ for (const page of pages) {
             fontsReady, mathReady, overflow: document.documentElement.scrollWidth > ${viewport.width},
             literalMath: article?.textContent.includes(':math:') || false,
             mathErrors: document.querySelectorAll('mjx-merror').length,
+            ...(${apiMath.length} ? {apiMathFailures} : {}),
             search: searchPage ? {
               firstResultMs: docsMetrics.firstResult, finishedMs: docsMetrics.searchFinished,
               results: document.querySelectorAll('#search-results ul.search>li').length,
@@ -189,7 +226,8 @@ for (const page of pages) {
         console.log(JSON.stringify(record));
         if (values.check) {
           const expected = searchCases.find(([query]) => new URL(url).searchParams.get('q') === query)?.[1];
-          if (httpStatus === null || httpStatus < 200 || httpStatus >= 400 || row.overflow || row.literalMath || row.mathErrors || !row.fontsReady || !row.mathReady ||
+          if (httpStatus === null || httpStatus < 200 || httpStatus >= 400 || row.overflow || row.literalMath ||
+              row.mathErrors || row.apiMathFailures?.length || !row.fontsReady || !row.mathReady ||
               (row.search && (!row.search.finishedMs || (expected &&
                 new URL(row.search.top[0]?.href || 'about:blank').pathname !== new URL(expected, base).pathname))) ||
               (values['expect-revision'] && row.revision !== values['expect-revision'])) failed = true;

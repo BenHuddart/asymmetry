@@ -88,14 +88,14 @@ def delta_generalized(
     r"""Return reduced gap from the generalized Gross-style expression.
 
     In reduced units with :math:`t = T/T_c` and
-    :math:`\Delta_0(0)/(k_B T_c)=\text{gap_ratio}` this becomes
+    :math:`r = \Delta_0(0)/(k_B T_c)`, the gap is
 
     .. math::
 
-        \delta(t)=\tanh\left[\frac{\pi}{\text{gap_ratio}}
-        \sqrt{a\left(\frac{1}{t}-1\right)}\right],
+        \delta(t)=\tanh\left[\frac{\pi}{r}\sqrt{a\left(\frac{1}{t}-1\right)}\right].
 
-    where ``shape_factor`` corresponds to the literature parameter :math:`a`.
+    The dimensionless ratio :math:`r` is ``gap_ratio``, and the shape
+    parameter :math:`a` is ``shape_factor``.
     The function is pinned to ``1`` for ``t <= 0`` and ``0`` for ``t >= 1``.
     """
     t_arr, out, mid_mask = _prepare_reduced_gap_output(t_reduced)

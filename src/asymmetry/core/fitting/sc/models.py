@@ -520,10 +520,10 @@ def sc_two_gap_ss(
 
     .. math::
 
-         \rho_s(T) = w\rho_1(T) + (1-w)\rho_2(T),\quad 0\le w\le 1.
+        \rho_s(T) = w\rho_1(T) + (1-w)\rho_2(T),\quad 0\le w\le 1.
 
-     This is the standard MgB2-style alpha-model decomposition for multiband
-     superconductors [2].
+    This is the standard MgB₂-style alpha-model decomposition for multiband
+    superconductors [2].
     """
     w = np.clip(float(weight), 0.0, 1.0)
     rho_1 = rho_s_wave(T, Tc=Tc, gap_ratio=gap_ratio_1)
