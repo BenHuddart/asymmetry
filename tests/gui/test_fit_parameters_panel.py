@@ -38,6 +38,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFitResult,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.trend_result import ColumnErrorSource
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.mainwindow import _inspector_scroll_area
 from asymmetry.gui.panels.fit_parameters_panel import (
@@ -64,13 +65,13 @@ def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
     """An active model fit with one solved range, for trend-overlay tests."""
     model = ParameterCompositeModel(["Linear"])
     params = ParameterSet([Parameter("m", value=0.001), Parameter("b", value=0.2)])
-    # χ² = 4.5 over ν = 5 − 2 → χ²ᵣ = 1.5, a "good" verdict at 95 % confidence.
     result = ParameterModelFitResult(
         success=True,
         parameters=params,
         chi_squared=4.5,
         reduced_chi_squared=1.5,
         n_points=5,
+        column_error_source=ColumnErrorSource.SUPPLIED,
         uncertainties={"m": 0.0005, "b": 0.01},
     )
     return ParameterModelFit(
@@ -584,7 +585,6 @@ def test_card_result_chip_appears_with_the_fit_and_goes_with_it(
     chip = card(panel, "A0").result_chip
     assert chip.text() == "χ²ᵣ 1.5"
     assert chip.isVisibleTo(card(panel, "A0"))
-    # χ² of 3 over ν = 4 − 2 reads "good" at the default 95 % confidence.
     assert tokens.OK in chip.styleSheet()
     tooltip = chip.toolTip().splitlines()
     assert tooltip[0].startswith("χ²ᵣ 1.5 · good fit (band ")
@@ -601,13 +601,12 @@ def test_card_result_chip_appears_with_the_fit_and_goes_with_it(
 def test_card_result_chip_is_neutral_without_a_verdict(panel: FitParametersPanel) -> None:
     select_params(panel, ["A0"])
     fit = _active_linear_fit("A0")
-    # Scatter-estimated errors force χ²ᵣ toward 1, so it carries no verdict.
     fit.ranges[0].result.error_mode = ErrorMode.SCATTER.value
     panel._model_fits["A0"] = fit
     panel._refresh_model_fit_button_labels()
 
     chip = card(panel, "A0").result_chip
-    assert chip.toolTip().startswith("χ²ᵣ 1.5 · no verdict")
+    assert chip.toolTip().startswith("χ²ᵣ 1.5 · No χ² quality verdict")
     assert tokens.TEXT_MUTED in chip.styleSheet()
 
 

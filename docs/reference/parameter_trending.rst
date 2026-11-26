@@ -785,15 +785,17 @@ Weighting and error modes
 -------------------------
 
 By default a model fit weights each point by the propagated error of the
-trended parameter (**Column** mode). The **Errors** selector in the model-fit
+trended parameter (``Column (propagated errors)``). The **Errors** selector in the model-fit
 dialog (and the ``error_mode`` argument of ``fit_parameter_model``) offers
 four alternatives for when those errors are absent or untrustworthy:
 
 - **Percent of y** — :math:`\sigma_i = (p/100)\,|y_i|`. Points with
   :math:`y_i = 0` carry no error information and are excluded from the fit.
 - **Absolute** — one constant :math:`\sigma` for every point.
-- **None** — unit weights. The fitted parameters are the unweighted
-  least-squares solution; :math:`\chi^2` loses its absolute meaning.
+- **None (unit weights)** — the fitted parameters are the unweighted
+  least-squares solution. The sum of squared residuals scales with the square
+  of the units conversion factor when you express the same observations in
+  different units.
 - **Estimate from scatter** — an unweighted fit whose parameter
   uncertainties are rescaled by :math:`\sqrt{\chi^2/\nu}` afterwards. This
   is the standard way to quote errors when the only information about the
@@ -805,10 +807,13 @@ four alternatives for when those errors are absent or untrustworthy:
 
 In Column mode (only), errors are floored at half the median positive error
 before fitting, so a single near-zero propagated error cannot dominate the
-fit; explicit Percent/Absolute choices are honoured verbatim. With unit
-weights or scatter-estimated errors, :math:`\chi^2_r` is forced toward 1 by
-construction and carries no goodness-of-fit information — the quality
-verdict (below) is suppressed in those modes.
+fit. Explicit ``Percent of y`` and ``Absolute`` choices are honoured verbatim.
+If ``fit_parameter_model`` receives ``yerr=None`` in Column mode, it assumes
+unit y errors and records that assumption separately from the requested mode.
+Supplied x errors can still contribute through effective variance. Parameter
+uncertainties in that case are conditional on the assumed y scale. When the
+trend editor supplies an exploratory estimate for a missing point error, the
+result records whether an estimated error contributed in the fitted range.
 
 .. code-block:: python
 
@@ -862,10 +867,20 @@ The verdict is two-sided:
   the errors allow, which usually means overestimated errors or too many
   free parameters soaking up noise.
 
-The verdict assumes real (Column-mode) errors and is suppressed for
-unit-weight and scatter-estimated fits. Programmatic access is via
-``asymmetry.core.fitting.assess_fit_quality(chi_squared, dof)``, which
-returns the verdict and the band.
+The verdict requires an applicable error model and positive residual degrees of
+freedom. Column fits with assumed unit y errors or estimates, unit-weight
+fits and scatter-estimated fits show an explanation in place of the band and
+verdict. The result and its curve export retain the raw objective and fitted
+parameters. If :math:`\nu \leq 0`, ``reduced chi2`` reads ``unavailable``.
+For a Column fit without error columns the result says "No χ² quality verdict
+is available with assumed unit y errors. Parameter uncertainties are
+conditional on the assumed y scale."
+The programmatic result method ``assess_quality()`` returns the verdict and
+band when available, and ``quality_reason`` describes an inapplicable result.
+
+.. image:: /_generated/screenshots/trend_model_fit_unit_weights.png
+   :alt: EuO trend fit with Column selected and no supplied y errors, showing the explanation in the result box
+   :width: 100%
 
 Cross-group fitting
 -------------------

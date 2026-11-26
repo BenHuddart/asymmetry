@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.global_covariance import CurvatureUnavailableError, observed_covariance
 from asymmetry.core.fitting.input_attribution import fit_input_attribution
 from asymmetry.core.fitting.likelihood import (
@@ -445,8 +446,6 @@ def _oversampling_correction(
     chi_squared: float,
     ndata: int,
     nfree: int,
-    reduced_chi_squared: float,
-    dof: int,
     uncertainties: dict[str, float],
     covariance: NDArray[np.float64] | None,
     minos_errors: dict[str, tuple[float, float]] | None,
@@ -460,20 +459,13 @@ def _oversampling_correction(
     dict[str, tuple[float, float]] | None,
     str | None,
 ]:
-    """Apply heuristic scalar padding rescaling, without reconstructing covariance.
-
-    A no-op when ``error_oversampling <= 1``. Single and global fits retain
-    these numerical relations; this is not a general correlation correction.
-    """
-    if error_oversampling <= 1.0:
-        return chi_squared, reduced_chi_squared, dof, uncertainties, covariance, minos_errors, None
-
+    """Apply heuristic scalar padding rescaling without reconstructing covariance."""
     s = float(error_oversampling)
     sqrt_s = math.sqrt(s)
     ndata_eff = max(int(round(ndata / s)), 1)
-    corrected_dof = max(ndata_eff - nfree, 1)
+    corrected_dof = ndata_eff - nfree
     corrected_chi2 = chi_squared / s
-    corrected_reduced_chi2 = corrected_chi2 / corrected_dof
+    corrected_reduced_chi2 = reduced_statistic(corrected_chi2, corrected_dof)
     scaled_uncertainties = {name: value * sqrt_s for name, value in uncertainties.items()}
     scaled_covariance = None if covariance is None else np.asarray(covariance, dtype=float) * s
     scaled_minos = None
@@ -1381,7 +1373,7 @@ def _pack_coupled_block(
         nfree = nfree_global + nfree_local
 
         dataset_dof = ndata - nfree
-        red_chi2 = dataset_chi2 / max(dataset_dof, 1)
+        red_chi2 = reduced_statistic(dataset_chi2, dataset_dof)
         minos_errors_result = minos_errors or None
         dataset_warnings = [*correction_warnings(ds.metadata), *solution.warnings]
         if error_oversampling > 1.0:
@@ -1397,8 +1389,6 @@ def _pack_coupled_block(
                 chi_squared=dataset_chi2,
                 ndata=ndata,
                 nfree=nfree,
-                reduced_chi_squared=red_chi2,
-                dof=dataset_dof,
                 uncertainties=uncertainties,
                 covariance=covariance_subset,
                 minos_errors=minos_errors_result,
@@ -1567,8 +1557,8 @@ class FitEngine:
             (``metadata["fourier_padding"]``); native time/count fits use ``1.0``.
             Interpolation adds samples without independent information. For
             ``s > 1``, the effective point count is ``max(round(ndata / s), 1)``
-            and ``dof = max(ndata_eff - nfree, 1)``. The reported chi-squared is
-            ``m.fval / s``; reduced chi-squared uses that value and effective dof.
+            and ``dof = ndata_eff - nfree``. The reported chi-squared is
+            ``m.fval / s``; reduced chi-squared requires positive effective dof.
             HESSE/MINOS errors scale by ``sqrt(s)`` and covariance by ``s``;
             fitted parameter values remain unchanged. ``FitResult.warnings``
             records this heuristic; it does not recover covariance or establish coverage.
@@ -1960,8 +1950,8 @@ class FitEngine:
             else None
         )
         chi_squared = float("inf") if invalid_model else m.fval
-        red_chi2 = chi_squared / max(ndata - nfree, 1)
         dof = ndata - nfree
+        red_chi2 = reduced_statistic(chi_squared, dof)
         covariance = m.covariance if m.valid else None
         minos_errors_result = minos_errors or None
         result_warnings = list(
@@ -1989,8 +1979,6 @@ class FitEngine:
                 chi_squared=chi_squared,
                 ndata=ndata,
                 nfree=nfree,
-                reduced_chi_squared=red_chi2,
-                dof=dof,
                 uncertainties=uncertainties,
                 covariance=covariance,
                 minos_errors=minos_errors_result,

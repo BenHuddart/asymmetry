@@ -43,6 +43,7 @@ from asymmetry.core.fitting.engine import (
     FitResult,
     SharedColumn,
 )
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.parameter_carry import ComponentParameter
 from asymmetry.core.fitting.parameters import (
     ParameterSet,
@@ -263,12 +264,12 @@ def fit_joint(
         series_results=solution.series_results,
         series_global_parameters=solution.series_global_parameters,
         series_reduced_chi_squared={
-            key: chi2 / max(solution.series_dof[key], 1)
+            key: reduced_statistic(chi2, solution.series_dof[key])
             for key, chi2 in solution.series_chi_squared.items()
         },
         chi_squared=solution.chi_squared,
         dof=solution.dof,
-        reduced_chi_squared=solution.chi_squared / max(solution.dof, 1),
+        reduced_chi_squared=reduced_statistic(solution.chi_squared, solution.dof),
         message=solution.message,
         computation_revision=computation.COMPUTATION_REVISION,
     )

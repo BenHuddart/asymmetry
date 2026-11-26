@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core import computation
 from asymmetry.core.fitting.engine import FitResult, _minuit_status_message
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.likelihood import GaussianObservations, Objective, PoissonCounts
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 from asymmetry.core.transform.corrections import CorrectionOutcome
@@ -188,7 +189,7 @@ def count_bank_view(result: FitResult, observations, model_values, *, omit: str,
         covariance=covariance,
         covariance_parameters=names,
         chi_squared=statistic,
-        reduced_chi_squared=statistic / max(dof, 1),
+        reduced_chi_squared=reduced_statistic(statistic, dof),
         dof=dof,
         residuals=counts - model_values,
         minos_errors={n: e for n, e in result.minos_errors.items() if n != omit}
@@ -267,7 +268,7 @@ def _result_from_minuit(
         if isinstance(observations, PoissonCounts) and invalid_model is None
         else None,
         chi_squared=chi2,
-        reduced_chi_squared=chi2 / max(ndata - nfree, 1),
+        reduced_chi_squared=reduced_statistic(chi2, ndata - nfree),
         parameters=result_params,
         uncertainties=uncertainties,
         covariance=covariance,

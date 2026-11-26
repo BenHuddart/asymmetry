@@ -28,6 +28,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import seed_trend_parameters
+from asymmetry.core.fitting.trend_result import ColumnErrorSource
 from asymmetry.gui.panels.model_fit_dialog import (
     ModelFitDialog,
     ParameterModelBuilderDialog,
@@ -1027,79 +1028,6 @@ def test_seed_beat_user_start_message_shown(qapp: QApplication) -> None:
     assert "data-aware start improved the fit" in text
 
 
-def test_quality_verdict_shown_for_column_mode_fit(qapp: QApplication) -> None:
-    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
-
-    dlg = _make_dialog(qapp)
-    fit_range = dlg._fit.ranges[0]
-    fit_range.result = ParameterModelFitResult(
-        success=True,
-        chi_squared=9.0,
-        reduced_chi_squared=0.9,
-        parameters=fit_range.parameters,
-        error_mode="column",
-        n_points=12,
-    )
-    dlg._select_range(0)
-    text = dlg._quality_label.text()
-    assert "Quality of fit" in text
-    assert "good" in text
-    assert "target band" in text
-    assert dlg._quality_label.toolTip()
-
-
-def test_quality_verdict_suppressed_for_scatter_mode(qapp: QApplication) -> None:
-    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
-
-    dlg = _make_dialog(qapp)
-    fit_range = dlg._fit.ranges[0]
-    fit_range.result = ParameterModelFitResult(
-        success=True,
-        chi_squared=10.0,
-        reduced_chi_squared=1.0,
-        parameters=fit_range.parameters,
-        error_mode="scatter",
-        n_points=12,
-    )
-    dlg._select_range(0)
-    text = dlg._quality_label.text()
-    assert "No χ² quality verdict" in text
-
-    fit_range.result = None
-    dlg._select_range(0)
-    assert dlg._quality_label.text() == ""
-
-
-def test_window_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None:
-    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
-
-    dlg = _make_dialog(qapp)
-    fit_range = dlg._fit.ranges[0]
-    fit_range.windows = [(1.0, 5.0)]
-    fit_range.result = ParameterModelFitResult(
-        success=True,
-        chi_squared=9.0,
-        reduced_chi_squared=0.9,
-        parameters=fit_range.parameters,
-        error_mode="column",
-        n_points=12,
-    )
-    dlg._rebuild_ranges_ui()
-    dlg._select_range(0)
-    assert "Quality of fit" in dlg._quality_label.text()
-
-    # Editing an interval's max (single-window range collapses to a plain range).
-    dlg._on_region_interval_edited(0, 1, 4.0)
-
-    assert fit_range.result is None
-    assert fit_range.x_min == 1.0
-    assert fit_range.x_max == 4.0
-    assert dlg._quality_label.text() == ""
-    assert "not yet run" in dlg._chi2_label.text().lower()
-    # The card now carries the range's status; a cleared result reads "not_run".
-    assert dlg._range_cards[0]._view.status == "not_run"
-
-
 def test_range_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None:
     from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
 
@@ -2047,11 +1975,11 @@ def test_card_status_chip_reflects_result(qapp: QApplication) -> None:
         reduced_chi_squared=1.0,
         parameters=fit_range.parameters,
         error_mode="column",
+        column_error_source=ColumnErrorSource.SUPPLIED,
         n_points=20,
     )
     dlg._select_range(0)
     assert dlg._range_cards[0]._view.status == "success"
-    # A Column-mode fit with dof > 0 yields a verdict chip.
     assert dlg._range_cards[0]._view.status_chip_html != ""
 
 

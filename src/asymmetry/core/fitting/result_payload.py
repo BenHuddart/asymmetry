@@ -6,6 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.ratio_validity import ObservationReport
+from asymmetry.core.fitting.fit_quality import recorded_statistic
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
 from asymmetry.core.fitting.results import FitResult
@@ -89,7 +90,7 @@ def _serialize_fit_result(
         else None,
         "dof": result.dof,
         "chi_squared": float(result.chi_squared),
-        "reduced_chi_squared": float(result.reduced_chi_squared),
+        "reduced_chi_squared": recorded_statistic(result.reduced_chi_squared),
         "parameters": _serialize_parameter_set(result.parameters),
         "uncertainties": {name: float(value) for name, value in result.uncertainties.items()},
         "residual_sigma": result.residual_sigma.tolist()
@@ -126,6 +127,8 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
             residuals = np.asarray(residuals_payload, dtype=float)
         except (TypeError, ValueError):
             residuals = None
+    dof = payload.get("dof")
+    reduced = payload.get("reduced_chi_squared")
     return FitResult(
         objective=Objective.GAUSSIAN,
         computation_revision=payload.get("computation_revision"),
@@ -142,12 +145,12 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
             if payload.get("observation_report") is not None
             else None
         ),
-        dof=int(payload.get("dof", 0)),
+        dof=None if dof is None else int(dof),
         warnings=list(payload.get("warnings", [])),
         correction_metadata=dict(payload.get("correction_metadata", {})),
         success=bool(payload.get("success", False)),
         chi_squared=float(payload.get("chi_squared", 0.0)),
-        reduced_chi_squared=float(payload.get("reduced_chi_squared", 0.0)),
+        reduced_chi_squared=float("nan") if reduced is None else float(reduced),
         parameters=_deserialize_parameter_set(payload.get("parameters", [])),
         uncertainties=uncertainties,
         residuals=residuals,

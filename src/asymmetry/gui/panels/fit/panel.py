@@ -38,7 +38,7 @@ from asymmetry.core.fitting.spectral import (
     default_frequency_model,
 )
 from asymmetry.core.transform.rebin import BINNING_POLICY
-from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.utils.formatting import format_fit_statistic, format_param_label
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 
 from .global_tab import NO_UNAVAILABLE, GlobalFitTab
@@ -890,12 +890,12 @@ class FitPanel(QWidget):
             message = str(getattr(fit_result, "message", "Fit failed"))
             return f"<b>{source} failed:</b> {message}"
 
-        reduced = float(getattr(fit_result, "reduced_chi_squared", float("nan")))
+        reduced = format_fit_statistic(fit_result.reduced_chi_squared, ".4f")
         chi2 = float(getattr(fit_result, "chi_squared", float("nan")))
         lines = [
             f"<b>{source}</b>",
             f"<b>χ² = {chi2:.4f}</b>",
-            f"<b>χ²ᵣ = {reduced:.4f}</b>",
+            f"<b>χ²ᵣ = {reduced}</b>",
             "<br><b>Parameters:</b>",
         ]
 
@@ -1054,28 +1054,22 @@ class FitPanel(QWidget):
             "result_tag": _result_tag(bool(result.get("success", False))),
         }
 
-    def _result_html_from_slot_result(self, result: dict) -> str:
-        """Build single-fit result HTML from a persisted (serialised) ``FitSlot`` result.
-
-        Mirrors ``_result_html_from_fit`` but reads the plain ``dict`` shape
-        ``MainWindow._fit_result_summary`` writes into ``FitSlot.result``
-        instead of a live ``FitResult`` object — used when reconstructing a
-        batch member's form from its persisted slot (no in-session
-        ``FitResult`` exists after a reload).
-        """
-        source = "Batch fit"
+    def _result_html_from_slot_result(self, result: dict, *, source: str = "Batch fit") -> str:
+        """Render a saved result when its form reopens."""
         if not result.get("success", False):
             message = str(result.get("message", "Fit failed"))
             return f"<b>{source} failed:</b> {message}"
 
-        reduced = float(result.get("reduced_chi_squared", float("nan")))
+        reduced = format_fit_statistic(result.get("reduced_chi_squared"), ".4f")
         chi2 = float(result.get("chi_squared", float("nan")))
         lines = [
             f"<b>{source}</b>",
             f"<b>χ² = {chi2:.4f}</b>",
-            f"<b>χ²ᵣ = {reduced:.4f}</b>",
-            "<br><b>Parameters:</b>",
+            f"<b>χ²ᵣ = {reduced}</b>",
         ]
+        if reason := result.get("quality_reason"):
+            lines.append(str(reason))
+        lines.append("<br><b>Parameters:</b>")
 
         parameters = result.get("parameters")
         parameters = parameters if isinstance(parameters, dict) else {}

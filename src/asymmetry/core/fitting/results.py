@@ -46,8 +46,8 @@ class FitResult:
     edm: float | None = None
     covariance_accurate: bool = False
     #: Degrees of freedom ν = N_data − N_free for this (sub)fit. Used by the χ²
-    #: quality verdict; 0 means "unknown" and callers fall back to inference.
-    dof: int = 0
+    #: quality verdict. ``None`` means the degree count was not recorded.
+    dof: int | None = None
     #: Opt-in MINOS asymmetric 1σ intervals, ``{param: (lower, upper)}`` with
     #: ``lower < 0 < upper`` (iminuit's signed offsets). ``None`` when MINOS was
     #: not requested or every scan failed. A *display-only* overlay — the
@@ -68,6 +68,8 @@ class FitResult:
 
     def __post_init__(self):
         self.objective = Objective(self.objective)
+        if self.dof is not None and self.dof <= 0:
+            self.reduced_chi_squared = math.nan
         scope = (self.input_attribution or {}).get("uncertainty_scope")
         if scope and scope not in self.warnings:
             self.warnings.append(scope)

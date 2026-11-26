@@ -115,7 +115,7 @@ from asymmetry.gui.styles.widgets import (
     style_group_state_button,
     warning_html,
 )
-from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.utils.formatting import format_fit_statistic, format_param_label
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.flow_layout import FlowLayout
@@ -613,33 +613,30 @@ def fit_results_snapshot(
     quality = summary["quality"]
     if quality is None:
         verdict, colours = summary["quality_reason"] or "no verdict", NEUTRAL_CHIP_COLOURS
+        if summary["reduced_chi_squared"] is None:
+            raw_label = reduced_statistic_label(result.objective).removesuffix("/ν")
+            verdict = f"{verdict} {raw_label} = {result.chi_squared:.6g}."
     else:
         band = f"{quality['band_low']:.2g}–{quality['band_high']:.2g}"
         verdict = f"{quality['verdict']} fit (band {band} at {quality['confidence'] * 100:g} %)"
         colours = FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
 
-    statistic_label = (
-        "χ²ᵣ"
-        if result.objective is Objective.GAUSSIAN
-        else reduced_statistic_label(result.objective)
-    )
+    statistic_label = reduced_statistic_label(result.objective)
+    if result.objective is Objective.GAUSSIAN:
+        statistic_label = "χ²ᵣ"
     return FitResults(
         title=title,
-        # A run's asymmetry fit has neither a trended parameter nor an x axis of
-        # its own: it is one run against the fitted range, named by `runs`.
         parameter_name="",
         x_label="",
         runs=runs,
         ranges=(
             FitRangeResults(
                 model=model,
-                chi_squared=f"{statistic_label} {result.reduced_chi_squared:.3g}",
+                chi_squared=f"{statistic_label} {format_fit_statistic(summary['reduced_chi_squared'], '.3g')}",
                 verdict=verdict,
                 colours=colours,
                 bounds=fit_range,
                 error_mode="",
-                # Free parameters first ("sorted" is stable, as in the trend
-                # panel's snapshot).
                 parameters=tuple(sorted(rows, key=lambda row: row.fixed)),
             ),
         ),

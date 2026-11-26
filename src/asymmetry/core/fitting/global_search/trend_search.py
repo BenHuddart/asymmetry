@@ -235,7 +235,7 @@ def _prescreen_fits_for_ladder(
     results = _separable_prescreen_results_for_template(
         datasets, assessment, resolution_matches=resolution_matches
     )
-    if results is None or not all(result.dof for result in results.values()):
+    if results is None or not all((result.dof or 0) > 0 for result in results.values()):
         return None
     return results
 
@@ -337,7 +337,9 @@ def run_trend_search(
         for result in anchors
         if result.state.anchor_assessment is not None
         and result.state.anchor_assessment.is_successful
-        and all(fit.dof for fit in result.state.anchor_assessment.fit_results_by_run.values())
+        and all(
+            (fit.dof or 0) > 0 for fit in result.state.anchor_assessment.fit_results_by_run.values()
+        )
     }
     competing = templates_within_band(
         {

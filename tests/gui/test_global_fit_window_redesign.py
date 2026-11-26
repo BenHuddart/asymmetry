@@ -30,6 +30,7 @@ from asymmetry.core.fitting.parameter_models import (  # noqa: E402
     ParameterGroupData,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
+from asymmetry.core.fitting.trend_result import ColumnErrorSource  # noqa: E402
 from asymmetry.core.representation.global_fit_study import GlobalFitStudy  # noqa: E402
 from asymmetry.gui.windows.global_fit_window_helpers import (  # noqa: E402
     build_global_table_rows,
@@ -82,6 +83,7 @@ def _result_with_per_group(groups: list[ParameterGroupData]) -> CrossGroupFitRes
         fixed_parameters=ParameterSet(),
         error_mode="column",
         n_points=3 * len(groups),
+        column_error_sources={g.group_id: ColumnErrorSource.SUPPLIED for g in groups},
         per_group_chi_squared=per_group_chi,
         per_group_n_points=per_group_n,
     )
@@ -178,11 +180,7 @@ def test_share_y_wires_shared_axis(qapp: QApplication) -> None:
 
 
 def _chip_texts(window: GlobalParameterFitWindow) -> list[str]:
-    texts = []
-    for ax in window._left_figure.axes:
-        for artist in ax.texts:
-            texts.append(artist.get_text())
-    return texts
+    return [artist.get_text() for ax in window._left_figure.axes for artist in ax.texts]
 
 
 def test_chi_chips_present_with_enriched_result(qapp: QApplication) -> None:

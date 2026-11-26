@@ -6,7 +6,7 @@ import inspect
 import math
 from collections.abc import Callable, Hashable, Sequence
 from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -31,6 +31,7 @@ from asymmetry.core.fitting.engine import (
     FitResult,
     _reject_affine_ties,
 )
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.likelihood import (
     CountSource,
     GaussianObservations,
@@ -1231,7 +1232,6 @@ def _fit_grouped_series_global(
             truly_global=engine_global,
             per_run_physics=list(cross_run_local),
             nuisances=list(local_params),
-            initial_params=initial_params,
             temporary_datasets=temporary_datasets,
             observations=observations,
             temporary_initial=temporary_initial,
@@ -1326,32 +1326,18 @@ def _copy_param_set_with(
     free: set[str] | None = None,
     values: dict[str, float] | None = None,
 ) -> ParameterSet:
-    """Return a copy of ``source`` with selected parameters re-fixed/-freed/-revalued.
-
-    Preserves every parameter's bounds and link metadata; only the ``fixed`` flag (for
-    names in ``fix``/``free``) and ``value`` (for names in ``values``) are overridden.
-    """
+    """Override selected fit roles and values without changing bounds or ties."""
     fix = fix or set()
     free = free or set()
     values = values or {}
-    out = ParameterSet()
-    for p in source:
-        fixed = p.fixed
-        if p.name in fix:
-            fixed = True
-        if p.name in free:
-            fixed = False
-        out.add(
-            Parameter(
-                name=p.name,
-                value=float(values.get(p.name, p.value)),
-                min=p.min,
-                max=p.max,
-                fixed=fixed,
-                link_group=p.link_group,
-            )
+    return ParameterSet(
+        replace(
+            p,
+            value=float(values.get(p.name, p.value)),
+            fixed=(p.fixed or p.name in fix) and p.name not in free,
         )
-    return out
+        for p in source
+    )
 
 
 def _blockwise_inner_payload(
@@ -1532,6 +1518,7 @@ def _blockwise_run_rounds(
     inner_global: list[str],
     run_seeds: dict[int, dict[Hashable, ParameterSet]],
     shared_values: dict[str, float],
+    fixed_shared: dict[tuple[int, Hashable], dict[str, float]],
     temporary_datasets: list[MuonDataset],
     observations: dict,
     member_source_run: dict[int, int],
@@ -1560,6 +1547,8 @@ def _blockwise_run_rounds(
     outer_results: dict[int, FitResult] = {}
     shared_uncertainties: dict[str, float] = {}
     rounds_run = 0
+    shared_names = set(truly_global)
+    local_names = set(per_run_physics) | set(nuisances)
     for _round in range(max_rounds):
         if cancel_callback is not None and bool(cancel_callback()):
             raise FitCancelledError("Fit cancelled.")
@@ -1569,7 +1558,9 @@ def _blockwise_run_rounds(
         for run in run_order:
             run = int(run)
             run_seeds[run] = {
-                gid: _copy_param_set_with(ps, fix=set(truly_global), values=shared_values)
+                gid: _copy_param_set_with(
+                    ps, fix=shared_names, values=shared_values | fixed_shared[run, gid]
+                )
                 for gid, ps in run_seeds[run].items()
             }
         inner_results, executor = _inner_round_with_fallback(
@@ -1590,7 +1581,6 @@ def _blockwise_run_rounds(
         )
 
         # Warm-start the next round: carry each fitted local value back into the seeds.
-        updatable = set(per_run_physics) | set(nuisances)
         for run in run_order:
             run = int(run)
             result = inner_results.get(run)
@@ -1602,21 +1592,22 @@ def _blockwise_run_rounds(
                     continue
                 carried = {
                     name: float(fitted.parameters[name].value)
-                    for name in updatable
+                    for name in local_names
                     if name in fitted.parameters.names
                 }
                 run_seeds[run][gid] = _copy_param_set_with(seed, values=carried)
 
         # (b) Hold all locals at their fitted values; fit only the shared params.
-        outer_initial = {
-            key: _copy_param_set_with(
-                run_seeds[member_source_run[key]][member_group_id[key]],
-                fix=set(per_run_physics) | set(nuisances),
-                free=set(truly_global),
-                values=shared_values,
+        outer_initial = {}
+        for key, run in member_source_run.items():
+            gid = member_group_id[key]
+            pinned = fixed_shared[run, gid]
+            outer_initial[key] = _copy_param_set_with(
+                run_seeds[run][gid],
+                fix=local_names,
+                free=shared_names - pinned.keys(),
+                values=shared_values | pinned,
             )
-            for key in member_source_run
-        }
         outer_results, outer_shared = engine.global_fit(
             temporary_datasets,
             model_fn,
@@ -1661,7 +1652,6 @@ def _fit_grouped_series_global_blockwise(
     truly_global: list[str],
     per_run_physics: list[str],
     nuisances: list[str],
-    initial_params: dict[int, dict[Hashable, ParameterSet]],
     temporary_datasets: list[MuonDataset],
     observations: dict,
     temporary_initial: dict[int, ParameterSet],
@@ -1689,16 +1679,24 @@ def _fit_grouped_series_global_blockwise(
     run_order = list(members)
     workers = _resolve_grouped_series_workers(max_workers, len(run_order))
 
-    # Inner rounds pin the shared seeds and fit the member parameters.
-    run_seeds: dict[int, dict[Hashable, ParameterSet]] = {
-        int(run): {gid: _copy_param_set_with(ps) for gid, ps in groups.items()}
-        for run, groups in initial_params.items()
-    }
+    run_seeds: dict[int, dict[Hashable, ParameterSet]] = {int(run): {} for run in members}
+    for key, run in member_source_run.items():
+        run_seeds[run][member_group_id[key]] = _copy_param_set_with(temporary_initial[key])
     representative = temporary_initial[next(iter(temporary_initial))]
-    shared_values: dict[str, float] = {
-        name: float(representative[name].value) for name in truly_global
+    shared_seeds = {
+        name: next(
+            (ps[name] for ps in temporary_initial.values() if not ps[name].fixed),
+            representative[name],
+        )
+        for name in truly_global
     }
-    free_shared = [name for name in truly_global if not representative[name].fixed]
+    shared_values = {name: float(p.value) for name, p in shared_seeds.items()}
+    free_shared = [name for name, p in shared_seeds.items() if not p.fixed]
+    fixed_shared = {
+        (int(run), gid): {name: float(ps[name].value) for name in truly_global if ps[name].fixed}
+        for run, groups in run_seeds.items()
+        for gid, ps in groups.items()
+    }
     inner_global = list(per_run_physics) + list(truly_global)
 
     # The inner rounds reuse one pool to avoid process startup on each round.
@@ -1717,6 +1715,7 @@ def _fit_grouped_series_global_blockwise(
             inner_global=inner_global,
             run_seeds=run_seeds,
             shared_values=shared_values,
+            fixed_shared=fixed_shared,
             temporary_datasets=temporary_datasets,
             observations=observations,
             member_source_run=member_source_run,
@@ -1740,6 +1739,7 @@ def _fit_grouped_series_global_blockwise(
                 truly_global=truly_global,
                 free_shared=free_shared,
                 shared_values=shared_values,
+                fixed_shared=fixed_shared,
                 conditional=shared_uncertainties,
                 run_seeds=run_seeds,
                 run_order=run_order,
@@ -1763,7 +1763,6 @@ def _fit_grouped_series_global_blockwise(
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
-    errors_profiled = bool(profiled_errors)
     if profiled_errors:
         shared_uncertainties = {**shared_uncertainties, **profiled_errors}
 
@@ -1775,36 +1774,32 @@ def _fit_grouped_series_global_blockwise(
         group_result = result.group_results.get(member_group_id[key])
         if group_result is None:
             continue
-        member = _inject_shared_parameters(group_result, shared_values, shared_uncertainties)
+        pinned = fixed_shared[run, member_group_id[key]]
+        shared = _copy_param_set_with(
+            ParameterSet(temporary_initial[key][name] for name in truly_global),
+            values=shared_values | pinned,
+        )
+        member = _inject_shared_parameters(group_result, shared, shared_uncertainties)
         if cost_factory is not None:
-            # The shared update evaluates the model at the returned parameters.
             fitted = outer[key]
             member.residuals = fitted.residuals
             member.chi_squared = fitted.chi_squared if fitted.residuals is not None else math.inf
-            member.reduced_chi_squared = member.chi_squared / max(member.dof, 1)
             member.minimum_expected_count = fitted.minimum_expected_count
             if not fitted.success:
                 member.success = False
                 member.message = fitted.message
+        member.reduced_chi_squared = reduced_statistic(member.chi_squared, member.dof)
         member_results[key] = member
 
     shared_parameters = ParameterSet(
-        [
-            Parameter(
-                name=name,
-                value=shared_values[name],
-                min=temporary_initial[next(iter(temporary_initial))][name].min,
-                max=temporary_initial[next(iter(temporary_initial))][name].max,
-            )
-            for name in truly_global
-        ]
+        replace(p, value=shared_values[name]) for name, p in shared_seeds.items()
     )
 
     success = bool(member_results) and all(r.success for r in member_results.values())
     if success:
         error_note = (
             "shared-parameter errors profiled over the locals"
-            if errors_profiled
+            if profiled_errors
             else "shared-parameter errors are conditional on the fitted locals"
         )
         message = (
@@ -1846,26 +1841,19 @@ def _param_uncertainty(results: dict[int, FitResult], name: str) -> float | None
 
 def _inject_shared_parameters(
     group_result: FitResult,
-    shared_values: dict[str, float],
+    shared: ParameterSet,
     shared_uncertainties: dict[str, float],
 ) -> FitResult:
-    """Return ``group_result`` with the converged shared params set on its parameter set.
-
-    The per-run inner fit held the shared params fixed at the round's value; this stamps
-    the final converged value (and conditional uncertainty) so each member reports the
-    complete physics set, matching the monolithic path's per-member result shape.
-    """
-    params = group_result.parameters
-    rebuilt = ParameterSet()
-    for p in params:
-        if p.name in shared_values:
-            rebuilt.add(Parameter(name=p.name, value=shared_values[p.name], min=p.min, max=p.max))
-        else:
-            rebuilt.add(p)
-    group_result.parameters = rebuilt
-    merged_unc = dict(getattr(group_result, "uncertainties", None) or {})
-    merged_unc.update(shared_uncertainties)
-    group_result.uncertainties = merged_unc
+    """Publish the member's true roles and count shared free columns in its diagnostic ν."""
+    group_result.parameters = ParameterSet(
+        shared[p.name] if p.name in shared else p for p in group_result.parameters
+    )
+    free = {p.name for p in shared.free_parameters}
+    group_result.uncertainties.update(
+        {name: error for name, error in shared_uncertainties.items() if name in free}
+    )
+    if group_result.dof is not None:
+        group_result.dof -= len(free)
     return group_result
 
 
@@ -1874,6 +1862,7 @@ def _profile_shared_covariance(
     truly_global: list[str],
     free_shared: list[str],
     shared_values: dict[str, float],
+    fixed_shared: dict[tuple[int, Hashable], dict[str, float]],
     conditional: dict[str, float],
     run_seeds: dict[int, dict[Hashable, ParameterSet]],
     run_order: list[int],
@@ -1917,7 +1906,9 @@ def _profile_shared_covariance(
         values.update(overrides)
         seeds = {
             int(run): {
-                gid: _copy_param_set_with(ps, fix=fix_shared, values=values)
+                gid: _copy_param_set_with(
+                    ps, fix=fix_shared, values=values | fixed_shared[run, gid]
+                )
                 for gid, ps in run_seeds[int(run)].items()
             }
             for run in run_order

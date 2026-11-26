@@ -133,7 +133,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.utils.count_results import count_result_rows
-from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.utils.formatting import format_fit_statistic, format_param_label
 from asymmetry.gui.widgets.fit_results_card import (
     TONE_COLOURS,
     FitCardSummary,
@@ -977,15 +977,7 @@ class GlobalFitTab(FitTabBase):
         tag_prefix: str,
         detail_html: str,
     ) -> None:
-        """Render a completed multi-member fit on the results card and run row.
-
-        Convergence and quality are two different questions, so the read-out keeps
-        them apart: the headline counts the members that *converged*, while a
-        member chip reads ``✓`` only when it converged and the engine flagged
-        nothing about it. A converged-but-flagged run therefore counts towards the
-        headline and still shows ⚠ — on its chip, on the run row's outcome chip,
-        and in the card's own tag.
-        """
+        """Count converged members and mark member-quality flags on their chips."""
         self._member_results = dict(results_by_member)
         member_flags = self.last_batch_member_flags()
         chips: list[MemberChip] = []
@@ -998,20 +990,22 @@ class GlobalFitTab(FitTabBase):
             clean = converged and not flags
             n_converged += converged
             n_clean += clean
-            chi2 = float(result.reduced_chi_squared)
             summary = _fit_summary(result)
+            chi2 = format_fit_statistic(summary["reduced_chi_squared"], ".3g")
             summaries.append(summary)
             quality = summary["quality"]
             chips.append(
                 MemberChip(
                     run=int(member),
-                    text=f"{member} {'✓' if clean else '⚠'} {chi2:.3g}",
+                    text=f"{member} {'✓' if clean else '⚠'} {chi2}",
                     colours=(
                         FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
                         if quality is not None
                         else NEUTRAL_CHIP_COLOURS
                     ),
-                    tooltip=", ".join(flags) if flags else "converged",
+                    tooltip="\n".join(
+                        [", ".join(flags) or "converged", summary["quality_reason"] or ""]
+                    ).strip(),
                 )
             )
 
@@ -3653,7 +3647,7 @@ class GlobalFitTab(FitTabBase):
         fwd_summary = _fit_summary(fwd)
         chip = fit_quality_chip_html(fwd_summary.get("quality"), fwd_summary.get("params_at_bound"))
         detail = (
-            f"α = {self._fmt_value(alpha, alpha_err)} · {reduced_statistic_label(fwd.objective)} = {fwd.reduced_chi_squared:.4f}{chip} "
+            f"α = {self._fmt_value(alpha, alpha_err)} · {reduced_statistic_label(fwd.objective)} = {format_fit_statistic(fwd_summary['reduced_chi_squared'], '.4f')}{chip} "
             "<br>" + "<br>".join(rows)
         )
         self._results_card.set_message(
@@ -3697,7 +3691,7 @@ class GlobalFitTab(FitTabBase):
         summary = _fit_summary(result)
         chip = fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
         detail = (
-            f"{reduced_statistic_label(result.objective)} = {result.reduced_chi_squared:.4f}{chip}<br>"
+            f"{reduced_statistic_label(result.objective)} = {format_fit_statistic(summary['reduced_chi_squared'], '.4f')}{chip}<br>"
             + "<br>".join(rows)
         )
         self._results_card.set_message(

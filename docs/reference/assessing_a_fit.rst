@@ -34,6 +34,16 @@ were not recorded; no χ² quality verdict is available." The deviance and
 convergence status remain visible. **Fit ✓** denotes convergence, independently
 of whether a quality verdict is available.
 
+The reduced statistic is unavailable when :math:`\nu \leq 0`, including when
+the raw objective is exactly zero. The fit results retain the estimates and
+raw objective, and the result chip and exported report show ``unavailable``
+for the reduced statistic. The result tooltip explains that "A χ² quality
+verdict requires positive residual degrees of freedom."
+
+.. image:: /_generated/screenshots/fit_zero_residual_degrees.png
+   :alt: Result card for a converged single-point fit, showing zero degrees of freedom, raw χ² of 1600 and an unavailable reduced statistic
+   :width: 480px
+
 See :ref:`fit-statistics` for residual checks. Unit weights or scatter-estimated
 errors do not supply an independent Gaussian quality test; see
 :doc:`parameter_trending`. Coherent residual structure still signals a missing
@@ -43,7 +53,12 @@ component even when the scalar statistic looks acceptable.
 --------------------------------------------------------------
 
 Fit summaries record the objective (``gaussian`` or ``poisson``), total and
-reduced statistic, fitted parameters and uncertainties. Poisson summaries also
+reduced statistic, residual degrees of freedom, fitted parameters and
+uncertainties. A saved degree count of zero records a fit with no residual
+degrees of freedom. A missing count is unknown unless the two recorded
+statistics unambiguously recover it. The reported reduced statistic is
+unavailable for an unknown degree count. Projects retain any historical numeric
+value separately from the reported statistic. Poisson summaries also
 record the minimum fitted expected count needed by the display policy. A
 missing quality verdict carries a ``quality_reason``. Run-batch and grouped
 series use the same summary format; comparisons require the same likelihood

@@ -6,13 +6,69 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from asymmetry.cli.commands.fit import _render
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.fit_log import FitLog
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.result_payload import _deserialize_fit_result, _serialize_fit_result
 from asymmetry.core.fitting.result_summary import (
     fit_result_summary,
     parameters_at_bound,
 )
+from asymmetry.core.workflow.recipe import FitRecipe
+
+
+@pytest.mark.parametrize("dof, chi_squared", [(0, 1600.0), (0, 0.0), (-1, 25.0)])
+def test_nonpositive_degrees_of_freedom_survive_roundtrip(dof, chi_squared):
+    result = FitResult(
+        success=True,
+        objective=Objective.GAUSSIAN,
+        dof=dof,
+        chi_squared=chi_squared,
+        reduced_chi_squared=chi_squared,
+        parameters=ParameterSet([Parameter("c", 1.0)]),
+    )
+    payload = _serialize_fit_result(result)
+    assert payload["dof"] == dof
+    assert payload["reduced_chi_squared"] is None
+
+    recovered = _deserialize_fit_result(payload)
+    assert recovered.dof == dof
+    assert np.isnan(recovered.reduced_chi_squared)
+    summary = fit_result_summary(recovered)
+    assert summary["ndof"] == dof
+    assert summary["chi_squared"] == chi_squared
+    assert summary["reduced_chi_squared"] is None
+    assert summary["parameters"] == {"c": 1.0}
+    assert summary["quality"] is None
+    assert "positive residual degrees of freedom" in summary["quality_reason"]
+
+    report = FitLog().format_record(summary)
+    assert f"chi^2 = {chi_squared:g}" in report
+    assert f"chi^2/nu = unavailable  (nu={dof})" in report
+    assert "target" not in report
+    assert "poor" not in report and "overdone" not in report
+    cli_text = _render(
+        summary | {"free_params": ["c"], "run": 101}, FitRecipe.from_expression("Constant")
+    )
+    assert f"chi2     : {chi_squared:g}" in cli_text
+    assert "chi2_red : unavailable" in cli_text
+    assert "requires positive residual degrees of freedom" in cli_text
+
+
+@pytest.mark.parametrize("reduced, inferred", [(2.0, 10), (20.0, None), (3.0, None)])
+def test_historical_missing_degrees_of_freedom_inference(reduced, inferred):
+    recovered = _deserialize_fit_result(
+        {"success": True, "chi_squared": 20.0, "reduced_chi_squared": reduced}
+    )
+    assert recovered.dof is None
+    summary = fit_result_summary(recovered)
+    assert summary["ndof"] == inferred
+    assert summary["reduced_chi_squared"] == (reduced if inferred is not None else None)
+    if inferred is None:
+        assert summary["historical_reduced_chi_squared"] == reduced
+    assert (summary["quality"] is not None) == (inferred is not None)
 
 
 def test_summary_extracts_values_and_uncertainties():
@@ -20,7 +76,8 @@ def test_summary_extracts_values_and_uncertainties():
     result = FitResult(
         success=True,
         chi_squared=12.0,
-        reduced_chi_squared=1.1,
+        reduced_chi_squared=12.0 / 11,
+        dof=11,
         parameters=params,
         uncertainties={"lambda": 0.01, "A": 0.02},
         objective=Objective.GAUSSIAN,
@@ -30,7 +87,7 @@ def test_summary_extracts_values_and_uncertainties():
 
     assert summary["success"] is True
     assert summary["chi_squared"] == 12.0
-    assert summary["reduced_chi_squared"] == 1.1
+    assert summary["reduced_chi_squared"] == pytest.approx(12.0 / 11)
     assert summary["parameters"] == {"lambda": 0.5, "A": 0.2}
     assert summary["uncertainties"] == {"lambda": 0.01, "A": 0.02}
 

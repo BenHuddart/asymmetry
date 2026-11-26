@@ -30,6 +30,7 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.information_criteria import (
     InformationCriteria,
     SelectionMetric,
@@ -5650,11 +5651,7 @@ def _clone_parameter_set(parameters: ParameterSet) -> ParameterSet:
 
 
 def _needs_fit_backend_fallback(result: FitResult) -> bool:
-    return (
-        not result.success
-        and isinstance(result.message, str)
-        and "iminuit import error" in result.message.lower()
-    )
+    return not result.success and "iminuit import error" in result.message.lower()
 
 
 def _scipy_fit_fallback(
@@ -5738,24 +5735,23 @@ def _scipy_fit_fallback(
             )
         )
 
-    fitted_kwargs = {parameter.name: parameter.value for parameter in fitted_parameters}
-    fitted_model = np.asarray(model_fn(observations.time, **fitted_kwargs), dtype=float)
-    residuals = observations.values - fitted_model
+    fitted = model_fn(observations.time, **{p.name: p.value for p in fitted_parameters})
+    residuals = observations.values - np.asarray(fitted, dtype=float)
     chi_squared = float(np.sum(np.square(residuals / safe_errors)))
-    reduced_chi_squared = chi_squared / max(len(observations.time) - len(free), 1)
+    dof = len(observations.time) - len(free)
     return FitResult(
         computation_revision=computation.COMPUTATION_REVISION,
         objective=Objective.GAUSSIAN,
         success=bool(result.success),
         chi_squared=chi_squared,
-        reduced_chi_squared=reduced_chi_squared,
+        reduced_chi_squared=reduced_statistic(chi_squared, dof),
         parameters=fitted_parameters,
         uncertainties=uncertainties,
         covariance=cov,
         residuals=residuals,
         residual_time=observations.time,
         residual_sigma=observations.sigma,
-        dof=len(observations.time) - len(free),
+        dof=dof,
         observation_report=observations.report,
         message="Fit successful (SciPy fallback)" if result.success else str(result.message),
     )

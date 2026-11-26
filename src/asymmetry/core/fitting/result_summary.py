@@ -14,7 +14,12 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 
 from asymmetry.core.fitting.engine import FitResult
-from asymmetry.core.fitting.fit_quality import assess_fit_quality
+from asymmetry.core.fitting.fit_quality import (
+    assess_fit_quality,
+    infer_historical_dof,
+    quality_inapplicability_reason,
+    recorded_statistic,
+)
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.member_quality import member_quality_flags, parameters_at_bound
 
@@ -47,18 +52,6 @@ FIT_QUALITY_CONFIDENCE = 0.999
 #: genuinely high χ²ᵣ — e.g. 6–22 after bunching — is NOT within this margin and
 #: stays a true "poor": we surface that honestly rather than rescale errors.)
 _CHI2_MARGINAL_ABS_TOL = 0.2
-
-
-def _infer_dof(fit_result: FitResult) -> int:
-    """Use recorded ν, or recover it from the reported statistic and reduced value."""
-    if fit_result.dof > 0:
-        return fit_result.dof
-    statistic, reduced = fit_result.chi_squared, fit_result.reduced_chi_squared
-    return (
-        int(round(statistic / reduced))
-        if math.isfinite(statistic) and math.isfinite(reduced) and statistic > 0 and reduced > 0
-        else 0
-    )
 
 
 # A display threshold for an asymptotic approximation, not a sparse-count calibration.
@@ -99,7 +92,7 @@ def reduced_statistic_summary(summaries: Sequence[Mapping], *, mean: bool = Fals
     return f"{label} {extent}"
 
 
-def _quality_reason(fit_result: FitResult) -> str | None:
+def _observation_quality_reason(fit_result: FitResult) -> str | None:
     """Explain when the selected likelihood has no displayed χ² approximation."""
     if fit_result.objective is Objective.POISSON:
         minimum = fit_result.minimum_expected_count
@@ -110,18 +103,13 @@ def _quality_reason(fit_result: FitResult) -> str | None:
     return None
 
 
-def _quality_summary(
-    fit_result: FitResult, confidence: float = FIT_QUALITY_CONFIDENCE
-) -> dict | None:
+def _quality_summary(fit_result: FitResult, dof: int, confidence: float) -> dict | None:
     """Return an applicable approximate χ² band, or no verdict.
 
     Poisson applicability uses the whole minimized objective's expected-count
     minimum. The confidence level controls the two-sided reference band.
     """
-    if _quality_reason(fit_result) is not None:
-        return None
     chi2 = fit_result.chi_squared
-    dof = _infer_dof(fit_result)
     quality = assess_fit_quality(chi2, dof, confidence)
     if quality.verdict is None or not all(
         math.isfinite(v) for v in (quality.chi2_reduced, quality.band_low, quality.band_high)
@@ -205,6 +193,11 @@ def fit_result_summary(
         str(name): [float(lo), float(hi)]
         for name, (lo, hi) in (fit_result.minos_errors or {}).items()
     }
+    dof = fit_result.dof
+    if dof is None:
+        dof = infer_historical_dof(fit_result.chi_squared, fit_result.reduced_chi_squared)
+    reduced = recorded_statistic(fit_result.reduced_chi_squared)
+    quality_reason = quality_inapplicability_reason(dof, _observation_quality_reason(fit_result))
     return {
         "success": bool(fit_result.success),
         "computation_revision": fit_result.computation_revision,
@@ -222,13 +215,21 @@ def fit_result_summary(
             else float(fit_result.minimum_expected_count)
         ),
         "chi_squared": float(fit_result.chi_squared),
-        "reduced_chi_squared": float(fit_result.reduced_chi_squared),
+        "reduced_chi_squared": reduced if dof is not None and dof > 0 else None,
+        **(
+            {"historical_reduced_chi_squared": reduced}
+            if dof is None and reduced is not None
+            else {}
+        ),
+        "ndof": dof,
         "parameters": parameters,
         "uncertainties": uncertainties,
         "covariance": fit_result_covariance_map(fit_result),
         "uncertainties_asymmetric": asymmetric,
-        "quality": _quality_summary(fit_result, confidence),
-        "quality_reason": _quality_reason(fit_result),
+        "quality": _quality_summary(fit_result, dof, confidence)
+        if dof is not None and quality_reason is None
+        else None,
+        "quality_reason": quality_reason,
         "params_at_bound": parameters_at_bound(fit_result.parameters),
         "quality_flags": sorted(member_quality_flags(fit_result, extra_flags=extra_flags)),
     }

@@ -113,7 +113,8 @@ def prepare_cross_group_fit(
                 width_context=group.width_context.select(mask) if group.width_context else None,
                 x=np.asarray(group.x, dtype=float)[mask],
                 y=np.asarray(group.y, dtype=float)[mask],
-                yerr=np.asarray(group.yerr, dtype=float)[mask],
+                yerr=None if group.yerr is None else np.asarray(group.yerr, dtype=float)[mask],
+                yerr_estimated=None if group.yerr_estimated is None else group.yerr_estimated[mask],
                 group_variable_value=float(group.group_variable_value),
                 xerr=(None if group_xe is None else np.asarray(group_xe, dtype=float)[mask]),
             )

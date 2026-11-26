@@ -39,6 +39,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitEngine, FitResult, _dataset_observations
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.parameters import ParameterSet
 
 
@@ -65,7 +66,7 @@ class GlobalFitResult:
     chi_squared: float = 0.0
     #: Combined degrees of freedom ΣN_d − N_free_global − Σ_d N_free_local_d.
     dof: int = 0
-    #: Combined reduced χ² = :attr:`chi_squared` / max(:attr:`dof`, 1).
+    #: Combined χ² per residual degree of freedom, NaN for nonpositive :attr:`dof`.
     reduced_chi_squared: float = 0.0
     message: str = ""
 
@@ -319,7 +320,7 @@ def fit_global(
         n_free_local_total += sum(1 for name in local_params if not param_set[name].fixed)
 
     dof = total_points - n_free_global - n_free_local_total
-    reduced_chi2 = combined_chi2 / max(dof, 1)
+    reduced_chi2 = reduced_statistic(combined_chi2, dof)
 
     global_uncertainties: dict[str, float] = {}
     for name in global_params:

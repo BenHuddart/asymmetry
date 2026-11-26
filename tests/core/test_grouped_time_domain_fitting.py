@@ -1198,7 +1198,6 @@ def _mixed_global_local_scenario(true_lambda):
                     time=time.copy(),
                     counts=counts,
                     error=np.sqrt(np.clip(counts, 1.0, None)),
-                    metadata={},
                 )
             )
         members[run] = groups
@@ -1239,7 +1238,6 @@ def test_grouped_global_is_large_counts_free_params() -> None:
             Parameter("relative_phase", 0.0),  # 4 nuisances, free
         ]
     )
-    # 2 runs x 2 groups: 1 shared + 1 per-run*2 + 4 nuis*4 = 19 (< 64 default → monolithic).
     assert not _grouped_global_is_large(
         rep,
         truly_global=["frequency", "phase"],
@@ -1248,7 +1246,6 @@ def test_grouped_global_is_large_counts_free_params() -> None:
         n_runs=2,
         n_members=4,
     )
-    # 8 runs x 2 groups: 1 + 1*8 + 4*16 = 73 (>= 64 → block-separable).
     assert _grouped_global_is_large(
         rep,
         truly_global=["frequency", "phase"],
@@ -1265,6 +1262,7 @@ def test_grouped_global_blockwise_matches_monolithic(monkeypatch, cost) -> None:
     true_lambda = {10: 0.3, 11: 1.0, 12: 0.6, 13: 1.4}
     members, frequency, common = _mixed_global_local_scenario(true_lambda)
     common["cost"] = cost
+    common["initial_params"][11][1]["phase"].value = 0.17
     if cost == "poisson":
         for groups in members.values():
             for group in groups:
@@ -1273,7 +1271,6 @@ def test_grouped_global_blockwise_matches_monolithic(monkeypatch, cost) -> None:
 
     monolithic = fit_grouped_series("global", members, _relaxing_cosine_model, **common)
 
-    # Force the block-separable route regardless of size, then re-fit the same problem.
     monkeypatch.setattr(
         "asymmetry.core.fitting.grouped_time_domain._grouped_global_is_large",
         lambda *a, **k: True,
@@ -1289,17 +1286,19 @@ def test_grouped_global_blockwise_matches_monolithic(monkeypatch, cost) -> None:
 
     assert monolithic.success and block.success
     assert "block-separable solver" in block.message
-    shared_block = {p.name: p.value for p in block.shared_parameters}
-    assert shared_block["frequency"] == pytest.approx(frequency, abs=1e-3)
-    for run, lam in true_lambda.items():
-        mono_key = min(k for k, src in monolithic.member_source_run.items() if src == run)
-        block_key = min(k for k, src in block.member_source_run.items() if src == run)
-        mono_lambda = monolithic.member_results[mono_key].parameters["Lambda"].value
-        block_lambda = block.member_results[block_key].parameters["Lambda"].value
-        assert block_lambda == pytest.approx(mono_lambda, abs=2e-3)
-        assert block_lambda == pytest.approx(lam, abs=2e-2)
-        # Each member carries the shared frequency + a (conditional) uncertainty.
-        member = block.member_results[block_key]
+    assert [p.name for p in block.shared_parameters.free_parameters] == ["frequency"]
+    assert block.shared_parameters["frequency"].value == pytest.approx(frequency, abs=1e-3)
+    for key, member in block.member_results.items():
+        run = block.member_source_run[key]
+        mono = monolithic.member_results[key]
+        rate = member.parameters["Lambda"].value
+        assert rate == pytest.approx(mono.parameters["Lambda"].value, abs=2e-3)
+        assert rate == pytest.approx(true_lambda[run], abs=2e-2)
+        assert member.dof == mono.dof == 1595
+        assert member.reduced_chi_squared == pytest.approx(member.chi_squared / 1595)
+        phase = member.parameters["phase"]
+        assert phase.fixed and phase.value == mono.parameters["phase"].value
+        assert "phase" not in member.uncertainties
         assert member.parameters["frequency"].value == pytest.approx(frequency, abs=1e-3)
         assert member.uncertainties.get("frequency") is not None
 

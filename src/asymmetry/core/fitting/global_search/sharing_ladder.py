@@ -636,12 +636,14 @@ def climb_sharing_ladder(
     axis = {int(dataset.run_number): float(x) for x, dataset in ordered}
     runs = tuple(axis)
     failed = [
-        run for run in runs if not (all_local_results[run].success and all_local_results[run].dof)
+        run
+        for run in runs
+        if not (all_local_results[run].success and (all_local_results[run].dof or 0) > 0)
     ]
     if failed:
         raise ValueError(
-            "the ladder starts from converged all-local fits that carry their degrees of "
-            f"freedom; runs {failed} do not"
+            "the ladder needs converged all-local fits with positive residual degrees of "
+            f"freedom; check runs {failed}"
         )
     series = _Series(
         datasets=[dataset for _x, dataset in ordered],

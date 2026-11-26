@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from ..data.archetypes import TC_EUO_K
 from ._base import CaptureContext, Scenario, register
@@ -34,6 +34,7 @@ class TrendModelFitDialogScenario(Scenario):
     # threshold so the split view (controls + preview) is captured intact.
     size = (1180, 720)
     requires_fit = True
+    include_y_errors = True
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         import numpy as np
@@ -48,7 +49,7 @@ class TrendModelFitDialogScenario(Scenario):
         order = np.clip(1.0 - temperature / TC_EUO_K, 0.0, None) ** beta
         rng = np.random.default_rng(31)
         nu = nu_0_mhz * order + rng.normal(0.0, 0.25, temperature.shape)
-        nu_err = np.full_like(temperature, 0.4)
+        nu_err = np.full_like(temperature, 0.4) if self.include_y_errors else None
 
         dialog = ModelFitDialog(
             parameter_name="frequency",
@@ -71,7 +72,7 @@ class TrendModelFitDialogScenario(Scenario):
             lambda: (
                 not dialog._fit_in_progress
                 and dialog._fit.ranges[0].result is not None
-                and getattr(dialog._fit.ranges[0].result, "success", False)
+                and dialog._fit.ranges[0].result.success
             ),
             timeout_ms=20000,
         )
@@ -84,8 +85,13 @@ class TrendModelFitDialogScenario(Scenario):
         _pump_events(250)
 
         result = dialog._fit.ranges[0].result
-        if result is None or not getattr(result, "success", False):
+        if result is None or not result.success:
             raise RuntimeError("EuO order-parameter fit did not converge for the screenshot")
+        if (
+            not self.include_y_errors
+            and "No χ² quality verdict" not in dialog._quality_label.text()
+        ):
+            raise RuntimeError("The unit-weight trend result must show its quality explanation")
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"
@@ -118,6 +124,45 @@ def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:
 
 
 register(TrendModelFitDialogScenario())
+
+
+class TrendModelFitUnitWeightsScenario(TrendModelFitDialogScenario):
+    name = "trend_model_fit_unit_weights"
+    description = "Column trend fit with assumed unit y errors and its quality explanation"
+    include_y_errors = False
+
+
+register(TrendModelFitUnitWeightsScenario())
+
+
+class ZeroResidualDegreesFitScenario(Scenario):
+    name = "fit_zero_residual_degrees"
+    description = "Bounded one-point asymmetry fit with the raw χ² and unavailable reduced χ²"
+    size = (480, 160)
+    requires_fit = True
+
+    def build(self) -> QWidget:
+        from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.core.fitting.engine import FitEngine
+        from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+        from asymmetry.gui.panels.fit.single_tab import SingleFitTab
+
+        model = CompositeModel(["Constant"])
+        parameters = ParameterSet([Parameter(model.param_names[0], 0.5, min=0, max=1)])
+        result = FitEngine().fit_arrays([0.0], [5.0], [0.1], model.function, parameters)
+        if not result.success or result.dof != 0:
+            raise RuntimeError("The single-point screenshot fit must converge with ν = 0")
+        tab = SingleFitTab()
+        tab._show_fit_summary(result, tag="Fit ✓", tone="ok", headline="Run 101")
+        card = tab._results_card
+        if "unavailable" not in card.content_html():
+            raise RuntimeError("The single-point fit card must report the unavailable reduced χ²")
+        card.setParent(None)
+        tab.deleteLater()
+        return card
+
+
+register(ZeroResidualDegreesFitScenario())
 
 
 class TrendGaussianWidthConversionScenario(Scenario):

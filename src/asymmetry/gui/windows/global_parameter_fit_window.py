@@ -55,6 +55,7 @@ from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, widest_button_width
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.formatting import format_fit_statistic
 from asymmetry.gui.utils.gle_export import (
     run_gle_export,
 )
@@ -63,7 +64,6 @@ from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.windows.global_fit_window_helpers import (
     CorrelationMatrixDialog,
-    _label_indicates_no_verdict,
     global_table_csv,
     global_table_latex,
     global_table_tsv,
@@ -681,34 +681,7 @@ class GlobalParameterFitWindow(QMainWindow):
                     ],
                 }
                 if fit_range.result is not None:
-                    range_item["result"] = {
-                        "computation_revision": fit_range.result.computation_revision,
-                        "input_width_context": fit_range.result.input_width_context,
-                        "success": fit_range.result.success,
-                        "chi_squared": fit_range.result.chi_squared,
-                        "reduced_chi_squared": fit_range.result.reduced_chi_squared,
-                        "message": fit_range.result.message,
-                        "error_mode": fit_range.result.error_mode,
-                        "n_points": fit_range.result.n_points,
-                        "parameters": [
-                            {
-                                "name": p.name,
-                                "value": p.value,
-                                "min": p.min,
-                                "max": p.max,
-                                "fixed": p.fixed,
-                            }
-                            for p in fit_range.result.parameters
-                        ],
-                        "uncertainties": dict(fit_range.result.uncertainties),
-                        "params_at_bound": list(fit_range.result.params_at_bound),
-                    }
-                    if fit_range.result.covariance is not None:
-                        cov_names, cov_matrix = fit_range.result.covariance
-                        range_item["result"]["covariance"] = {
-                            "names": list(cov_names),
-                            "matrix": [[float(v) for v in row] for row in cov_matrix],
-                        }
+                    range_item["result"] = fit_range.result.to_dict()
                 ranges_data.append(range_item)
 
             payload[param_name] = {
@@ -765,59 +738,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 result_obj = None
                 result_state = range_state.get("result")
                 if isinstance(result_state, dict):
-                    result_params = ParameterSet()
-                    for p in result_state.get("parameters", []):
-                        if not isinstance(p, dict):
-                            continue
-                        try:
-                            result_params.add(
-                                Parameter(
-                                    name=str(p.get("name", "")),
-                                    value=float(p.get("value", 0.0)),
-                                    min=float(p.get("min", -float("inf"))),
-                                    max=float(p.get("max", float("inf"))),
-                                    fixed=bool(p.get("fixed", False)),
-                                )
-                            )
-                        except Exception:
-                            continue
-                    params_at_bound: tuple[str, ...] = ()
-                    raw_params_at_bound = result_state.get("params_at_bound")
-                    if isinstance(raw_params_at_bound, (list, tuple)):
-                        params_at_bound = tuple(str(name) for name in raw_params_at_bound)
-
-                    covariance: tuple[list[str], list[list[float]]] | None = None
-                    raw_covariance = result_state.get("covariance")
-                    if isinstance(raw_covariance, dict):
-                        raw_names = raw_covariance.get("names")
-                        raw_matrix = raw_covariance.get("matrix")
-                        if isinstance(raw_names, (list, tuple)) and isinstance(
-                            raw_matrix, (list, tuple)
-                        ):
-                            try:
-                                cov_names = [str(name) for name in raw_names]
-                                cov_matrix = [[float(v) for v in row] for row in raw_matrix]
-                                covariance = (cov_names, cov_matrix)
-                            except (TypeError, ValueError):
-                                covariance = None
-
-                    result_obj = ParameterModelFitResult(
-                        success=bool(result_state.get("success", False)),
-                        computation_revision=result_state.get("computation_revision"),
-                        input_width_context=result_state.get("input_width_context"),
-                        chi_squared=float(result_state.get("chi_squared", 0.0)),
-                        reduced_chi_squared=float(result_state.get("reduced_chi_squared", 0.0)),
-                        parameters=result_params,
-                        uncertainties={
-                            str(k): float(v)
-                            for k, v in dict(result_state.get("uncertainties", {})).items()
-                        },
-                        message=str(result_state.get("message", "")),
-                        error_mode=str(result_state.get("error_mode", "column")),
-                        n_points=int(result_state.get("n_points", 0)),
-                        params_at_bound=params_at_bound,
-                        covariance=covariance,
-                    )
+                    result_obj = ParameterModelFitResult.from_dict(result_state)
 
                 ranges.append(
                     ModelFitRange(
@@ -1651,13 +1572,7 @@ class GlobalParameterFitWindow(QMainWindow):
             )
 
     def _refresh_quality_bar(self) -> None:
-        """Update the compact χ²/χ²ᵣ/n/error-mode row above the global table.
-
-        For NONE/SCATTER error modes χ²ᵣ carries no goodness verdict (the σ used
-        is not a measured column error), so the value is shown greyed with a
-        tooltip rather than as a quality figure. A failed fit surfaces its
-        message in red.
-        """
+        """Update the statistics and their applicability above the global table."""
         result = self._result
         if result is None:
             self._quality_label.setText("")
@@ -1668,13 +1583,9 @@ class GlobalParameterFitWindow(QMainWindow):
         if np.isfinite(result.chi_squared):
             parts.append(f"χ²={result.chi_squared:.4g}")
 
-        no_verdict = _label_indicates_no_verdict(result.error_mode)
-        if np.isfinite(result.reduced_chi_squared):
-            chi_r = f"χ²ᵣ={result.reduced_chi_squared:.4g}"
-            if no_verdict:
-                parts.append(f"<span style='color:{tokens.TEXT_DIM}'>{chi_r}</span>")
-            else:
-                parts.append(chi_r)
+        reason = result.quality_reason
+        chi_r = f"χ²ᵣ={format_fit_statistic(result.reduced_chi_squared)}"
+        parts.append(f"<span style='color:{tokens.TEXT_DIM}'>{chi_r}</span>" if reason else chi_r)
         if result.n_points:
             parts.append(f"n={int(result.n_points)}")
         # Error-mode chip.
@@ -1697,13 +1608,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 f"{result.message}</span>"
             )
         self._quality_label.setText(text)
-        if no_verdict:
-            self._quality_label.setToolTip(
-                "χ²ᵣ carries no goodness-of-fit verdict under this error mode: the "
-                "per-point σ is not a measured uncertainty."
-            )
-        else:
-            self._quality_label.setToolTip("")
+        self._quality_label.setToolTip(reason or "")
 
     # ── Global table: copy / export / correlations ──────────────────────────
 
@@ -1816,8 +1721,8 @@ class GlobalParameterFitWindow(QMainWindow):
             return None
         local = result.local_parameters.get(group_id)
         local_count = len(local) if local is not None else 0
-        dof = max(int(n) - local_count, 1)
-        return float(chi) / dof
+        dof = int(n) - local_count
+        return float(chi) / dof if dof > 0 else None
 
     def _group_chip_visible(self) -> bool:
         """Chips are shown only when per-group data exists and σ is meaningful."""
@@ -1826,7 +1731,7 @@ class GlobalParameterFitWindow(QMainWindow):
             return False
         if not result.per_group_chi_squared or not result.per_group_n_points:
             return False
-        return not _label_indicates_no_verdict(result.error_mode)
+        return result.quality_reason is None
 
     def _compute_group_fit_curve(
         self,

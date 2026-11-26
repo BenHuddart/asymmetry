@@ -14,6 +14,23 @@ from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
+@pytest.mark.parametrize("observed, objective", [(5.0, 1600.0), (0.5, 0.0)])
+def test_single_point_fit_has_no_reduced_statistic(observed, objective):
+    result = FitEngine().fit_arrays(
+        [0.0],
+        [observed],
+        [0.1],
+        lambda t, c: np.full_like(t, c),
+        ParameterSet([Parameter("c", 0.5, min=0, max=1)]),
+    )
+
+    assert result.success
+    assert result.parameters["c"].value == pytest.approx(min(observed, 1.0), abs=1e-6)
+    assert result.chi_squared == pytest.approx(objective, abs=1e-3)
+    assert result.dof == 0
+    assert np.isnan(result.reduced_chi_squared)
+
+
 class _FakeMinuit:
     def __init__(self, _cost, *initial_values, name):
         self.values = list(initial_values)

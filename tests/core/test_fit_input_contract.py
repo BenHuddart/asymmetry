@@ -362,6 +362,8 @@ def test_grouped_blockwise_poisson_reports_deviance_at_returned_parameters():
         deviance = 2 * np.sum(expected - counts + counts * (np.log(counts) - np.log(expected)))
         assert member.chi_squared == pytest.approx(deviance, abs=1e-10)
         assert member.residuals == pytest.approx(counts - expected, abs=1e-10)
+        assert member.dof == 0
+        assert np.isnan(member.reduced_chi_squared)
     assert all(
         member.minimum_expected_count == pytest.approx(minimum)
         for member in result.member_results.values()

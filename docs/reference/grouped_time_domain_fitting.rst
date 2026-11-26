@@ -315,7 +315,12 @@ the ``members`` and ``initial_params`` maps keyed by a per-run id, then call
    print(result.success, result.shared_parameters)
 
 The returned ``GroupedSeriesFitResult`` carries the cross-run
-``shared_parameters`` plus per-member ``member_results``.
+``shared_parameters`` plus per-member ``member_results``. Each member's
+diagnostic residual degree count subtracts every free parameter that affects
+that member, including the shared parameters it uses. The full joint objective
+counts each shared free parameter once, even when it affects several members.
+A member with zero residual degrees of freedom retains its raw objective and
+has no reduced statistic. Authored fixed values stay fixed in every solver.
 
 .. note::
 
