@@ -65,10 +65,11 @@ def _result(rchi: float = 0.5) -> FitResult:
     return FitResult(
         objective=Objective.GAUSSIAN,
         success=True,
-        chi_squared=1.0,
+        chi_squared=2.0 * rchi,
         reduced_chi_squared=rchi,
         parameters=ParameterSet([Parameter("A", 0.2), Parameter("Lambda", 0.5)]),
         uncertainties={"A": 0.01, "Lambda": 0.02},
+        dof=2,
     )
 
 
