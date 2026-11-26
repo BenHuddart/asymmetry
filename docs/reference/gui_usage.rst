@@ -903,6 +903,7 @@ currently displayed datasets. This works for:
 
 * Single-dataset views
 * Multi-selection overlays (all selected datasets currently plotted)
+* **Raw counts** and **Individual groups** subplots
 
 What is exported:
 
@@ -913,16 +914,23 @@ What is exported:
 Output files and naming inside ``<name>.gleplot``:
 
 * ``<name>.gle`` for the exported script
-* ``<label>.dat`` for each exported dataset (time, asymmetry, error)
-* ``<label>.fit`` for each exported fit curve when present (time, fitted asymmetry)
-* file stems are derived from the selected **Label** field value and sanitised
-   for safe filenames, lowercased, and given distinct suffixes for duplicate stems
+* ``<label>.dat`` for each exported dataset (coordinates, observations, errors)
+* ``<label>.fit`` for each exported fit curve when present
+* file stems use the detector group name for grouped counts and the selected
+  **Label** field value for other plots. The stems are sanitised, lowercased,
+  and given distinct suffixes for duplicates.
 
 The ``.dat`` sidecar includes structured comment headers describing the run
 and source settings captured for export, including run number,
 title/comment timestamps when available, histogram/binning information,
 forward/backward grouping, alpha, good-bin limits, bunching, and deadtime
 correction state.
+
+For **Raw counts** and **Individual groups**, **Export plotted data (text)**
+and **Export Plot(s) to GLE** write one data table per detector group. The
+headers identify the source run, detector group, effective display bunching
+factor, time in microseconds, and the quantity (**Counts** or
+**Lifetime-corrected counts**). GLE uses the same quantity on each y-axis.
 
 The grouping block states ``Context: source settings at export capture``.
 Its editable source settings are separate from the result's immutable

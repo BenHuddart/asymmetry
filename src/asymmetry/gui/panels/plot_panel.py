@@ -2749,6 +2749,8 @@ class PlotPanel(QWidget):
             return None
         if self._is_frequency_plot_panel() or self._is_frequency_domain_dataset(dataset):
             return dataset
+        if dataset.metadata.get("grouped_time_domain"):
+            return dataset  # Group preparation has already packed the detector counts.
         bunch_factor = self._bunch_factor.value()
         if bunch_factor <= 1:
             return dataset
@@ -7628,16 +7630,6 @@ class PlotPanel(QWidget):
         self._export_gle_btn.setEnabled(has_data)
         self._gle_format_combo.setEnabled(has_data)
 
-    @staticmethod
-    def _safe_file_token(value: str) -> str:
-        """Sanitize a string for use in a filename (shared foundation)."""
-        return safe_file_token(value, fallback="dataset")
-
-    @staticmethod
-    def _dedup_export_token(base: str, used: set[str] | None) -> str:
-        """Return a token unique within *used* (shared foundation)."""
-        return dedup_export_token(base, used)
-
     def get_current_plot_export_data(
         self, datasets: list[MuonDataset] | None = None
     ) -> list[dict] | None:
@@ -7740,6 +7732,15 @@ class PlotPanel(QWidget):
                 "run_metadata": run_metadata,
                 "histogram_info": histogram_info,
             }
+            if analysis.metadata.get("grouped_time_domain"):
+                group = analysis.metadata
+                payload.update(
+                    run_number=group["source_run_number"],
+                    label=group["group_name"],
+                    group_id=group["group_id"],
+                    y_label=group["y_label"],
+                    display_bunch_factor=group["grouped_time_domain_bunch_factor"],
+                )
             if self._connect_points and self._time_view is not None:
                 payload["connector_low_mask"] = self._low_count_mask_for_dataset(
                     analysis, source_dataset=dataset
@@ -7864,18 +7865,6 @@ class PlotPanel(QWidget):
             x_range=x_range,
             axis_key=axis_key,
             bake_waterfall_offset=bake_waterfall_offset,
-        )
-
-    def _write_frequency_data_body(
-        self,
-        f,
-        payload: dict,
-        *,
-        display_label: object,
-        x_range: tuple[float, float] | None,
-    ) -> None:
-        return self._plot_export_context()._write_frequency_data_body(
-            f, payload, display_label=display_label, x_range=x_range
         )
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
@@ -8016,7 +8005,7 @@ class PlotPanel(QWidget):
         if total_series == 1:
             axis_key, payloads = axis_groups[0]
             payload = payloads[0]
-            token = self._safe_file_token(str(payload.get("label", "dataset")))
+            token = safe_file_token(str(payload.get("label", "dataset")))
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export plotted data (text)",
@@ -8047,7 +8036,7 @@ class PlotPanel(QWidget):
                 for i, payload in enumerate(payloads):
                     label = str(payload.get("label", f"dataset_{i}"))
                     name = f"{label}_{axis_suffix}" if axis_key in {"P_x", "P_y", "P_z"} else label
-                    token = self._dedup_export_token(self._safe_file_token(name), used_tokens)
+                    token = dedup_export_token(safe_file_token(name), used_tokens)
                     written.extend(
                         self._write_payload_text_files(
                             export_dir / token,
@@ -8142,18 +8131,17 @@ class PlotPanel(QWidget):
         from asymmetry.gui.utils.plot_gle import PlotGleSnapshot
 
         axes = []
+        grouped_limits = {}
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
             for key in self._projection_subplot_order(self._vector_subplot_datasets):
                 axes.append(
                     (key, self.get_current_plot_export_data(self._vector_subplot_datasets[key]), "")
                 )
-        elif len(self._grouped_time_subplot_datasets) > 1:
-            for dataset in self._grouped_time_subplot_datasets:
-                data = self.get_current_plot_export_data([dataset])
-                label = dataset.run_label
-                if data:
-                    data[0]["label"] = label
-                axes.append((None, data, label))
+        elif self._grouped_time_subplot_datasets:
+            for dataset, payload in zip(self._grouped_time_subplot_datasets, payloads, strict=True):
+                key = self._grouped_subplot_axis_key(dataset)
+                axes.append((key, [payload], dataset.run_label))
+                grouped_limits[key] = tuple(self._subplot_axes_by_polarization[key].get_ylim())
         else:
             axes.append((None, payloads, ""))
         context = self._plot_export_context()
@@ -8166,7 +8154,8 @@ class PlotPanel(QWidget):
             context.x_label,
             tuple(deepcopy(axes)),
             (float(self._x_min.value()), float(self._x_max.value())),
-            {
+            grouped_limits
+            or {
                 key: self._limits.held(self._y_axis_id(key))
                 or (float(self._y_min.value()), float(self._y_max.value()))
                 for key, _, _ in axes

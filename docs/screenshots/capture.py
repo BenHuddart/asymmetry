@@ -326,6 +326,7 @@ def _import_scenarios() -> None:
         global_fit_wizard_setup,
         global_fit_wizard_transitions,
         grouped_fit_ybco_knight,
+        grouped_count_bunching,
         grouping_incomplete_preview,
         grouping_membership,
         grouping_window_counts_view,

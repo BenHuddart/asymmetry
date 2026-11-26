@@ -194,6 +194,7 @@ class PlotExportData:
         binning = binning_spec(grouping)
         bunching_factor = binning.factor
         deadtime_correction = bool(grouping.get("deadtime_correction", False))
+        is_grouped = "group_id" in payload
 
         with open(dat_path, "w", encoding="utf-8") as f:
             f.write("! START OF RUN INFORMATION\n")
@@ -201,6 +202,8 @@ class PlotExportData:
                 f, payload, x_range=x_range, bake_waterfall_offset=bake_waterfall_offset
             )
             f.write(f"!  Run number  : {payload.get('run_number', '')}\n")
+            if is_grouped:
+                f.write(f"!  Detector group: {payload['label']} (ID {payload['group_id']})\n")
             if title:
                 f.write(f"!  Title       : {title}\n")
             if temperature:
@@ -276,7 +279,7 @@ class PlotExportData:
                 )
             elif binning_mode == "constant_error":
                 f.write(f"!  Constant-error binning, initial bin = {binning.bin0_us} us\n")
-            elif bunching_factor is not None:
+            elif bunching_factor is not None and (grouping or not is_grouped):
                 f.write(f"!  Fixed binning, bunching factor = {bunching_factor}\n")
             f.write(f"!  Deadtime correction {'on' if deadtime_correction else 'off'}\n")
             f.write("! END OF GROUPING INFORMATION\n")
@@ -288,7 +291,11 @@ class PlotExportData:
                 )
                 return
 
-            if axis_key in {"P_x", "P_y", "P_z"}:
+            column_name = "asymmetry"
+            if is_grouped:
+                datarow_label = ylabel = payload["y_label"]
+                column_name = ylabel.lower().replace(" ", "_")
+            elif axis_key in {"P_x", "P_y", "P_z"}:
                 suffix = axis_key.split("_", 1)[1]
                 datarow_label = f"a_0 P_{suffix}(t)"
                 ylabel = f"a_0 P_{suffix}(t) (%)"
@@ -303,10 +310,12 @@ class PlotExportData:
             f.write(f"!  Title: {display_label}\n")
             f.write("!  Xlabel: Time in microseconds\n")
             f.write(f"!  Ylabel: {ylabel}\n")
+            if is_grouped:
+                f.write(f"!  Display bunching factor: {payload['display_bunch_factor']}\n")
             if waterfall_offset:
                 f.write(f"!  waterfall offset: {waterfall_offset:.10g}\n")
             f.write("! END OF DATA SET INFORMATION\n")
-            f.write("! time  asymmetry  error\n")
+            f.write(f"! time  {column_name}  error\n")
             err_arr = y_err if y_err is not None else np.zeros_like(y_data)
             lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
@@ -394,7 +403,12 @@ class PlotExportData:
                 f.write(f"! {x_column}  {y_fit_column}\n")
             else:
                 x_fit = t_fit
-                f.write("! time  asymmetry_fit\n")
+                quantity = (
+                    payload["y_label"].lower().replace(" ", "_")
+                    if "group_id" in payload
+                    else "asymmetry"
+                )
+                f.write(f"! time  {quantity}_fit\n")
             lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val in zip(x_fit, y_fit):
                 self.check_cancelled()

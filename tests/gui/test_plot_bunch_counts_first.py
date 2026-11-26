@@ -6,16 +6,19 @@ without raw histograms and rotated projections use independent curve means.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
 from tests.counts import aligned_counts
+from tests.gui.gle_helpers import wait_for_gle
 
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # type: ignore
-from PySide6.QtWidgets import QApplication  # type: ignore
+from PySide6.QtWidgets import QApplication, QFileDialog  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
@@ -25,6 +28,8 @@ from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, me
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.utils import gle_export
+from asymmetry.gui.utils.errorbar_dots import errorbar_dots_line_class
 
 BIN_WIDTH_US = 0.016
 
@@ -300,15 +305,123 @@ def test_bunching_larger_than_the_record_returns_no_points(mainwindow):
     assert mainwindow._plot_panel.get_analysis_dataset(dataset).time.size == 0
 
 
-def test_toolbar_merge_also_sums_raw_group_counts(mainwindow):
-    dataset = _histogram_run_dataset(np.array([90.0, 1, 30, 2]), np.array([10.0, 9, 20, 8]))
+@pytest.mark.parametrize("view", ["raw_counts", "groups"])
+@pytest.mark.parametrize("base_bunch,bunch", [(1, 2), (1, 1), (3, 2)])
+def test_grouped_toolbar_bunch_plot_and_exports(
+    mainwindow, tmp_path, monkeypatch, view, base_bunch, bunch
+):
+    forward = np.arange(1.0, 257.0)
+    backward = 2 * forward + 11
+    names = {1: "Upstream", 2: "Downstream"}
+    dataset = _histogram_run_dataset(
+        forward, backward, base_bunch=base_bunch, grouping_extra={"group_names": names}
+    )
     mainwindow._data_browser.add_dataset(dataset)
-    mainwindow._on_dataset_selected(dataset.run_number)
+    mainwindow._data_browser.select_runs({dataset.run_number})
+    if view == "groups":
+        mainwindow._domain_buttons_by_token["groups"].click()
+    else:
+        mainwindow._raw_counts_action.trigger()
+    assert mainwindow._plot_workspace.active_view() == view
+    if bunch == 1:
+        mainwindow._view_bunch_spin.setValue(2)
+    mainwindow._view_bunch_spin.setValue(bunch)
+    assert dataset.run.grouping["bunching_factor"] == base_bunch
+
+    factor = base_bunch * bunch
+    usable = forward.size // factor * factor
+    time = (np.arange(0, usable, factor) + (factor - 1) / 2) * BIN_WIDTH_US
+    quantity = "Lifetime-corrected counts" if view == "groups" else "Counts"
+    scale = np.exp(time / MUON_LIFETIME_US) if view == "groups" else 1
+    expected = {}
+    panel = mainwindow._plot_panel
+    for axis, name, counts in zip(
+        panel._figure.axes, names.values(), [forward, backward], strict=True
+    ):
+        summed = counts[:usable].reshape(-1, factor).sum(axis=1)
+        values, errors = summed * scale, np.sqrt(summed) * scale
+        expected[name] = np.column_stack((time, values, errors))
+        assert axis.get_title(loc="left") == name
+        assert axis.get_ylabel() == quantity
+        (markers,) = [line for line in axis.lines if isinstance(line, errorbar_dots_line_class())]
+        np.testing.assert_allclose(markers.get_xdata(), time, atol=1e-15)
+        np.testing.assert_allclose(markers.get_ydata(), values)
+        (path,) = markers.bar_line.get_paths()
+        bounds = path.vertices.reshape(-1, 3, 2)[:, :2]
+        np.testing.assert_allclose(bounds[..., 0], np.repeat(time[:, None], 2, axis=1), atol=1e-15)
+        np.testing.assert_allclose(
+            bounds[..., 1], np.column_stack((values - errors, values + errors))
+        )
+    assert panel._figure.axes[-1].get_xlabel() == "Time (µs)"
+
+    text_dir = tmp_path / "text"
+    text_dir.mkdir()
+    monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data", False))
+    monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *_args: None)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args: str(text_dir))
+    panel.export_plotted_data_as_text()
+
+    gle_dir = tmp_path / "counts.gleplot"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args: (str(gle_dir), ""))
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
+    panel.export_plots_to_gle()
+    wait_for_gle(panel)
+    script = (gle_dir / "counts.gle").read_text()
+    assert script.count(f'ytitle "{quantity}"') == 2
+    for name in names.values():
+        assert f'title "{name}"' in script
+    gle_y_limits = [
+        (float(low), float(high))
+        for low, high in re.findall(r"^\s*yaxis min (\S+) max (\S+)", script, re.MULTILINE)
+    ]
+    np.testing.assert_allclose(
+        gle_y_limits, [ax.get_ylim() for ax in panel._figure.axes], rtol=5e-6
+    )
+
+    for directory in (text_dir, gle_dir):
+        files = sorted(directory.glob("*.dat"))
+        assert len(files) == len(names)
+        for path in files:
+            header = path.read_text()
+            group_id, name = next(
+                (gid, name) for gid, name in names.items() if name.lower() in path.stem.lower()
+            )
+            assert f"!  Run number  : {dataset.run_number}\n" in header
+            assert f"!  Detector group: {name} (ID {group_id})\n" in header
+            assert f"!  Datarow: (Time) ({quantity}) (Error)\n" in header
+            assert f"!  Ylabel: {quantity}\n" in header
+            assert f"!  Display bunching factor: {factor}\n" in header
+            assert "asymmetry" not in header.lower()
+            np.testing.assert_allclose(np.loadtxt(path, comments="!"), expected[name])
+    assert dataset.run.grouping["bunching_factor"] == base_bunch
+
+
+def test_fb_toolbar_bunch_plot_and_text_export(mainwindow, tmp_path, monkeypatch):
+    forward = np.arange(1.0, 257.0)
+    backward = 2 * forward + 11
+    dataset = _histogram_run_dataset(forward, backward)
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._data_browser.select_runs({dataset.run_number})
     mainwindow._view_bunch_spin.setValue(2)
-    groups = mainwindow._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
-    by_group = {item.metadata["group_id"]: item for item in groups}
-    np.testing.assert_array_equal(by_group[1].asymmetry, [91.0, 32.0])
-    np.testing.assert_array_equal(by_group[2].asymmetry, [19.0, 28.0])
+    time = (np.arange(0, forward.size, 2) + 0.5) * BIN_WIDTH_US
+    _, _, values, errors = _packed_reference(forward, backward, 2)
+
+    panel = mainwindow._plot_panel
+    (markers,) = [line for line in panel._ax.lines if isinstance(line, errorbar_dots_line_class())]
+    np.testing.assert_allclose(markers.get_xdata(), time)
+    np.testing.assert_allclose(markers.get_ydata(), values)
+
+    target = tmp_path / "asymmetry.dat"
+    monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data", False))
+    monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *_args: None)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args: (str(target), ""))
+    panel.export_plotted_data_as_text()
+    header = target.read_text()
+    assert "!  Datarow: (Time) (FB asymmetry) (Error)\n" in header
+    assert "!  Ylabel: % Asymmetry\n" in header
+    np.testing.assert_allclose(
+        np.loadtxt(target, comments="!"), np.column_stack((time, values, errors))
+    )
     assert dataset.run.grouping["bunching_factor"] == 1
 
 
