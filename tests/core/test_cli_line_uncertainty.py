@@ -1,41 +1,75 @@
-"""Line readouts retain central separations without inventing unavailable precision."""
+"""Frequency spacing uses the covariance of the two fitted coordinates."""
 
-import argparse
-from types import SimpleNamespace
+import json
 
+import numpy as np
 import pytest
 
-from asymmetry.cli.commands import fit
+from asymmetry.cli import main
 from asymmetry.core import computation
+from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.spectral_lines import fitted_frequency_spacings
+from asymmetry.core.workflow.recipe import FitRecipe
+from asymmetry.core.workflow.reduction import ReductionSettings
+from asymmetry.core.workflow.workdir import ReducedEntry, WorkDir
 
 
-@pytest.mark.parametrize("close", [False, True])
-@pytest.mark.parametrize(
-    ("sigmas", "suffix"),
-    [
-        ((0.0, 0.0), ""),
-        ((None, None), ""),
-        ((None, 0.4), ""),
-        ((float("nan"), 0.4), ""),
-        ((0.3, 0.4), " ± 0.5"),
-        ((0.0, 0.4), " ± 0.4"),
-    ],
-)
-def test_line_readout_preserves_central_spacing_with_available_precision(
-    close, sigmas, suffix, monkeypatch, capsys, tmp_path
-):
-    high = 1.01 if close else 2.5
+@pytest.fixture
+def line_fit_command(tmp_path):
+    """Exercise the real command on a reduced record with correlated frequencies."""
+    time = np.linspace(0.0, 10.0, 501)
+    rng = np.random.default_rng(316)
+    signal = 9 * np.cos(2 * np.pi * 1.012 * time) + 4 * np.cos(2 * np.pi * time)
+    dataset = MuonDataset(
+        time,
+        signal + rng.normal(0, 0.3, size=time.size),
+        np.full(time.size, 0.3),
+        computation_revision=computation.COMPUTATION_REVISION,
+    )
+    workdir = WorkDir(tmp_path / "work")
+    workdir.write_reduced(
+        dataset,
+        ReducedEntry(
+            run_number=1,
+            digest="synthetic",
+            source_file="SIM00000001.nxs",
+            n_points=dataset.n_points,
+            settings=ReductionSettings(),
+            run={"run_number": 1},
+            alpha=1.0,
+            deadtime_mode="none",
+            forward_group=1,
+            backward_group=2,
+            members=[],
+        ),
+    )
+    recipe = FitRecipe.from_expression("Oscillatory + Oscillatory").with_overrides(
+        fix={"A_1": 9.0, "phase_1": 0.0, "A_2": 4.0, "phase_2": 0.0},
+        initial={"frequency_1": 1.011, "frequency_2": 1.001},
+    )
+    workdir.write_recipe("lines", recipe)
+    return workdir, [
+        "fit",
+        str(tmp_path),
+        "--run",
+        "1",
+        "--recipe",
+        "lines",
+        "--workdir",
+        str(workdir.root),
+    ]
+
+
+def _mock_fit(monkeypatch, parameters, sigmas, **metadata):
     result = {
         "run": 1,
         "success": True,
         "computation_revision": computation.COMPUTATION_REVISION,
-        "parameters": {"frequency_1": 1.0, "frequency_3": high},
-        "uncertainties": {
-            name: sigma
-            for name, sigma in zip(("frequency_1", "frequency_3"), sigmas)
-            if sigma is not None
-        },
-        "free_params": [],
+        "parameters": parameters,
+        "uncertainties": dict(zip(parameters, sigmas)),
+        "free_params": [
+            name for name in parameters if name not in metadata.get("fixed_parameters", ())
+        ],
         "chi_squared": 1.0,
         "reduced_chi_squared": 1.0,
         "ndof": 1,
@@ -44,36 +78,139 @@ def test_line_readout_preserves_central_spacing_with_available_precision(
         "quality_flags": [],
         "params_at_bound": [],
         "background_held": False,
+        **metadata,
     }
-    recipe = SimpleNamespace(
-        expression="two lines", to_dict=lambda: {}, time_window=lambda _: (0.0, 1.0)
-    )
-    workdir = SimpleNamespace(write_fit=lambda *args: None)
-    monkeypatch.setattr(fit, "workdir_for", lambda *args: (workdir, None))
-    monkeypatch.setattr(fit, "reduced_datasets", lambda *args: {1: None})
-    monkeypatch.setattr(fit, "load_recipe", lambda *args: recipe)
-    monkeypatch.setattr(fit, "recipe_with_overrides", lambda *args, **kwargs: recipe)
-    monkeypatch.setattr(fit, "window_note", lambda *args: None)
     monkeypatch.setattr("asymmetry.core.workflow.series.fit_one", lambda *args: result)
-    fit.run(
-        argparse.Namespace(
-            plot=False,
-            json=False,
-            folder=str(tmp_path),
-            workdir=None,
-            instrument=None,
-            run=1,
-            recipe="lines",
-            fix={},
-            free=[],
-            tmin=None,
-            tmax=None,
-        )
+
+
+@pytest.mark.parametrize("close", [False, True])
+@pytest.mark.parametrize(
+    ("correlation", "expected"),
+    [(0.9, 0.00447214), (0.0, 0.01414214), (-0.9, 0.01949359)],
+)
+def test_both_line_readouts_use_fitted_cross_covariance(
+    close, correlation, expected, line_fit_command, monkeypatch, capsys
+):
+    high = 1.01 if close else 2.5
+    variances = 0.01**2
+    covariance = {
+        "frequency_1": {"frequency_1": variances, "frequency_3": correlation * variances},
+        "frequency_3": {"frequency_1": correlation * variances, "frequency_3": variances},
+    }
+    parameters = {"frequency_1": 1.0, "frequency_3": high}
+    (spacing,) = fitted_frequency_spacings(parameters)
+    assert spacing.standard_uncertainty_mhz(dict.fromkeys(parameters, 0.01), covariance) == (
+        pytest.approx(expected, abs=5e-9)
     )
+    _mock_fit(monkeypatch, parameters, (0.01, 0.01), covariance=covariance)
+    main(line_fit_command[1])
+    assert f"{high - 1:.4g} ± {expected:.2g} MHz" in capsys.readouterr().out
+
+
+def test_named_signed_frequencies_survive_sorting(line_fit_command, monkeypatch, capsys):
+    parameters = {"frequency_1": 3.1, "frequency_3": 1.01, "frequency_5": -1.0}
+    matrix = np.array([[9e-4, -5e-5, 2e-5], [-5e-5, 4e-4, 1.5e-4], [2e-5, 1.5e-4, 1e-4]])
+    covariance = {a: dict(zip(parameters, row)) for a, row in zip(parameters, matrix)}
+    _mock_fit(monkeypatch, parameters, np.sqrt(matrix.diagonal()), covariance=covariance)
+    main(line_fit_command[1])
     output = capsys.readouterr().out
-    assert f"{high - 1:.4g}{suffix} MHz" in output
+    close_jacobian = np.array([0, 1, 1])
+    upper_jacobian = np.array([1, -1, 0])
+    close = np.sqrt(close_jacobian @ matrix @ close_jacobian)
+    upper = np.sqrt(upper_jacobian @ matrix @ upper_jacobian)
+    assert f"0.01 ± {close:.2g} MHz apart." in output
+    assert (
+        f"Line spacings: 1.01 − 1 = 0.01 ± {close:.2g} MHz; 3.1 − 1.01 = 2.09 ± {upper:.2g} MHz"
+        in output
+    )
+
+
+@pytest.mark.parametrize("close", [False, True])
+@pytest.mark.parametrize(
+    ("sigmas", "metadata", "expected"),
+    [
+        ((0.0, 0.4), {}, " MHz (uncertainty unavailable)"),
+        ((0.3, 0.4), {"covariance": None}, " MHz (uncertainty unavailable)"),
+        (
+            (None, 0.4),
+            {"covariance": {"frequency_1": {"frequency_3": 0.0}}},
+            " MHz (uncertainty unavailable)",
+        ),
+        (
+            (float("nan"), 0.4),
+            {"covariance": {"frequency_1": {"frequency_3": 0.0}}},
+            " MHz (uncertainty unavailable)",
+        ),
+        (
+            (None, None),
+            {
+                "covariance": {
+                    "frequency_1": {"frequency_1": 0.09},
+                    "frequency_3": {"frequency_1": 0.0, "frequency_3": 0.16},
+                }
+            },
+            " ± 0.5 MHz",
+        ),
+        (
+            (0.3, 0.4),
+            {
+                "covariance": {
+                    "frequency_1": {"frequency_1": 0.09},
+                    "frequency_3": {"frequency_3": 0.16},
+                }
+            },
+            " MHz (uncertainty unavailable)",
+        ),
+        ((None, 0.4), {"fixed_parameters": ["frequency_1"]}, " ± 0.4 MHz"),
+        ((None, None), {"fixed_parameters": ["frequency_1", "frequency_3"]}, " MHz"),
+    ],
+)
+def test_missing_covariance_and_explicitly_fixed_coordinates(
+    close, sigmas, metadata, expected, line_fit_command, monkeypatch, capsys
+):
+    high = 1.01 if close else 2.5
+    _mock_fit(monkeypatch, {"frequency_1": 1.0, "frequency_3": high}, sigmas, **metadata)
+    main(line_fit_command[1])
+    output = capsys.readouterr().out
+    text = f"{high - 1:.4g}{expected}"
+    if close:
+        assert f"{text.replace('MHz', 'MHz apart')}." in output
+    else:
+        assert f"Line spacings: 2.5 − 1 = {text}\n" in output
     assert "± nan" not in output
-    if not suffix:
-        assert "±" not in output
-    if not close:
-        assert "Line spacings: 2.5 − 1 = 1.5" in output
+
+
+def test_frequency_at_zero_requires_an_explicit_fixed_state(line_fit_command, monkeypatch, capsys):
+    parameters = {"frequency_1": 0.0, "frequency_3": 1.0}
+    sigmas = (0.01, 0.01)
+    covariance = {"frequency_1": {"frequency_3": 0.0}}
+    _mock_fit(monkeypatch, parameters, sigmas, covariance=covariance)
+    main(line_fit_command[1])
+    assert "Line spacings: 1 − 0 = 1 MHz (uncertainty unavailable)" in capsys.readouterr().out
+
+    _mock_fit(
+        monkeypatch,
+        parameters,
+        (0.0, 0.01),
+        covariance=covariance,
+        fixed_parameters=["frequency_1"],
+    )
+    main(line_fit_command[1])
+    assert "Line spacings: 1 − 0 = 1 ± 0.01 MHz" in capsys.readouterr().out
+
+
+def test_fit_result_covariance_reaches_cli_summary(line_fit_command, capsys):
+    workdir, command = line_fit_command
+    main(command)
+    output = capsys.readouterr().out
+    summary = json.loads((workdir.fits_dir / "lines-1.json").read_text())["fit"]
+    high, low = "frequency_1", "frequency_2"
+    spacing = summary["parameters"][high] - summary["parameters"][low]
+    assert spacing == pytest.approx(0.012, abs=0.002)
+    covariance = summary["covariance"]
+    matrix = np.array([[covariance[a][b] for b in (high, low)] for a in (high, low)])
+    jacobian = np.array([1, -1])
+    expected = np.sqrt(jacobian @ matrix @ jacobian)
+    assert abs(matrix[0, 1]) > 0.4 * np.sqrt(matrix[0, 0] * matrix[1, 1])
+    assert summary["fixed_parameters"] == ["A_1", "phase_1", "A_2", "phase_2"]
+    assert f"{spacing:.4g} ± {expected:.2g} MHz apart." in output

@@ -1016,10 +1016,29 @@ as fitted) and ``plots/fit-<run>.png`` with ``--plot``; it is the quick way to
 check a hand-edited recipe converges on one run before spending a whole series
 on it (see `Hand-editing a recipe`_).
 
-Recorded fixed parameters have zero uncertainty when no error was supplied;
-unavailable fitted errors remain unknown. ``Line spacings:`` and close-pair
-readouts retain central separations when a contributing error is unavailable.
-They omit the uncertainty term in that case and for entirely fixed frequencies.
+The close-pair note and ``Line spacings:`` sort fitted frequencies by magnitude
+and report :math:`\Delta=|f_{\mathrm{high}}|-|f_{\mathrm{low}}|` in MHz. The
+standard uncertainty uses the `NIST first-order law of propagation of
+uncertainty <https://physics.nist.gov/cuu/Uncertainty/combination.html>`_.
+For two varying frequencies with nonzero, distinct magnitudes,
+
+.. math::
+
+   u^2(\Delta) = u^2(f_{\mathrm{high}}) + u^2(f_{\mathrm{low}})
+   - 2\,\mathrm{sgn}(f_{\mathrm{high}})\,\mathrm{sgn}(f_{\mathrm{low}})
+   \,\mathrm{Cov}(f_{\mathrm{high}},f_{\mathrm{low}}).
+
+The variances come from the fit covariance diagonal or the recorded marginal
+errors. An explicitly fixed frequency with zero uncertainty contributes zero
+variance and covariance. When the required covariance or variance is
+unavailable, the readout keeps the spacing and labels it
+``(uncertainty unavailable)``. The same label applies to a varying frequency
+at zero or coincident magnitudes with a varying input, where the first-order
+derivative is undefined. A zero propagated uncertainty has no error bar.
+
+The stored fit and ``--json`` output carry the named entries in ``covariance``
+and the names of exact fixed coordinates in ``fixed_parameters``. The spacing
+remains available when either field is absent.
 
 A relaxation too slow to tell from a constant over the fitted window lets its
 amplitude and ``A_bg`` run off in opposite signs: χ² barely changes as the

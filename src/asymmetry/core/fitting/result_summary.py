@@ -31,6 +31,7 @@ from asymmetry.core.fitting.spectral_weights import (
 __all__ = [
     "fit_result_summary",
     "fit_result_covariance_map",
+    "fit_result_fixed_parameters",
     "fit_result_uncertainties",
     "fit_statistic_labels",
     "parameters_at_bound",
@@ -197,6 +198,15 @@ def fit_result_covariance_map(fit_result: FitResult) -> dict[str, dict[str, floa
     return out or None
 
 
+def fit_result_fixed_parameters(fit_result: FitResult) -> list[str]:
+    """Identify fixed inputs without overriding a separately recorded uncertainty."""
+    return [
+        parameter.name
+        for parameter in fit_result.parameters
+        if parameter.fixed and fit_result.uncertainties.get(parameter.name, 0.0) == 0.0
+    ]
+
+
 def fit_result_uncertainties(fit_result: FitResult) -> dict[str, float]:
     """Preserve captured errors; fill missing free errors as unknown, fixed as exact."""
     return {str(name): float(value) for name, value in fit_result.uncertainties.items()} | {
@@ -256,6 +266,7 @@ def fit_result_summary(
         ),
         "ndof": dof,
         "parameters": parameters,
+        "fixed_parameters": fit_result_fixed_parameters(fit_result),
         "uncertainties": uncertainties,
         "covariance": fit_result_covariance_map(fit_result),
         "uncertainties_asymmetric": asymmetric,
