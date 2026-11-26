@@ -2397,7 +2397,7 @@ class MainWindow(QMainWindow):
             specs.append(spec)
         return specs
 
-    def _refresh_vector_axis_selector(self) -> None:
+    def _refresh_vector_axis_selector(self, *, redraw: bool = True) -> None:
         """Show/hide and synchronize the projection chip bar."""
         if not hasattr(self._plot_panel, "set_projections"):
             return
@@ -2472,10 +2472,8 @@ class MainWindow(QMainWindow):
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
         if axis == current_axis:
             return
-        # A remembered selection changed the view after the selection flows
-        # rendered; redraw only when the plot no longer matches it.
         updated = self._synchronize_targets_to_axis(targets, axis)
-        if axis == "ALL" or updated or len(targets) > 1:
+        if redraw and (axis == "ALL" or updated or len(targets) > 1):
             self._render_current_selection_plot()
 
     def _refresh_time_view_selector(self) -> None:
@@ -9776,15 +9774,14 @@ class MainWindow(QMainWindow):
 
     def _on_plot_time_view_changed(self, _mode: str) -> None:
         """Re-render the main time-domain plot after an explicit view switch."""
-        if (
-            hasattr(self._plot_workspace, "active_domain")
-            and self._plot_workspace.active_domain() == "time"
-        ):
-            if hasattr(self._plot_workspace, "set_active_view"):
-                self._plot_workspace.set_active_view(_mode)
+        if self._plot_workspace.active_domain() == "time":
+            self._plot_workspace.set_active_view(_mode)
         self._sync_fit_dock_mode()
+        if _mode == "fb_asymmetry":
+            self._refresh_vector_axis_selector(redraw=False)
         self._render_current_selection_plot()
-        self._refresh_vector_axis_selector()
+        if _mode != "fb_asymmetry":
+            self._refresh_vector_axis_selector()
         self._update_fit_block_state()
         if self._current_dataset is not None:
             if _mode == "groups":

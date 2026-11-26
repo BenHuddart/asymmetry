@@ -45,7 +45,7 @@ from asymmetry.core.fourier.units import (
     shift_axis_label,
 )
 from asymmetry.core.fourier.units import convert as convert_field_unit
-from asymmetry.core.project.view_migration import is_asymmetry_axis_id
+from asymmetry.core.project.view_migration import diagnostic_axis_id, is_asymmetry_axis_id
 from asymmetry.core.transform.corrections import CorrectionOutcomes, CorrectionStatus
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
@@ -2029,13 +2029,13 @@ class PlotPanel(QWidget):
         self._set_navigation_mode("zoom" if checked else "none")
 
     def _y_axis_id(self, axis_key: str | None) -> str:
-        """The policy axis id for the y axis of the pane keyed *axis_key*.
-
-        The single view keys on the current polarization axis, so per-projection
-        y memory is simply "a different id"; stacked views key on each subplot's
-        own key. ``None`` (no projection at all) is the plain ``"y"`` axis.
-        """
-        return "y" if axis_key is None else f"y:{axis_key}"
+        """Use separate policy keys for F–B projections and diagnostic panes."""
+        if axis_key is None:
+            return "y"
+        axis_id = f"y:{axis_key}"
+        if self._grouped_time_subplot_datasets or self._maxent_reconstruction is not None:
+            return diagnostic_axis_id(axis_id)
+        return axis_id
 
     def _displayed_y_axes(self) -> dict[str | None, object]:
         """Axis key → Matplotlib axes for every y axis currently on screen."""
@@ -2524,8 +2524,8 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(previous)
         self._current_time_view_mode = normalized
-        if normalized == "fb_asymmetry" and not is_asymmetry_axis_id(
-            self._y_axis_id(self._current_polarization_axis)
+        if normalized == "fb_asymmetry" and (
+            self._grouped_time_subplot_datasets or self._maxent_reconstruction is not None
         ):
             self._current_polarization_axis = None
         self._refresh_log_counts_visibility()
@@ -4133,16 +4133,7 @@ class PlotPanel(QWidget):
         return "Asymmetry (%)"
 
     def _ensure_single_axis_mode(self) -> None:
-        """Recreate a single-axis figure when leaving any multi-axis mode.
-
-        The single-dataset path always renders onto exactly one ``self._ax``, so
-        the postcondition is one tracked axis. Rebuild whenever that does not
-        already hold: tracked vector subplots, *any* lingering extra axes (e.g. a
-        dual-pane left behind when a projection was cleared without replotting),
-        or a stale ``self._ax`` detached from the figure. Relying solely on
-        ``_subplot_axes_by_polarization`` was fragile — clearing the vector state
-        without clearing that dict still left the panes on the canvas.
-        """
+        """Leave one tracked axis, including after projection subplots are cleared."""
         already_single = (
             not self._subplot_axes_by_polarization
             and len(self._figure.axes) == 1
@@ -4446,8 +4437,8 @@ class PlotPanel(QWidget):
             self._refresh_fit_target_decoration()
 
     def _prepare_subplot_limits(self, keys: list[str]) -> None:
-        y_ids = [self._y_axis_id(key) for key in keys]
-        if self._displayed_y_axes().keys().isdisjoint(keys):
+        y_ids = [diagnostic_axis_id(f"y:{key}") for key in keys]
+        if set(y_ids).isdisjoint(map(self._y_axis_id, self._displayed_y_axes())):
             axes = self._limits.state()["axes"]
             remembered = [axes[axis_id]["auto"] for axis_id in y_ids if axis_id in axes]
             if remembered:
@@ -4562,13 +4553,17 @@ class PlotPanel(QWidget):
         if not self._has_mpl or not datasets:
             return
         self._clear_waterfall_render_record()
-        # Remember the layout so a zoom/pan (or any other re-render) rebuilds
-        # the reconstruction instead of falling through to a plain dataset plot.
+        axis_keys = (
+            [f"recon:combined:{datasets[0].run_number}"]
+            if combined
+            else [f"recon:{ds.run_number}:{index}" for index, ds in enumerate(datasets)]
+        )
+        self._prepare_subplot_limits(axis_keys)
         self._maxent_reconstruction = (list(datasets), bool(combined))
         if combined:
-            self._plot_maxent_reconstruction_combined(datasets)
+            self._plot_maxent_reconstruction_combined(datasets, axis_keys[0])
         else:
-            self._plot_maxent_reconstruction_per_group(datasets)
+            self._plot_maxent_reconstruction_per_group(datasets, axis_keys)
 
     @staticmethod
     def _maxent_curves(
@@ -4598,10 +4593,10 @@ class PlotPanel(QWidget):
         pad = (hi - lo) * 0.05 if hi > lo else max(abs(hi) * 0.05, 1e-6)
         return lo - pad, hi + pad
 
-    def _plot_maxent_reconstruction_per_group(self, datasets: list[MuonDataset]) -> None:
+    def _plot_maxent_reconstruction_per_group(
+        self, datasets: list[MuonDataset], axis_keys: list[str]
+    ) -> None:
         """Stack each group's data and model above its residuals."""
-        axis_keys = [f"recon:{dataset.run_number}:{idx}" for idx, dataset in enumerate(datasets)]
-        self._prepare_subplot_limits(axis_keys)
         self._set_canvas_minimum_height_for_axes(len(datasets))
         self._set_alpha_label(None)
         self._figure.clf()
@@ -4682,10 +4677,10 @@ class PlotPanel(QWidget):
             self._last_plot_time = last_time
         self._apply_limits(resolved)
 
-    def _plot_maxent_reconstruction_combined(self, datasets: list[MuonDataset]) -> None:
+    def _plot_maxent_reconstruction_combined(
+        self, datasets: list[MuonDataset], axis_key: str
+    ) -> None:
         """Draw every group's data and model above a shared residuals axis."""
-        axis_key = f"recon:combined:{datasets[0].run_number}"
-        self._prepare_subplot_limits([axis_key])
         self._set_canvas_minimum_height_for_axes(2)
         self._set_alpha_label(None)
         self._figure.clf()

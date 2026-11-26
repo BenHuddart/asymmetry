@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.nexus_writer import write_nexus_v1
 from asymmetry.core.project import save_project
+from asymmetry.core.project.view_migration import diagnostic_axis_id
 from asymmetry.core.simulate import BUILTIN_TEMPLATES, simulate_run
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.shell import ProjectShell
@@ -431,7 +432,7 @@ def test_fb_recall_preserves_reconstruction_y_limits(mainwindow, source, monkeyp
     limits = (-7.0, 9.0)
     _hold(panel, "y", limits)
     assert panel._ax.get_ylim() == pytest.approx(limits)
-    assert panel.axis_limit_state()["axes"][f"y:{axis_key}"]["auto"] is False
+    assert panel.axis_limit_state()["axes"][diagnostic_axis_id(f"y:{axis_key}")]["auto"] is False
 
     draw = panel.plot_maxent_reconstruction
     calls = []
@@ -445,8 +446,41 @@ def test_fb_recall_preserves_reconstruction_y_limits(mainwindow, source, monkeyp
     first.click()
     assert panel._auto_y_btn.isChecked()
     assert calls == []
-    assert panel.axis_limit_state()["axes"][f"y:{axis_key}"]["auto"] is False
+    assert panel.axis_limit_state()["axes"][diagnostic_axis_id(f"y:{axis_key}")]["auto"] is False
     reconstruction.click()
     assert calls == ["reconstruction"]
     assert not panel._auto_y_btn.isChecked()
     assert panel._ax.get_ylim() == pytest.approx(limits)
+
+
+@pytest.mark.parametrize("label", ["group:North", "-1001"])
+def test_saved_views_hold_exact_custom_projection_labels(mainwindow, label):
+    from tests.gui.test_mainwindow_additional import _make_vector_dataset
+
+    dataset = _make_vector_dataset(1)
+    dataset.run.grouping["projections"][-1]["label"] = label
+    dataset.run.grouping["vector_axis"] = label
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._data_browser.select_runs({1})
+    panel = mainwindow._plot_panel
+    assert panel.get_current_polarization_axis() == label
+    _hold(panel, "y", (-4.0, 13.0))
+    first, second, _ = mainwindow._view_mode_buttons
+    second.click()
+    _hold(panel, "y", (-7.0, 17.0))
+    first.click()
+    assert panel._ax.get_ylim() == pytest.approx((-4.0, 13.0))
+
+    mainwindow._domain_buttons_by_token["groups"].click()
+    count_axis = next(iter(panel._subplot_axes_by_polarization))
+    if label == "-1001":
+        assert count_axis == label
+    panel.set_fit_target_projection(count_axis)
+    _hold(panel, "y", (70.0, 120.0))
+    mainwindow._domain_buttons_by_token["fb_asymmetry"].click()
+    assert panel.get_current_polarization_axis() == label
+    assert panel._ax.get_ylim() == pytest.approx((-4.0, 13.0))
+    second.click()
+    assert panel._ax.get_ylim() == pytest.approx((-7.0, 17.0))
+    mainwindow._domain_buttons_by_token["groups"].click()
+    assert panel._ax.get_ylim() == pytest.approx((70.0, 120.0))

@@ -2,28 +2,37 @@
 
 from math import isfinite
 
+from asymmetry.core.instrument import CANONICAL_VECTOR_AXES
+
 VIEW_MODE_COUNT = 3
 
 
 def is_asymmetry_axis_id(axis_id: object) -> bool:
-    """Identify shared time X or an asymmetry Y pane by its plot-policy key."""
-    if not isinstance(axis_id, str):
-        return False
-    if axis_id in {"x", "y"}:
-        return True
-    label = axis_id.removeprefix("y:")
-    synthetic_run = label.removesuffix(":raw").removeprefix("-")
-    return (
-        bool(label)
-        and label != axis_id
-        and not label.startswith(("recon:", "group:"))
-        and not (label.startswith("-") and synthetic_run.isdecimal())
+    """Identify shared time X or a Y key in the F–B axis namespace."""
+    return isinstance(axis_id, str) and (
+        axis_id in {"x", "y"} or (axis_id.startswith("y:") and len(axis_id) > 2)
     )
 
 
-def _declared_projection_axis_ids(data: dict, plot: dict) -> set[str]:
-    labels = set(plot.get("projection_selection") or ())
-    labels.add(plot.get("polarization_axis"))
+def diagnostic_axis_id(axis_id: str) -> str:
+    """Keep count and reconstruction Y keys distinct from arbitrary F–B labels."""
+    return f"diagnostic:{axis_id}"
+
+
+def _legacy_diagnostic_key(axis_id: str) -> bool:
+    """Recognise an old synthetic count id or reconstruction key."""
+    label = axis_id.removeprefix("y:")
+    synthetic_run = label.removesuffix(":raw").removeprefix("-")
+    return label.startswith(("recon:", "group:")) or (
+        label.startswith("-") and synthetic_run.isdecimal()
+    )
+
+
+def _declared_projection_axis_ids(data: dict, plot: dict, *, is_fb: bool) -> set[str]:
+    labels = set(CANONICAL_VECTOR_AXES)
+    labels.update(plot.get("projection_selection") or ())
+    if is_fb:
+        labels.add(plot.get("polarization_axis"))
     for selection in (plot.get("projection_memory") or {}).values():
         labels.update(selection)
     groupings = list(data.get("grouping_profiles") or ())
@@ -100,17 +109,28 @@ def migrate_saved_views(data: dict) -> None:
         plot.get("time_view_mode", "fb_asymmetry") == "fb_asymmetry"
         and workspace.get("active_view") != "reconstruction"
     )
-    declared = _declared_projection_axis_ids(data, plot)
+    declared = _declared_projection_axis_ids(data, plot, is_fb=is_fb)
+    current_diagnostic_y = None if is_fb else f"y:{plot.get('polarization_axis')}"
     fb_axes = {}
+    renamed_axes = {}
     for key, entry in panel_axes.items():
         if not is_asymmetry_axis_id(key):
             continue
-        quantity = entry["quantity"]
-        valid_y = str(quantity).startswith("fb_asymmetry|") or (
-            quantity is None and (is_fb or key in declared)
+        quantity = str(entry["quantity"])
+        legacy_diagnostic = key.startswith("y:") and _legacy_diagnostic_key(key)
+        projection = not legacy_diagnostic or (key in declared and key != current_diagnostic_y)
+        fb_y = projection and (
+            quantity.startswith("fb_asymmetry|")
+            or (entry["quantity"] is None and (is_fb or key in declared))
         )
-        if key == "x" or (valid_y and (key != "y" or is_fb)):
+        if key == "x" or (fb_y and (key != "y" or is_fb)):
             fb_axes[key] = entry
+        elif legacy_diagnostic:
+            renamed_axes[key] = diagnostic_axis_id(key)
+    if renamed_axes:
+        plot["axis_limits"]["axes"] = {
+            renamed_axes.get(key, key): entry for key, entry in panel_axes.items()
+        }
     slots: list[dict | None] = [None] * VIEW_MODE_COUNT
     for index in range(VIEW_MODE_COUNT):
         if index >= len(modes) and index != active:
