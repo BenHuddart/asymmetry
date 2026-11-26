@@ -1603,7 +1603,7 @@ MaxEnt rewards a tightly scoped problem. To resolve a clean precession line:
   (or with fewer spectrum points) rather than pushing it further.
 
 Finding shallow-muonium satellites in CdS
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Do the side peaks survive changes in analysis settings, and do they persist
 when the donor ionises? Compare the 100 G transverse-field EMU runs 20721
@@ -1637,34 +1637,53 @@ and minus half their inner-pair spacing. [8]_
    number of included observations. Both runs show excess residual scatter,
    and the cold run has larger, structured deviations at early times.
 
-#. Use the standard EMU forward/backward groups for both runs. For the FFT,
-   choose **Grouped average** and **(Power)^1/2**. Select **Lorentzian**,
-   set **Filter start (µs)** to 0 and **Filter τ (µs)** to 6, leave
-   **Subtract average signal** enabled, and set **Zero-pad factor** to 4.
-   Apply the same settings to both runs with **Compute FFT**. The figure
-   passes an explicit 0–31 µs window to ``compute_average_group_spectrum``.
-   In the GUI, the **Fit range** in **Single** sets the requested FFT time
-   window, which Asymmetry can shorten when late counts are sparse.
-#. Open **MaxEnt** for the same runs. Untick **Auto window from field** and
-   enter 0.9 and 1.9 in **Min frequency (MHz)** and **Max frequency (MHz)**.
-   Use **Binning** 4 and **Spectrum points** 128. Leave **Start (µs)** and
-   **End (µs)** blank to use the available good bins. Use **Apply to selection**
-   to copy the configuration, then run four sets of **+5** cycles per run.
-#. Tick **Show time-domain reconstruction** and inspect both groups. Look for
-   oscillations or excursions that persist over several bins before
-   interpreting the side peaks. In this comparison the early cold residuals
-   are structured and the warm run also has larger excursions near the
-   ends of the record. See `Reading the reconstruction overlay`_ for how to
-   view the residuals by detector group.
-#. Repeat both runs with the same changes. Set **Apodisation** to **None**
-   and shorten the FFT time window. In the grouped FFT API, windows of
-   0–12 µs and 0–18 µs retain the cold side peaks, with weaker side structure
-   in the warm FFT. An unweighted 31 µs FFT gives the noisy late bins more
-   influence and obscures the pattern. For MaxEnt, **Restart** and try
-   0.85–1.95 MHz with 128 points, then 0.9–1.9 MHz with 96 points.
-   The cold spectrum retains three prominent regions, while individual
-   maxima and subsidiary lobes vary. The warm spectrum retains one dominant
-   peak. Changing these MaxEnt settings leaves the residual structure.
+The figure uses the Python API with the standard EMU forward/backward
+groups for both runs.
+
+* The grouped FFT uses ``compute_average_group_spectrum`` with
+  ``display="(Power)^1/2"``, ``subtract_average_signal=True``, a Lorentzian
+  filter starting at 0 µs with τ = 6 µs, and a zero-pad factor of 4. The API
+  explicitly selects 0–31 µs. With no filter, the cold spectrum retains side
+  structure over 0–12 µs and 0–18 µs, although the maxima shift. At 31 µs
+  without a filter, the noisy late bins have more influence and obscure the
+  pattern. The warm FFT has weaker side structure on the shorter windows.
+* The MaxEnt reconstruction uses 0.9–1.9 MHz, 128 spectrum points, the
+  good-bin time range, and time binning by a factor of 4. Each run starts
+  fresh with a single ``maxent(..., cycles=20)`` call. The engine can stop
+  before 20 cycles. Repeating the calculation with 0.85–1.95 MHz at 128
+  points or 0.9–1.9 MHz at 96 points retains three prominent regions in the
+  cold spectrum and one dominant peak in the warm spectrum. The individual
+  maxima and subsidiary lobes vary, and the residual structure persists.
+
+Use the desktop controls to inspect these runs interactively.
+
+#. For both runs, select **Grouped average**, **(Power)^1/2**, and
+   **Lorentzian**. Set **Filter start (µs)** to 0, **Filter τ (µs)** to 6,
+   and **Zero-pad factor** to 4, and enable **Subtract average signal**.
+   Click **Compute FFT**. The **Fit range** in **Single** sets the requested
+   window, and the sparse-count cutoff caps it at about 10.23 µs for both
+   runs with the school files' default timing. Use the grouped FFT API to
+   reproduce the longer windows in the figure and the sensitivity check.
+#. Open **MaxEnt** with the cold run active and both runs selected. Untick
+   **Auto window from field** and enter 0.9 and 1.9 in **Min frequency (MHz)**
+   and **Max frequency (MHz)**. Use **Binning** 4 and **Spectrum points**
+   128. Include both detector groups. Leave **Start (µs)** and **End (µs)**
+   blank to use the available good bins. Leave **De-weight from (µs)** and
+   **De-weight to (µs)** blank to retain the default count-error weights
+   throughout the time window.
+#. Start each run from a fresh state. Click **+25** once for the cold run.
+   With both runs still selected and the cold run active, click **Apply to
+   selection** to copy the computed run's settings. Activate the warm run and
+   click **+25** once. Read the final cycle count and stop reason in each
+   status message. Another cycle-button press can resume a state after an
+   early stop and give a different spectrum.
+#. Tick **Show time-domain reconstruction** and inspect both groups. The
+   residual strip shows :math:`(d-m)/\sigma`. Look for oscillations or
+   excursions over several bins. In the figure, the early cold residuals
+   are structured, and the warm run also has larger excursions near the
+   ends of the record. See `Reading the reconstruction overlay`_ for how
+   to view the residuals by group. Use **Restart** after changing the
+   window or grid for a sensitivity check.
 
 On the 31 µs FFT the unpadded grid spacing is about 32 kHz, and a zero-pad
 factor of 4 samples it about every 8 kHz. The MaxEnt grid in the figure is

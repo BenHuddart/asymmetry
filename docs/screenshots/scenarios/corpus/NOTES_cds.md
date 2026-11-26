@@ -39,13 +39,13 @@ sampled grid. The cold side peaks persist in the unweighted FFT with shorter
 time windows, with weaker side structure in the warm FFT.
 
 The MaxEnt comparison uses both groups, the good-bin time range, ×4 time
-binning, a frequency window of 0.9–1.9 MHz, 128 points, and 20 cycles. The cold
-spectrum's broad three-peak pattern persists when the window widens to
-0.85–1.95 MHz or the grid is reduced to 96 points. The warm reconstruction has
-one dominant peak. The displayed χ²/N is computed from the same weighted
-residuals as **Show time-domain reconstruction**. The larger cold-run
-excursions are concentrated early in the record, and changing the window or
-grid leaves structured residuals.
+binning, a frequency window of 0.9–1.9 MHz, and 128 points. A single fresh API
+call per run requests up to 20 cycles. The cold spectrum's broad three-peak
+pattern persists when the window widens to 0.85–1.95 MHz or the grid is
+reduced to 96 points. The warm reconstruction has one dominant peak. The
+displayed χ²/N is computed from the same weighted residuals as **Show
+time-domain reconstruction**. The larger cold-run excursions are concentrated
+early in the record, and changing the window or grid leaves structured residuals.
 
 The neutral-fraction trend uses Hann-weighted FFT band maxima as a proxy for
 relative satellite strength. An ionisation energy would require calibrated
