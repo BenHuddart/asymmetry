@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Show how to run a GUI model expression in Python and interpret the units
+  and asymmetry returned by standalone fit models.
+
 - Label the Re₆Zr transverse-field trend as the fitted Gaussian linewidth
   and explain how its fit and width convention compare with the published analysis.
 
