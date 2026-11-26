@@ -3,7 +3,6 @@
 from asymmetry.core.instruments.geometry import Circular, Occurrence, View, Wedge
 from asymmetry.core.instruments.layout import TRANSVERSE_PROJECTION_TINTS, AsymmetryProjection
 from asymmetry.core.instruments.schema import (
-    AbsentGroupingDefault,
     Acquisition,
     Channel,
     ChannelGroup,
@@ -14,6 +13,7 @@ from asymmetry.core.instruments.schema import (
     EvidenceStatus,
     Identity,
     InstrumentProfile,
+    OrientationGroupingDefault,
     PhysicalBank,
     PhysicalElement,
     Preset,
@@ -124,7 +124,7 @@ PROFILE = InstrumentProfile(
     ),
     quirks=(),
     defaults=Defaults(
-        absent_file_grouping=AbsentGroupingDefault("nexus64", "Longitudinal", "Longitudinal")
+        absent_file_grouping=OrientationGroupingDefault("nexus64", "Longitudinal", "Longitudinal")
     ),
     sources=Sources(
         references=(

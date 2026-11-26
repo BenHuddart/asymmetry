@@ -236,8 +236,8 @@ class ConfigurationPresets:
 
 
 @dataclass(frozen=True)
-class AbsentGroupingDefault:
-    """An absent table may use this preset only for the declared detector orientation."""
+class OrientationGroupingDefault:
+    """A file condition may use this preset for the declared detector orientation."""
 
     acquisition: str
     detector_orientation: str
@@ -250,14 +250,15 @@ class AbsentGroupingDefault:
             or self.detector_orientation not in {"Longitudinal", "Transverse"}
         ):
             raise ValueError(
-                "Absent-file grouping requires a map, canonical orientation and preset"
+                "File grouping default requires a map, canonical orientation and preset"
             )
 
 
 @dataclass(frozen=True)
 class Defaults:
     apply_default_preset_on_load: bool = False
-    absent_file_grouping: AbsentGroupingDefault | None = None
+    absent_file_grouping: OrientationGroupingDefault | None = None
+    legacy_v1_zero_grouping: OrientationGroupingDefault | None = None
 
 
 @dataclass(frozen=True)
@@ -414,15 +415,15 @@ class InstrumentProfile:
         )
         if preset_configs != configurations:
             raise ValueError("Preset configurations must match acquisition configurations")
-        absent = self.defaults.absent_file_grouping
-        if absent is not None and not any(
-            entry.acquisition == absent.acquisition
-            and any(preset.name == absent.preset for preset in entry.presets)
-            for entry in self.presets
-        ):
-            raise ValueError(
-                "Absent-file grouping default requires an existing acquisition and preset"
-            )
+        for rule in (self.defaults.absent_file_grouping, self.defaults.legacy_v1_zero_grouping):
+            if rule is not None and not any(
+                entry.acquisition == rule.acquisition
+                and any(preset.name == rule.preset for preset in entry.presets)
+                for entry in self.presets
+            ):
+                raise ValueError(
+                    "File grouping default requires an existing acquisition and preset"
+                )
         for config in self.detectors.acquisitions:
             keys = _unique(tuple(channel.key for channel in config.channels), "channel keys")
             _unique(tuple(channel.ordinal for channel in config.channels), "channel ordinals")

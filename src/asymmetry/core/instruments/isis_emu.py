@@ -13,6 +13,7 @@ from asymmetry.core.instruments.schema import (
     EvidenceStatus,
     Identity,
     InstrumentProfile,
+    OrientationGroupingDefault,
     PhysicalBank,
     PhysicalElement,
     Preset,
@@ -64,7 +65,7 @@ FORWARD_CHANNELS = tuple(f"c{number}" for number in range(1, 49))
 BACKWARD_CHANNELS = tuple(f"c{number}" for number in range(49, 97))
 
 PROFILE = InstrumentProfile(
-    identity=Identity("isis.emu", "ISIS", "EMU", "1", "EMU", "EMU"),
+    identity=Identity("isis.emu", "ISIS", "EMU", "2", "EMU", "EMU"),
     source=Source(
         "pulsed",
         "First source bunch split toward EMU and HiFi; no pulse-response default is inferred.",
@@ -196,13 +197,22 @@ PROFILE = InstrumentProfile(
     quirks=(
         "Temperature-unit suspicion is conditional on header/log evidence; values are not automatically converted.",
     ),
-    defaults=Defaults(apply_default_preset_on_load=False),
+    defaults=Defaults(
+        legacy_v1_zero_grouping=OrientationGroupingDefault(
+            "nexus96", "Longitudinal", "Longitudinal"
+        )
+    ),
     sources=Sources(
         references=(
             Reference(
                 "emu-guide",
                 "EMU User Guide, updated March 2021",
                 "https://www.isis.stfc.ac.uk/wp-content/uploads/2025/04/EMU_Manual.pdf",
+            ),
+            Reference(
+                "rigi-school-data",
+                "2026 ISIS/PSI Muon School at Rigi Kaltbad data",
+                "https://shadow.nd.rl.ac.uk/wimda/",
             ),
             Reference(
                 "musr-guide",
@@ -282,10 +292,12 @@ PROFILE = InstrumentProfile(
             ),
             Evidence(
                 "defaults",
-                EvidenceStatus.AUTHORED,
-                "Preserve current preset order, defaults and no automatic preset application on load.",
+                EvidenceStatus.SOURCE,
+                "The verified single-period legacy declaration and acquisition support the Longitudinal grouping.",
+                "rigi-school-data",
+                "EMU runs 18854, 19489, 20721 and 51315",
             ),
         ),
     ),
-    review=Review("1", "Profile definition and schematic."),
+    review=Review("2", "Profile definition, schematic, and legacy NeXus grouping."),
 )

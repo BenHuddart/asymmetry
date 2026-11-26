@@ -13,6 +13,7 @@ from asymmetry.core.instruments.schema import (
     EvidenceStatus,
     Identity,
     InstrumentProfile,
+    OrientationGroupingDefault,
     PhysicalBank,
     PhysicalElement,
     Preset,
@@ -27,7 +28,7 @@ FORWARD = tuple(f"c{number}" for number in range(1, 33))
 BACKWARD = tuple(f"c{number}" for number in range(33, 65))
 
 PROFILE = InstrumentProfile(
-    identity=Identity("isis.hifi", "ISIS", "HiFi", "1", "HiFi", "HiFi"),
+    identity=Identity("isis.hifi", "ISIS", "HiFi", "2", "HiFi", "HiFi"),
     source=Source(
         "pulsed",
         "First source bunch split toward HiFi and EMU; no pulse-response default is inferred.",
@@ -122,13 +123,22 @@ PROFILE = InstrumentProfile(
         ),
     ),
     quirks=(),
-    defaults=Defaults(),
+    defaults=Defaults(
+        legacy_v1_zero_grouping=OrientationGroupingDefault(
+            "nexus64", "Longitudinal", "Longitudinal"
+        )
+    ),
     sources=Sources(
         references=(
             Reference(
                 "hifi-guide",
                 "HiFi User Manual",
                 "https://isis.stfc.ac.uk/wp-content/uploads/2025/04/HiFi-User-Manual.pdf",
+            ),
+            Reference(
+                "rigi-school-data",
+                "2026 ISIS/PSI Muon School at Rigi Kaltbad data",
+                "https://shadow.nd.rl.ac.uk/wimda/",
             ),
             Reference(
                 "musr-guide",
@@ -210,10 +220,12 @@ PROFILE = InstrumentProfile(
             ),
             Evidence(
                 "defaults",
-                EvidenceStatus.AUTHORED,
-                "Longitudinal is the first preset; no automatic preset or source-based analysis default is applied on load.",
+                EvidenceStatus.SOURCE,
+                "The verified single-period legacy declaration and acquisition support the Longitudinal grouping.",
+                "rigi-school-data",
+                "HiFi run 9023",
             ),
         ),
     ),
-    review=Review("1", "Profile definition and schematic."),
+    review=Review("2", "Profile definition, schematic, and legacy NeXus grouping."),
 )

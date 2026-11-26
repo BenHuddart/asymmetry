@@ -118,6 +118,24 @@ HDF4 support disabled; conversion would test a different input, rather than
 establish original-file support in that build. Unsupported or untested layouts
 here do not imply that another program cannot analyse them.
 
+.. _comparison-legacy-zero-grouping:
+
+Legacy EMU and HiFi grouping
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Mantid 6.16.1 `LoadMuonNexus v1
+<https://docs.mantidproject.org/v6.16.1/algorithms/LoadMuonNexus-v1.html>`__ supplied
+its instrument defaults for five files from the `public Rigi School archive
+<https://shadow.nd.rl.ac.uk/wimda/>`__. Its `GroupDetectors v2
+<https://docs.mantidproject.org/v6.16.1/algorithms/GroupDetectors-v2.html>`__
+bank sums and Asymmetry's :ref:`legacy-v1-zero-grouping` return exactly equal
+forward and backward counts by acquisition-bin index on EMU 18854, 19489,
+20721, and 51315, and HiFi 9023. Detector memberships and all raw detector
+counts also agree. The comparison uses uncorrected counts before rebinning or
+asymmetry reduction. In HiFi 9023, Mantid retains one shorter interval near the
+end of the stored ``corrected_time`` axis, and Asymmetry uses the nominal
+resolution.
+
 .. _comparison-evidence:
 
 Evidence behind numerical comparisons

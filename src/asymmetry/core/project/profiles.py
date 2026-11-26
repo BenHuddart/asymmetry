@@ -636,10 +636,7 @@ def grouping_request_payload(grouping: dict) -> dict:
 
 
 def profile_grouping_request(profile: GroupingProfile, run: Run) -> dict[str, Any]:
-    """Detach authored profile policies and acquired facts without resolving corrections.
-
-    Captured effective values remain available when a reference or reduction is unavailable.
-    """
+    """Detach profile policies and acquired facts while retaining captured effective values."""
     declaration = profile.to_dict()
     declaration.pop("name")
     declaration.pop("fingerprint")
@@ -1230,6 +1227,7 @@ _PER_RUN_FACT_KEYS = (
     "detector_last_good_bins",
     *ACQUIRED_LABEL_KEYS,
     "root_histo_numbers",
+    "nexus_grouping_declaration",
     "good_frames",
     "reference_exposure",
     "period_reference_exposure",

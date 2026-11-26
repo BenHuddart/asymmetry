@@ -65,7 +65,7 @@ def test_fresh_instrument_only_load_uses_profile_source_before_missing_timing_se
     dataset = load(path)
     assert dataset.n_points > 0
     assert dataset.run.source_assessment == SourceAssessment(
-        True, "known", "profile", "isis.emu", "1"
+        True, "known", "profile", "isis.emu", "2"
     )
     assert dataset.run.grouping["t0_bin"] == 7
     np.testing.assert_allclose(dataset.asymmetry, 50.0, rtol=0, atol=1e-12)

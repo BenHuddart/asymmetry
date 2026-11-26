@@ -331,3 +331,200 @@ def test_invalid_period_table_is_never_broadcast_truncated_or_defaulted(tmp_path
         detector.create_dataset("grouping", data=table)
     with pytest.raises(ValueError, match="Grouping"):
         load(path)
+
+
+def legacy_zero_grouping_file(path, *, table=(0,) * 64, **options):
+    raw = grouping_file(path, "v1", table=table, **options)
+    with h5py.File(path, "r+") as handle:
+        entry = handle["run"]
+        entry.create_dataset("switching_states", data=1)
+        entry.create_dataset("instrument/beam/period_type", data=[1])
+        entry.create_dataset("instrument/detector/number", data=len(raw))
+    return raw
+
+
+@pytest.mark.parametrize(
+    "instrument,count,profile_key,acquisition",
+    [("EMU", 96, "isis.emu", "nexus96"), ("HiFi", 64, "isis.hifi", "nexus64")],
+)
+def test_v1_zero_declaration_applies_verified_longitudinal_preset(
+    tmp_path, instrument, count, profile_key, acquisition
+):
+    path = tmp_path / "legacy.nxs"
+    raw = legacy_zero_grouping_file(path, instrument=instrument, count=count, table=[0] * count)
+    with h5py.File(path, "r+") as handle:
+        handle["run/sample/magnetic_field_state"][()] = b"TF"
+    with pytest.warns(
+        UserWarning,
+        match=f"The file’s detector-grouping table contains only zeros. Applied the standard {instrument} forward/backward grouping.",
+    ):
+        dataset = load(path)
+    assert dataset.metadata["field_direction"] == "Transverse"
+    assert dataset.run.grouping["groups"] == {
+        1: list(range(1, count // 2 + 1)),
+        2: list(range(count // 2 + 1, count + 1)),
+    }
+    assert (dataset.run.grouping["forward_group"], dataset.run.grouping["backward_group"]) == (1, 2)
+    assert dataset.run.grouping["grouping_preset"] == "Longitudinal"
+    declaration = dataset.run.grouping["nexus_grouping_declaration"]
+    assert declaration == {"values": [0] * count, "available": 1}
+    provenance = dataset.run.grouping["grouping_provenance"]
+    assert provenance == {
+        "origin": "profile",
+        "profile_key": profile_key,
+        "profile_revision": "2",
+        "acquisition": acquisition,
+        "fallback_reason": "nexus_v1_all_zero",
+    }
+    assert dataset.effective_recipe.to_dict()["grouping_provenance"] == provenance
+    np.testing.assert_array_equal([h.counts for h in dataset.run.histograms], raw)
+
+
+@pytest.mark.parametrize(
+    "instrument,orientation,count,filename",
+    [
+        ("Unknown", "L", 96, "emu00000042.nxs"),
+        ("DEMUX", "L", 96, "run.nxs"),
+        ("EMU", "L", 96, "musr00000042.nxs"),
+        ("", "L", 96, "run.nxs"),
+        ("EMU", None, 96, "run.nxs"),
+        ("EMU", "T", 96, "run.nxs"),
+        ("EMU", "LF", 96, "run.nxs"),
+        ("EMU", "L", 64, "run.nxs"),
+    ],
+)
+def test_v1_zero_declaration_requires_recognised_compatible_layout(
+    tmp_path, instrument, orientation, count, filename
+):
+    path = tmp_path / filename
+    legacy_zero_grouping_file(
+        path, instrument=instrument, orientation=orientation, count=count, table=[0] * count
+    )
+    with pytest.raises(ValueError, match="Grouping declaration contains no positive"):
+        load(path)
+
+
+@pytest.mark.parametrize(
+    "version,table,error",
+    [
+        ("v1", [0] * 63, "Grouping declaration must contain one integer"),
+        ("v1", [0.0] * 64, "Grouping declaration must contain one integer"),
+        ("v1", [False] * 64, "Grouping declaration must contain one integer"),
+        ("v1", [[0] * 64], "Grouping declaration contains no positive"),
+        ("v1", [-1] + [0] * 63, "Grouping declaration contains no positive"),
+        ("v2", [0] * 64, "Grouping declaration contains no positive"),
+    ],
+)
+def test_only_exact_v1_zero_vector_can_use_legacy_default(tmp_path, version, table, error):
+    path = tmp_path / "legacy.nxs"
+    if version == "v1":
+        legacy_zero_grouping_file(path, instrument="HiFi", table=table)
+    else:
+        grouping_file(path, version, instrument="HiFi", table=table)
+    with pytest.raises(ValueError, match=error):
+        load(path)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("switching_states", None),
+        ("switching_states", 3),
+        ("switching_states", 1.0),
+        ("instrument/beam/period_type", None),
+        ("instrument/beam/period_type", [1, 1]),
+        ("instrument/detector/number", None),
+        ("instrument/detector/number", 65),
+        ("instrument/name", [b"HiFi", b"MuSR"]),
+        ("instrument/detector/orientation", [b"L", b"T"]),
+        ("histogram_data_1/histogram_number", np.arange(1.0, 65.0)),
+        ("histogram_data_1/histogram_number", np.arange(64, 0, -1)),
+    ],
+)
+def test_v1_zero_declaration_cannot_override_inconsistent_layout_fields(tmp_path, field, value):
+    path = tmp_path / "legacy.nxs"
+    legacy_zero_grouping_file(path, instrument="HiFi")
+    with h5py.File(path, "r+") as handle:
+        entry = handle["run"]
+        if field in entry:
+            del entry[field]
+        if value is not None:
+            entry.create_dataset(field, data=value)
+    with pytest.raises(ValueError, match="Grouping declaration contains no positive"):
+        load(path)
+
+
+@pytest.mark.parametrize("available", [None, 0, 2, 1.0])
+def test_v1_zero_declaration_requires_legacy_availability_attribute(tmp_path, available):
+    path = tmp_path / "legacy.nxs"
+    legacy_zero_grouping_file(path, instrument="HiFi")
+    with h5py.File(path, "r+") as handle:
+        attrs = handle["run/histogram_data_1/grouping"].attrs
+        del attrs["available"]
+        if available is not None:
+            attrs["available"] = available
+    with pytest.raises(ValueError, match="Grouping declaration contains no positive"):
+        load(path)
+
+
+@pytest.mark.parametrize("period", [None, 1, 2])
+def test_v1_zero_declaration_is_rejected_for_a_genuine_two_period_run(tmp_path, period):
+    path = tmp_path / "legacy.nxs"
+    raw = legacy_zero_grouping_file(path, instrument="HiFi")
+    with h5py.File(path, "r+") as handle:
+        entry = handle["run"]
+        entry["switching_states"][()] = 2
+        detector = entry["histogram_data_1"]
+        del detector["counts"]
+        counts = detector.create_dataset("counts", data=np.concatenate([raw, raw]))
+        counts.attrs.update(first_good_bin=5, last_good_bin=20)
+    with pytest.raises(ValueError, match="Grouping declaration contains no positive"):
+        load(path, period=period)
+
+
+@pytest.mark.parametrize("table", [None, [2] * 32 + [3] * 32])
+def test_v1_legacy_instruments_keep_missing_and_valid_declarations_authoritative(tmp_path, table):
+    path = tmp_path / "legacy.nxs"
+    grouping_file(path, "v1", instrument="HiFi", table=table)
+    dataset = load(path)
+    grouping = dataset.run.grouping
+    pair = (1, 2) if table is None else (2, 3)
+    assert (grouping["forward_group"], grouping["backward_group"]) == pair
+    assert grouping["groups"] == {pair[0]: list(range(1, 33)), pair[1]: list(range(33, 65))}
+    assert "grouping_preset" not in grouping
+    assert "grouping_provenance" not in grouping
+    assert "nexus_grouping_warning" not in dataset.metadata
+
+
+def test_actual_cli_info_warns_on_legacy_zero_grouping(tmp_path, capsys, monkeypatch):
+    import json
+    import warnings
+
+    from asymmetry import cli
+
+    path = tmp_path / "legacy.nxs"
+    legacy_zero_grouping_file(path, instrument="HiFi")
+    monkeypatch.setattr(warnings, "showwarning", warnings.showwarning)
+    cli.main(["info", str(path), "--json"])
+    output = capsys.readouterr()
+    assert json.loads(output.out)["default_pair"] == [1, 2]
+    assert output.err.count("Applied the standard HiFi forward/backward grouping.") == 1
+
+
+def test_replay_with_replacement_source_does_not_borrow_old_acquired_declaration(tmp_path):
+    from asymmetry.core.project.grouping_request import (
+        merge_grouping_request,
+        persistent_grouping_for_run,
+    )
+
+    saved_source = tmp_path / "legacy.nxs"
+    legacy_zero_grouping_file(saved_source, instrument="HiFi")
+    with pytest.warns(UserWarning, match="Applied the standard HiFi"):
+        saved = load(saved_source).run
+    replacement_source = tmp_path / "replacement.nxs"
+    grouping_file(replacement_source, "v1", instrument="HiFi", table=[2] * 32 + [3] * 32)
+    replacement = load(replacement_source).run
+    replayed = merge_grouping_request(replacement.grouping, persistent_grouping_for_run(saved))
+    assert "nexus_grouping_declaration" not in replayed
+    assert replayed["groups"] == saved.grouping["groups"]
+    assert replayed["grouping_provenance"] == saved.grouping["grouping_provenance"]

@@ -47,8 +47,7 @@ bank orientation. Explicit tables and saved/custom groups retain precedence.
 A valid single-group table retains its raw counts, per-detector timing, good
 windows, exposure and deadtime. Its independent F/B quick look is unavailable;
 choose an appropriate preset or edit groups in **Grouping** to create a valid pair.
-Present empty, short, all-zero, or malformed tables are errors, not missing
-declarations.
+Present empty, short, or malformed tables are errors.
 
 NeXus V1 grouping indexes histogram numbers, including switching-state doubling
 (S. Cottrell, `NeXus Instrument Definitions for Muon Data, Version 2, Revision 8
@@ -56,8 +55,48 @@ NeXus V1 grouping indexes histogram numbers, including switching-state doubling
 V1 definition, notes 4 and 6, pp. 14–16). A grouping declaration may contain one
 integer per detector shared by all periods, a flat period-major vector with one
 integer per histogram, or an exact ``(periods, detectors)`` table. Every period
-must declare at least one positive group; no row is truncated or replaced by
-another period's membership.
+must declare at least one positive group apart from the single-period case below.
+
+.. _legacy-v1-zero-grouping:
+
+All-zero legacy EMU and HiFi grouping
+-------------------------------------
+
+A single-period NeXus V1 acquisition with an integer grouping table containing
+only zeros and declaring ``available=1`` can use its instrument's **Longitudinal**
+preset. This requires a recognised EMU with 96 channels or HiFi with 64 channels,
+an explicit single switching state and data-period declaration, a matching
+detector-count declaration, and explicit longitudinal detector orientation.
+The recorded applied field may be transverse. Asymmetry uses EMU channels 1–48
+forward and 49–96 backward, or HiFi channels 1–32 forward and 33–64 backward.
+
+The Python loader emits a ``NexusGroupingWarning``, the CLI prints the warning to
+standard error, and the desktop **LOG** shows it for each affected run. For EMU
+the warning reads as follows.
+
+   The file’s detector-grouping table contains only zeros. Applied the standard
+   EMU forward/backward grouping.
+
+The HiFi warning names its own instrument.
+
+   The file’s detector-grouping table contains only zeros. Applied the standard
+   HiFi forward/backward grouping.
+
+.. figure:: /_generated/screenshots/legacy_nexus_grouping_log.png
+   :width: 100%
+   :alt: The desktop log identifies the standard EMU forward/backward grouping
+         applied to a synthetic single-period legacy NeXus run.
+
+   The desktop log reports the grouping used on import.
+
+To change the grouping, open **Grouping**, choose a different **Preset** or edit
+the detector assignments in **Detector Layout**, then click **Apply** and save
+the project. The Python equivalent is
+:func:`~asymmetry.core.workflow.apply_grouping_preset`. The project retains the
+original zero declaration separately from the effective groups. The effective
+fallback records the preset, instrument profile key and revision, acquisition
+map, and reason ``nexus_v1_all_zero``. Saved grouping choices retain precedence
+on reopen.
 
 Acquisition shape and alignment
 -------------------------------
@@ -386,6 +425,14 @@ retain their counts exactly. This is a scoped count/coordinate comparison, not
 physical timing or exposure certification. See :doc:`/explanation/comparison`
 and the `Mantid legacy loader reference
 <https://docs.mantidproject.org/v6.16.1/algorithms/LoadMuonNexus-v1.html>`_.
+
+For the five public Rigi files in :ref:`comparison-legacy-zero-grouping`, both
+programs give the same forward and backward detector memberships and raw sums
+in every acquisition bin. The compared EMU runs are 18854, 19489, 20721, and
+51315, and the HiFi run is 9023. Both retain every raw detector count. HiFi 9023
+has one shorter interval near the end of its stored ``corrected_time`` axis.
+Mantid retains that interval, and Asymmetry uses the declared nominal
+resolution for the analysis grid.
 
 For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
 1.12.1 explicit-channel checks, fractional-timing difference, and documented WiMDA timing

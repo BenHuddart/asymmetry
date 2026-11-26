@@ -43,7 +43,10 @@ NeXus period-major grouping tables retain each period's declared membership.
 Two periods with different memberships load as separate datasets; select a
 period or explicitly author a common grouping before combining them. Shared
 tables and identical period declarations retain the combined red/green view.
-An all-zero declared table is invalid and does not authorise a preset fallback.
+For a matching single-period NeXus V1 acquisition, an all-zero table can
+select the documented **Longitudinal** preset on EMU or HiFi. The
+:ref:`loading reference <legacy-v1-zero-grouping>` gives the requirements,
+warning text, and project provenance.
 
 Scripted preset application
 ---------------------------
@@ -53,8 +56,8 @@ and an exact preset name. Instrument recognition and histogram-count variant
 resolution select the layout; preset membership and detector labels are checked
 against the acquired run. Unknown instruments or preset names, missing channels,
 and groups emptied by exclusions raise errors. Exclusions cannot hide a missing
-required channel. Explicit application uses the named preset. The fresh-load
-absence-only MuSR default is described below.
+required channel. Explicit application uses the named preset. See also the
+:ref:`legacy-v1-zero-grouping` and the MuSR absent-table default below.
 
 The helper returns a new dataset with complete groups, names, the preset pair,
 and projections, reduced through the same profile and histogram owners used by

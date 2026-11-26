@@ -1,8 +1,8 @@
-"""Resolve declared grouping defaults after fresh-file absence is established."""
+"""Resolve profile grouping defaults for supported file conditions."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from asymmetry.core.instruments.catalog import PROFILES
 from asymmetry.core.instruments.layout import PresetGrouping
@@ -21,12 +21,25 @@ def absent_file_grouping_default(
     only for a fresh unconfigured run whose file grouping table is absent.
     Applied-field state does not establish detector-bank orientation.
     """
+    return file_grouping_default(selection, metadata, "absent_file_grouping")
+
+
+def file_grouping_default(
+    selection: InstrumentSelection | None,
+    metadata: dict,
+    condition: Literal["absent_file_grouping", "legacy_v1_zero_grouping"],
+) -> PresetGrouping | None:
+    """Use the preset belonging to a supported acquisition and detector orientation."""
     if selection is None:
         return None
     profile = next((p for p in PROFILES if p.identity.key == selection.profile_key), None)
     if profile is None:
         return None
-    rule = profile.defaults.absent_file_grouping
+    rule = (
+        profile.defaults.absent_file_grouping
+        if condition == "absent_file_grouping"
+        else profile.defaults.legacy_v1_zero_grouping
+    )
     if (
         rule is None
         or selection.acquisition != rule.acquisition

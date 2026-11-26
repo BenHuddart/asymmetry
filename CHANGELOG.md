@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Link the worked examples to public Rigi school data and ISIS runs, and show
   the LiFeAs Sample 1 linewidth from fits to the raw GPS data.
+- Open matching single-period legacy EMU and HiFi files with all-zero grouping
+  tables using the editable Longitudinal preset, with an import warning.
 
 ## [0.29.0] - 2026-11-25
 

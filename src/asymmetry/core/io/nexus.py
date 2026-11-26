@@ -11,16 +11,15 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.instruments.defaults import absent_file_grouping_default
-from asymmetry.core.instruments.resolution import resolve_instrument
 from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.frame_exposure import NexusFrames, read_nexus_frames
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.nexus_grouping import (
+    apply_nexus_grouping,
     grouping_membership,
-    nexus_grouping,
+    legacy_zero_grouping_declaration,
     nexus_period_grouping,
 )
 from asymmetry.core.io.nexus_periods import logged_data_periods, period_declaration
@@ -269,9 +268,8 @@ class NexusLoader(BaseLoader):
         h_data = self._require_group(entry, "histogram_data_1")
 
         counts = np.asarray(self._require_dataset(h_data, "counts"), dtype=np.float64)
-        # V1 stores [periods * spectra, bins]; switching_states gives the period count.
-        # Reshape period-major to preserve corresponding acquired arrays.
-        n_switching = self._safe_int(self._read_optional(entry, "switching_states"), default=1) or 1
+        switching = self._read_optional(entry, "switching_states")
+        n_switching = self._safe_int(switching, default=1) or 1
         if counts.ndim == 2 and n_switching > 1 and counts.shape[0] % n_switching == 0:
             n_spectra = counts.shape[0] // n_switching
             counts = counts.reshape(n_switching, n_spectra, counts.shape[-1])
@@ -382,6 +380,15 @@ class NexusLoader(BaseLoader):
             bin_width=bin_width,
             decodes=decodes,
             grouping_array=grouping_array,
+            legacy_zero_declaration=legacy_zero_grouping_declaration(
+                entry,
+                h_data,
+                counts,
+                grouping_array,
+                switching,
+                orientation_raw,
+                self._read_optional,
+            ),
             replay=replay,
             frame_metadata=frame_metadata,
             dead_time_values=dead_time_values,
@@ -537,6 +544,7 @@ class NexusLoader(BaseLoader):
         run_number: int,
         good_windows: np.ndarray,
         source_file: str,
+        legacy_zero_declaration: dict | None = None,
     ) -> list[MuonDataset]:
         datasets: list[MuonDataset] = []
         n_periods = len(counts_periods)
@@ -557,7 +565,6 @@ class NexusLoader(BaseLoader):
             if period_counts.ndim != 2:
                 raise ValueError("Detector counts must be 2D [n_detectors, n_bins] per period")
 
-            n_detectors = period_counts.shape[0]
             decode = decodes[period_idx - 1]
             histograms = self._build_histograms(
                 period_counts,
@@ -608,22 +615,9 @@ class NexusLoader(BaseLoader):
                 ),
                 replay,
             )
-            identity = resolve_instrument(run).selection
-            default = (
-                absent_file_grouping_default(identity, run_meta)
-                if replay is None and grouping_array is None
-                else None
+            apply_nexus_grouping(
+                run, grouping_periods[period_idx - 1], legacy_zero_declaration, replay=replay
             )
-            selected = nexus_grouping(grouping_periods[period_idx - 1], n_detectors, default)
-            run_grouping.update(selected.payload)
-            if default is not None:
-                run_grouping["grouping_preset"] = default.name
-                run_grouping["grouping_provenance"] = {
-                    "origin": "profile",
-                    "profile_key": identity.profile_key,
-                    "profile_revision": identity.profile_revision,
-                    "acquisition": identity.acquisition,
-                }
             quick = quick_asymmetry(
                 histograms, run_grouping, metadata=reference_observation_metadata(run)
             )
