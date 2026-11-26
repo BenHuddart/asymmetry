@@ -76,6 +76,8 @@ also drops its incomplete final group, even when its base mode is nonuniform.
    :alt: Fixed, Variable, and Constant error count reductions on a coarse synthetic grid.
    :width: 100%
 
+.. _display-bunching:
+
 Display bunching
 ----------------
 
@@ -107,6 +109,15 @@ lifetime correction to the sums and errors at those centres. A merge larger
 than the record leaves no complete output point.
 Curves without a resolved histogram observation and rotated projections use the
 curve-bin mean described below.
+
+**Bunch:** also sets the observations available to the next time-domain F–B
+fit. The x-axis limits frame the plot, and the fit window selects the bin
+centres used for fitting. If a run has too few recorded bins to complete a
+merge, **Fit** is disabled and the status bar reports, for example,
+``No complete bins at Bunch 32. Reduce Bunch.`` A fit window that excludes every
+bin reports ``No bins in the fit window.`` Completed fits retain their original
+input attribution. Follow the :ref:`EuO saved-view walkthrough
+<euo-saved-views>` to compare fine and coarse views of one run.
 
 Direct reduction, the workflow, CLI, and histogram toolbar honour the same
 authored merge without a spectral peak veto. This permits deliberate averaging

@@ -274,7 +274,7 @@ def _record_scale_values(model: CompositeModel, context: SeedContext) -> dict[st
     — the fit wizard's own split — so a negative-amplitude start never fights
     a model whose amplitude is physically non-negative.
     """
-    if context.domain != "time" or context.dataset is None:
+    if context.domain != "time" or context.dataset is None or not context.dataset.n_points:
         return {}
     amplitude, tail = record_scale_estimate(context.dataset.time, context.dataset.asymmetry)
     phase = phase_seed_from_sign(amplitude)

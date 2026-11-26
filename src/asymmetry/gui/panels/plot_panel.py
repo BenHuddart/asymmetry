@@ -3218,10 +3218,8 @@ class PlotPanel(QWidget):
         self._last_low_count_mask = None
         self._clear_waterfall_render_record()
         self._reset_decimation_view_state()
-        self._fit_x_min = None
-        self._fit_x_max = None
         if self._is_frequency_plot_panel():
-            self._frequency_reference_mhz = None
+            self._fit_x_min = self._fit_x_max = self._frequency_reference_mhz = None
 
         self._ax.clear()
         style_axes(self._ax)
@@ -3250,16 +3248,12 @@ class PlotPanel(QWidget):
             return None
 
         t_min, t_max = fit_range if fit_range is not None else self.get_fit_range()
-        if t_min is None or t_max is None:
+        if t_min is None and t_max is None:
             return dataset
         crop = dataset.time_range(t_min, t_max)
-        # Stamp the literal requested boundary: the crop keeps only surviving
-        # bins, so the crop's own time.min()/.max() can sit strictly inside
-        # (t_min, t_max) when no bin lands exactly on an edge. A fit-curve
-        # overlay drawn from the crop's own extent would then look truncated
-        # at that first/last bin instead of starting where the user actually
-        # set the range (see FitTabBase._fit_curve_time_bounds).
-        crop.metadata["fit_range"] = (float(t_min), float(t_max))
+        # An overlay follows the literal window edges, which can fall between bin centres.
+        if t_min is not None and t_max is not None:
+            crop.metadata["fit_range"] = (float(t_min), float(t_max))
         return crop
 
     def get_full_fit_context(
@@ -5201,10 +5195,7 @@ class PlotPanel(QWidget):
             if self._fit_x_min is None or self._fit_x_max is None:
                 seed = self._raw_fit_seed_range(list(datasets))
                 if seed is None:
-                    seed = (
-                        float(self._last_plot_time.min()),
-                        float(self._last_plot_time.max()),
-                    )
+                    seed = float(self._last_plot_time.min()), float(self._last_plot_time.max())
                 self._fit_x_min, self._fit_x_max = seed
         else:
             self._last_plot_time = None
@@ -5212,8 +5203,8 @@ class PlotPanel(QWidget):
             self._last_plot_error = None
             self._last_low_count_mask = None
             self._clear_waterfall_render_record()
-            self._fit_x_min = None
-            self._fit_x_max = None
+            if self._is_frequency_plot_panel():
+                self._fit_x_min = self._fit_x_max = None
 
         resolved.update(self._resolve_y(y_axis_id, self._display_y_bounds))
         self._apply_limits(resolved)

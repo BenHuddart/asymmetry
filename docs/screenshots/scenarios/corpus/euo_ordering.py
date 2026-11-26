@@ -15,7 +15,7 @@ from Fig. 3(a) of Blundell et al.
 
 Scenarios registered:
 
-* ``corpus_euo_load_browse``   — PSI ``.bin`` T-scan in the data browser.
+* ``corpus_euo_load_browse``   — recalled fine view of PSI GPS run 2960.
 * ``corpus_euo_zf_fit``        — converged ZF oscillation fit on the 1.6 K run.
 * ``corpus_euo_fft``           — frequency-domain single precession line (~30 MHz).
 * ``corpus_euo_nu_t_trend``    — headline: ν(T) order-parameter trend + fit.
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
 
 from examples.euo_order_parameter import EUO_RUNS
@@ -90,12 +91,9 @@ def _show_logged_temperature(window) -> None:
 # ---------------------------------------------------------------------------
 class EuoLoadBrowseScenario(CorpusScenario):
     name = "corpus_euo_load_browse"
-    description = (
-        "PSI GPS .bin EuO zero-field temperature scan loaded into the data "
-        "browser (real deltat_pta_gps loader, run numbers + temperatures)."
-    )
+    description = "Recalled 5 ns view of PSI GPS EuO run 2960 beside the logged temperature scan."
     example = EXAMPLE
-    size = (1400, 860)
+    size = (1650, 860)
 
     def build(self) -> QWidget:
         from asymmetry.gui.mainwindow import MainWindow
@@ -115,14 +113,100 @@ class EuoLoadBrowseScenario(CorpusScenario):
             [int(ds.run_number) for ds in datasets],
             name="EuO ZF T-scan — GPS@PSI",
         )
-        # Select the base-temperature run so the plot shows a real ordered
-        # (oscillating) ZF spectrum next to the browser.
+        base = datasets[0]
+        background_ranges = ((10, 85), (10, 85))
+        settings = window._extract_grouping_overrides(base)
+        settings.update(
+            binning_mode="fixed",
+            bunching_factor=1,
+            alpha=1.0,
+            deadtime_correction=False,
+            deadtime_mode="off",
+            background_correction=True,
+            background_mode="range",
+            background_ranges=background_ranges,
+        )
+        pair = tuple(base.run.grouping[key] for key in ("forward_group", "backward_group"))
+        applied, outcomes = window._apply_grouping_settings_to_dataset(base, settings)
+        if not applied or not outcomes:
+            raise RuntimeError("EuO run 2960 did not accept its pre-time-zero background")
+        for outcome in outcomes.values():
+            assert outcome.deadtime.status == "off" and outcome.background.status == "applied"
+            np.testing.assert_array_equal(
+                outcome.background.effective["details"]["acquisition_ranges"], background_ranges
+            )
+        assert tuple(base.run.grouping[key] for key in ("forward_group", "backward_group")) == pair
+
         _show_logged_temperature(window)
-        window._on_dataset_selected(datasets[0].run_number)
-        _process_events_for(milliseconds=80)
-        window._plot_panel.set_view_limits(0.0, 0.6, *window._plot_panel.get_view_limits()[2:])
+        window._domain_buttons_by_token["fb_asymmetry"].click()
+        browser = window._data_browser
+        browser.select_runs({base.run_number})
+        np.testing.assert_allclose(base.run.temperature, 1.50, atol=0.0005, rtol=0)
+        np.testing.assert_allclose(
+            browser._temperature_for_display(base), 1.604, atol=0.0005, rtol=0
+        )
+
+        panel = window._plot_panel
+        bunch = window._view_bunch_spin
+        fine, coarse, _ = window._view_mode_buttons
+        fit_range = panel.get_fit_range()
+
+        def set_x_range(low, high):
+            for field, value in ((panel._x_max, high), (panel._x_min, low)):
+                field.setText(str(value))
+                QTest.keyClick(field, Qt.Key.Key_Return)
+
+        def visible_points(bounds, spacing):
+            np.testing.assert_allclose(panel.get_view_limits()[:2], bounds, rtol=0, atol=1e-12)
+            np.testing.assert_allclose(panel._ax.get_xlim(), bounds, rtol=0, atol=1e-12)
+            time, asymmetry = panel._last_plot_time, panel._last_plot_asymmetry
+            inside = (time >= bounds[0]) & (time <= bounds[1])
+            assert np.count_nonzero(inside) > 1
+            np.testing.assert_allclose(np.diff(time[inside]), spacing, rtol=0, atol=1e-12)
+            return time[inside], asymmetry[inside]
+
+        early = (0.0, 0.30)
+        late = (1.0, 6.0)
+        fine.click()
+        bunch.setValue(4)
+        if not panel._auto_x_btn.isChecked():
+            panel._auto_x_btn.click()
+        set_x_range(*early)
+        if not panel._auto_y_btn.isChecked():
+            panel._auto_y_btn.click()
+        early_time, early_signal = visible_points(early, 0.005)
+        fine_limits = panel.get_view_limits()
+
+        coarse.click()
+        bunch.setValue(4)
+        set_x_range(*late)
+        late_time, late_signal = visible_points(late, 0.005)
+        # Equal 0.30 µs windows at the same 5 ns spacing isolate contrast from bin averaging.
+        late_contrast = []
+        for start in range(1, 6):
+            inside = (late_time >= start) & (late_time < start + 0.30)
+            assert np.count_nonzero(inside) > 1
+            late_contrast.append(_near_30_mhz_contrast(late_time[inside], late_signal[inside]))
+        assert _near_30_mhz_contrast(early_time, early_signal) > max(late_contrast)
+        bunch.setValue(32)
+        visible_points(late, 0.040)
+
+        fine.click()
+        assert fine.isChecked() and bunch.value() == 4
+        np.testing.assert_allclose(panel.get_view_limits(), fine_limits, rtol=0, atol=1e-12)
+        recalled_time, recalled_signal = visible_points(early, 0.005)
+        np.testing.assert_array_equal(recalled_time, early_time)
+        np.testing.assert_array_equal(recalled_signal, early_signal)
+        assert panel.get_fit_range() == fit_range
+        assert base.run.grouping["bunching_factor"] == 1 and base.run.grouping["alpha"] == 1
         _process_events_for(milliseconds=60)
         return window
+
+
+def _near_30_mhz_contrast(time, signal) -> float:
+    """Measure the amplitude near 30 MHz on a short, finely sampled trace."""
+    centred = signal - signal.mean()
+    return 2.0 * abs(np.mean(centred * np.exp(-2j * np.pi * 30.2 * time)))
 
 
 # ---------------------------------------------------------------------------

@@ -662,12 +662,9 @@ class DataBrowserPanel(QWidget):
     # empty string when the combine finishes (however it ends). The host shows
     # it on the status bar, matching the co-added re-fit's affordance.
     combine_status = Signal(str)
-    # Emitted whenever the dataset set or grouping structure is mutated by a
-    # user action (add/remove a run, build/rebuild a combined run, create or
-    # dissolve a group, move runs between groups). The host uses this to mark
-    # the project modified for the unsaved-changes guard. Deliberately NOT
-    # emitted from clear()/restore — those reset to a known-clean baseline.
+    # User edits to the dataset set or group structure mark the project dirty.
     datasets_changed = Signal()
+    run_conditions_changed = Signal()
     fit_group_requested = Signal(str)  # group_id
     # "Show series from this group": filters the trend/parameters panel to only
     # the series whose provenance (FitSeries.source_group_id) is this group.
@@ -3675,6 +3672,7 @@ class DataBrowserPanel(QWidget):
         self._updating_table = True
         item.setText(f"{field_value:.1f}" if field_value is not None else "—")
         self._updating_table = False
+        self.run_conditions_changed.emit()
 
     def _on_custom_column_edited(self, item: QTableWidgetItem, column_id: str) -> None:
         """Persist a user edit to a custom-column cell into the dataset metadata."""

@@ -11,21 +11,16 @@ import re
 import numpy as np
 import pytest
 
-from tests.counts import aligned_counts
-from tests.gui.gle_helpers import wait_for_gle
-
 pytestmark = [pytest.mark.gui]
 
-pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings  # type: ignore
+pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QFileDialog  # type: ignore
 
-import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.preparation import histogram_observation
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
+from asymmetry.core.transform.rebin import merge_curve_bins
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -35,71 +30,9 @@ from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.errorbar_dots import errorbar_dots_line_class
-
-BIN_WIDTH_US = 0.016
-
-
-@pytest.fixture
-def mainwindow(qapp: QApplication) -> MainWindow:
-    """Create a mainwindow for testing."""
-    settings = QSettings()
-    settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
-    return MainWindow()
-
-
-def _histogram_run_dataset(
-    counts_f: np.ndarray,
-    counts_b: np.ndarray,
-    *,
-    run_number: int = 4242,
-    base_bunch: int = 1,
-    grouping_extra: dict | None = None,
-) -> MuonDataset:
-    """A run with two raw histograms and its recorded (counts-first) reduction."""
-    n = counts_f.size
-    grouping = {
-        "groups": {1: [1], 2: [2]},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "t0_bin": 0,
-        "first_good_bin": 0,
-        "last_good_bin": n - 1,
-        "bunching_factor": base_bunch,
-        "deadtime_correction": False,
-        "background_correction": False,
-    }
-    if grouping_extra:
-        grouping.update(grouping_extra)
-    run = Run(
-        run_number=run_number,
-        histograms=[
-            Histogram(counts=counts_f.copy(), bin_width=BIN_WIDTH_US, t0_bin=0),
-            Histogram(counts=counts_b.copy(), bin_width=BIN_WIDTH_US, t0_bin=0),
-        ],
-        metadata={"run_number": run_number},
-        grouping=grouping,
-    )
-    time, asym, err = binned_fb_asymmetry(
-        aligned_counts(
-            counts_f,
-            counts_b,
-            common_t0=0,
-            bin_width_us=BIN_WIDTH_US,
-            first_good_bin=0,
-            last_good_bin=n - 1,
-        ),
-        binning=binning_spec(grouping),
-        alpha=1.0,
-    )
-    return MuonDataset(
-        time=time,
-        asymmetry=asym * 100.0,
-        error=err * 100.0,
-        metadata={"run_number": run_number},
-        run=run,
-        histogram_observation=histogram_observation(run),
-    )
+from tests.gui.bunch_helpers import BIN_WIDTH_US, histogram_run_dataset
+from tests.gui.bunch_helpers import mainwindow as mainwindow
+from tests.gui.gle_helpers import wait_for_gle
 
 
 def _sparse_counts(n: int = 1200, seed: int = 11) -> tuple[np.ndarray, np.ndarray]:
@@ -130,7 +63,7 @@ class TestPanelBunchCountsFirst:
     ) -> None:
         """Panel bunching on a histogram-backed sparse run packs counts, not values."""
         counts_f, counts_b = _sparse_counts()
-        dataset = _histogram_run_dataset(counts_f, counts_b)
+        dataset = histogram_run_dataset(counts_f, counts_b)
         factor = 8
 
         mainwindow._plot_panel.set_bunch_factor(factor, emit_signal=False)
@@ -158,7 +91,7 @@ class TestPanelBunchCountsFirst:
     def test_panel_factor_multiplies_grouping_bunching_factor(self, mainwindow: MainWindow) -> None:
         """Effective packing = grouping ``bunching_factor`` × panel factor."""
         counts_f, counts_b = _sparse_counts(seed=17)
-        dataset = _histogram_run_dataset(counts_f, counts_b, base_bunch=2)
+        dataset = histogram_run_dataset(counts_f, counts_b, base_bunch=2)
 
         mainwindow._plot_panel.set_bunch_factor(3, emit_signal=False)
         analysis = mainwindow._plot_panel.get_analysis_dataset(dataset)
@@ -174,7 +107,7 @@ class TestPanelBunchCountsFirst:
         n = 400
         counts_f = rng.poisson(500.0, n).astype(float)
         counts_b = rng.poisson(420.0, n).astype(float)
-        dataset = _histogram_run_dataset(
+        dataset = histogram_run_dataset(
             counts_f,
             counts_b,
             grouping_extra={
@@ -262,7 +195,7 @@ class TestPanelProviderContract:
 @pytest.mark.parametrize("mode", ["variable", "constant_error"])
 def test_nonfixed_display_merges_recorded_count_bins(mainwindow, mode):
     f, b = np.arange(1.0, 12.0), np.arange(21.0, 32.0)
-    dataset = _histogram_run_dataset(
+    dataset = histogram_run_dataset(
         f, b, grouping_extra={"binning_mode": mode, "bin0_us": 0.04, "bin10_us": 0.04}
     )
     mainwindow._data_browser.add_dataset(dataset)
@@ -282,8 +215,8 @@ def test_nonfixed_display_merges_recorded_count_bins(mainwindow, mode):
 def test_period_display_bunches_each_period_before_combining(mainwindow, mode, sign):
     red_f, red_b = np.array([90.0, 1, 30, 2]), np.array([10.0, 9, 20, 8])
     green_f, green_b = np.array([2.0, 80, 10, 2]), np.array([8.0, 10, 30, 8])
-    dataset = _histogram_run_dataset(red_f, red_b)
-    green = _histogram_run_dataset(green_f, green_b, run_number=4243)
+    dataset = histogram_run_dataset(red_f, red_b)
+    green = histogram_run_dataset(green_f, green_b, run_number=4243)
     dataset.run.grouping.update(
         period_mode=mode, period_histograms=[dataset.run.histograms, green.run.histograms]
     )
@@ -305,7 +238,7 @@ def test_period_display_bunches_each_period_before_combining(mainwindow, mode, s
 
 
 def test_bunching_larger_than_the_record_returns_no_points(mainwindow):
-    dataset = _histogram_run_dataset(np.array([90.0, 1]), np.array([10.0, 9]))
+    dataset = histogram_run_dataset(np.array([90.0, 1]), np.array([10.0, 9]))
     mainwindow._plot_panel.set_bunch_factor(8, emit_signal=False)
     assert mainwindow._plot_panel.get_analysis_dataset(dataset).time.size == 0
 
@@ -318,7 +251,7 @@ def test_grouped_toolbar_bunch_plot_and_exports(
     forward = np.arange(1.0, 257.0)
     backward = 2 * forward + 11
     names = {1: "Upstream", 2: "Downstream"}
-    dataset = _histogram_run_dataset(
+    dataset = histogram_run_dataset(
         forward, backward, base_bunch=base_bunch, grouping_extra={"group_names": names}
     )
     mainwindow._data_browser.add_dataset(dataset)
@@ -413,7 +346,7 @@ def test_grouped_toolbar_bunch_plot_and_exports(
     ],
 )
 def test_grouped_export_reports_prepared_deadtime(mainwindow, tmp_path, settings, status):
-    dataset = _histogram_run_dataset(
+    dataset = histogram_run_dataset(
         np.arange(1.0, 65.0),
         np.arange(101.0, 165.0),
         grouping_extra={"deadtime_correction": True, **settings},
@@ -440,7 +373,7 @@ def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, tmp_path, comple
         np.rint(n0 * (1 + 0.12 * np.cos(2 * np.pi * frequency * time + phase)) * decay)
         for n0, phase in [(6000, 0.0), (5000, np.pi)]
     ]
-    dataset = _histogram_run_dataset(*counts)
+    dataset = histogram_run_dataset(*counts)
     dataset.run.metadata["field"] = field
     mainwindow._data_browser.add_dataset(dataset)
     mainwindow._data_browser.select_runs({dataset.run_number})
@@ -522,7 +455,7 @@ def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, tmp_path, comple
 def test_grouped_export_captures_only_fits_drawable_in_the_subplot(
     qapp, tmp_path, monkeypatch, source_factor
 ):
-    dataset = _histogram_run_dataset(np.full(64, 1200.0), np.full(64, 900.0))
+    dataset = histogram_run_dataset(np.full(64, 1200.0), np.full(64, 900.0))
     group = build_grouped_time_domain_datasets(dataset)[0]
     panel = PlotPanel()
     run = group.run_number
@@ -558,7 +491,7 @@ def test_grouped_export_captures_only_fits_drawable_in_the_subplot(
 def test_fb_toolbar_bunch_plot_and_text_export(mainwindow, tmp_path, monkeypatch):
     forward = np.arange(1.0, 257.0)
     backward = 2 * forward + 11
-    dataset = _histogram_run_dataset(forward, backward)
+    dataset = histogram_run_dataset(forward, backward)
     mainwindow._data_browser.add_dataset(dataset)
     mainwindow._data_browser.select_runs({dataset.run_number})
     mainwindow._view_bunch_spin.setValue(2)
@@ -586,7 +519,7 @@ def test_fb_toolbar_bunch_plot_and_text_export(mainwindow, tmp_path, monkeypatch
 
 @pytest.mark.parametrize("view", ["groups", "raw_counts"])
 def test_reference_count_views_show_diagnostic_and_recover(mainwindow, view):
-    dataset = _histogram_run_dataset(np.full(32, 200.0), np.full(32, 150.0))
+    dataset = histogram_run_dataset(np.full(32, 200.0), np.full(32, 150.0))
     mainwindow._data_browser.add_dataset(dataset)
     mainwindow._on_dataset_selected(dataset.run_number)
     mainwindow._plot_panel.set_time_view_modes(["fb_asymmetry", "groups", "raw_counts"], view)
