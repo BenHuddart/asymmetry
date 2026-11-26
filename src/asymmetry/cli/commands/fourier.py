@@ -17,6 +17,8 @@ from asymmetry.cli._recipes import LINE_SEEDS
 from asymmetry.cli._runs import reduced_datasets, resolve_run
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 from asymmetry.cli.commands.trend import HIGH_FIELD_LINE_MHZ
+from asymmetry.core.fitting.spectral_lines import PAIR_SPLIT as PAIR_SPLIT
+from asymmetry.core.fitting.spectral_lines import close_frequency_spacing, fitted_frequency_spacings
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -205,19 +207,12 @@ _CLOSE_PEAKS = 2
 _TWIN_COUPLINGS = 4
 
 
-#: Two fitted frequencies this close (relative) are a resolved pair, not a line
-#: and its harmonic.
-PAIR_SPLIT = 0.02
-
-
 def close_pair(values: dict) -> tuple[float, float] | None:
-    """The first two fitted frequencies within :data:`PAIR_SPLIT` of each other, if any."""
-    lines = sorted(
-        abs(value)
-        for name, value in values.items()
-        if name.split("_")[0] == "frequency" and value is not None
-    )
-    return next(((a, b) for a, b in zip(lines, lines[1:]) if b - a <= PAIR_SPLIT * b), None)
+    """The first pair of close fitted frequencies, in display coordinates."""
+    pair = close_frequency_spacing(fitted_frequency_spacings(values))
+    if pair is None:
+        return None
+    return pair.lower.magnitude_mhz, pair.upper.magnitude_mhz
 
 
 def tesla_field_lines(result: dict) -> list[dict]:

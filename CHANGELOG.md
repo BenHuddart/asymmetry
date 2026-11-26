@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use fitted frequency covariance for CLI line-spacing uncertainties and
+  label spacings whose uncertainty is unavailable.
+
 - Show how to run a GUI model expression in Python and interpret the units
   and asymmetry returned by standalone fit models.
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +16,11 @@ from asymmetry.cli._output import (
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
 from asymmetry.cli._runs import reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.core.fitting.spectral_lines import (
+    FrequencySpacing,
+    close_frequency_spacing,
+    fitted_frequency_spacings,
+)
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -94,9 +98,8 @@ def run(args: argparse.Namespace) -> None:
     print(render_fit_windows({args.run: result["time_window"]}))
     if result["background_held"]:
         print(f"NOTE: {HELD_BACKGROUND} Say in the summary that it was held.")
-    from asymmetry.cli.commands.fourier import close_pair
-
-    pair = close_pair(result["parameters"]) if result["success"] else None
+    spacings = fitted_frequency_spacings(result["parameters"]) if result["success"] else []
+    pair = close_frequency_spacing(spacings)
     if pair is not None:
         dof = result["ndof"]
         weight = (
@@ -105,34 +108,22 @@ def run(args: argparse.Namespace) -> None:
             if dof is not None and dof > 0
             else ""
         )
-        errors = [
-            result["uncertainties"].get(name)
-            for name, value in result["parameters"].items()
-            if name.split("_")[0] == "frequency" and abs(value) in pair
-        ]
         print(
-            f"NOTE: this fit holds two lines, at {pair[1]:.6g} and {pair[0]:.6g} MHz, "
-            f"{pair[1] - pair[0]:.4g}{_spacing_uncertainty_text(*errors)} MHz apart. A split below the "
-            f"FFT resolution is still two lines: compare chi2, not chi2_red, with the one-line "
+            f"NOTE: this fit holds two lines, at {pair.upper.magnitude_mhz:.6g} and "
+            f"{pair.lower.magnitude_mhz:.6g} MHz, {_spacing_text(pair, result, after_units=' apart')}. "
+            f"A split below the FFT resolution is still two lines: compare chi2, not chi2_red, with the one-line "
             f"fit's{weight} and if it is lower report both frequencies, their separation and "
             f"amplitudes, not a single line. A rate pinned at its bound or a large error flags "
             f"one line's envelope, not the line: it does not cancel the chi2 gain, so do not "
             f"headline a single line either."
         )
-    lines = sorted(
-        (abs(value), result["uncertainties"].get(name))
-        for name, value in result["parameters"].items()
-        if name.split("_")[0] == "frequency"
-    )
-    if result["success"] and len(lines) >= (2 if pair is None else 3):
-        # The spacings a summary would otherwise take as differences of printed lines.
+    if len(spacings) >= (1 if pair is None else 2):
         print(
             "Line spacings: "
             + "; ".join(
-                f"{high:.6g} − {low:.6g} = {high - low:.4g}"
-                + _spacing_uncertainty_text(low_err, high_err)
-                + " MHz"
-                for (low, low_err), (high, high_err) in zip(lines, lines[1:])
+                f"{spacing.upper.magnitude_mhz:.6g} − {spacing.lower.magnitude_mhz:.6g} = "
+                + _spacing_text(spacing, result)
+                for spacing in spacings
             )
         )
     note = window_note(workdir, [args.run])
@@ -140,12 +131,17 @@ def run(args: argparse.Namespace) -> None:
         print(note)
 
 
-def _spacing_uncertainty_text(*sigmas: float | None) -> str:
-    """Quote separation precision only when all source errors are available."""
-    if any(sigma is None or not math.isfinite(sigma) or sigma < 0 for sigma in sigmas):
-        return ""
-    uncertainty = math.hypot(*sigmas)
-    return f" ± {uncertainty:.2g}" if uncertainty > 0 else ""
+def _spacing_text(
+    spacing: FrequencySpacing, result: dict[str, Any], *, after_units: str = ""
+) -> str:
+    uncertainty = spacing.standard_uncertainty_mhz(
+        result["uncertainties"],
+        result.get("covariance"),
+        fixed_parameters=result.get("fixed_parameters") or (),
+    )
+    error_bar = f" ± {uncertainty:.2g}" if uncertainty else ""
+    status = " (uncertainty unavailable)" if uncertainty is None else ""
+    return f"{spacing.separation_mhz:.4g}{error_bar} MHz{after_units}{status}"
 
 
 #: What a run fitted with its background held at zero says about why.
