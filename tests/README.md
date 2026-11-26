@@ -223,15 +223,17 @@ See `docs/HARNESS.md` for commands and the native-runtime/GPU coverage limits.
 ## Explicit corpus grouping
 
 Corpus checks use `tests.corpus.corpus_path` and skip without
-`ASYMMETRY_CORPUS_ROOT`. A declared all-zero NeXus grouping remains invalid.
-Scientific tests needing such a run call `authored_grouping_copy` with explicit
-memberships and a per-test temporary directory. The EMU 96-channel checks choose
-channels 1–48 and 49–96 as their two groups; this is an authored test request,
-not independently verified export wiring. The 32-channel RF scan checks choose
-channels 1–16 and 17–32 under the same explicit policy. Only grouping is changed
-in the copied NeXus container; an existing ICP sidecar is copied verbatim;
-acquired counts, timing, exposure, and deadtime remain intact. Ordinary loading
-binds the new container bytes, and the original corpus stays immutable.
+`ASYMMETRY_CORPUS_ROOT`. An all-zero table remains invalid outside the
+[verified single-period NeXus V1 EMU and HiFi layouts](../docs/reference/loading_data.rst#all-zero-legacy-emu-and-hifi-grouping).
+Scientific tests that need explicit memberships call `authored_grouping_copy`
+with the requested groups and a per-test temporary directory. This fixes the
+analysis input independently of any import default and supports acquisitions
+outside the fallback scope. The EMU 96-channel checks choose channels 1–48 and
+49–96 as their two groups. The 32-channel RF scan checks choose channels 1–16
+and 17–32. Export wiring requires separate evidence. The copy changes only
+the grouping declaration and preserves acquired counts, timing, exposure,
+deadtime, and any existing ICP sidecar. Ordinary loading binds the new
+container bytes, and the original corpus stays immutable.
 Mark corpus I/O cases `io`, including classes or functions in mixed modules,
 so the fast tier retains synthetic mathematics without reading optional files.
 Configured-corpus results are reported separately from public CI results.
