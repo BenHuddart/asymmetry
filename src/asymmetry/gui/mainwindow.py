@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     QEventLoop,
     QObject,
     QSettings,
+    QSignalBlocker,
     Qt,
     QThread,
     QTimer,
@@ -194,6 +195,7 @@ from asymmetry.core.project.profiles import (
     resolve_run_good_window,
 )
 from asymmetry.core.project.sources import sample_load_request
+from asymmetry.core.project.view_migration import VIEW_MODE_COUNT
 from asymmetry.core.representation import (
     FitSeries,
     FitSlot,
@@ -433,7 +435,6 @@ _BULK_LOAD_BUSY_MESSAGE = "Another project is loading files — wait for it to f
 _COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 _UI_SCALE_SETTINGS_KEY = UI_SCALE_SETTINGS_KEY
 _UI_SCALE_OPTIONS = UI_SCALE_OPTIONS
-_VIEW_MODE_COUNT = 3
 _PERF_LOGGING_SETTINGS_KEY = "debug/perf_logging"
 _PERF_LOGGING_ENV_VAR = "ASYMMETRY_PERF_LOGGING"
 #: Coalescing window for mid-drag spectral-moments recomputes (C1): each
@@ -1015,10 +1016,8 @@ class MainWindow(QMainWindow):
         self._ui_scale_action_group = QActionGroup(self)
         self._ui_scale_action_group.setExclusive(True)
         self._ui_scale_actions: dict[float, object] = {}
-        self._view_modes = [self._default_view_mode_state() for _ in range(_VIEW_MODE_COUNT)]
+        self._view_modes: list[dict | None] = [None] * VIEW_MODE_COUNT
         self._active_view_mode_index = 0
-        self._syncing_view_mode_ui = False
-        self._applying_view_mode = False
         self._applying_inspector_domain = False
         # Per-representation memory of inspector tabs the user closed: view
         # token → dock keys. Closed tabs stay closed when the user returns to
@@ -1471,33 +1470,25 @@ class MainWindow(QMainWindow):
         _stretch.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._main_toolbar.addWidget(_stretch)
 
-        # "Saved views" (P2-5): each numbered button stores/recalls a zoom +
-        # bunch-factor preset for the current plot. The label and per-button
-        # tooltips say so, since clicking otherwise silently mutates the view.
         _view_label = QLabel("Saved views:")
         _view_label.setToolTip(
-            "Numbered presets, each remembering this plot's zoom and bunch "
-            "factor. Click a number to recall that saved view."
+            "Project presets for F-B asymmetry. Each remembers axis limits, "
+            "Auto X, Auto Y and the Bunch factor."
         )
         self._main_toolbar.addWidget(_view_label)
         self._view_mode_button_group = QButtonGroup(self)
         self._view_mode_button_group.setExclusive(True)
         self._view_mode_buttons: list[QPushButton] = []
         _view_qss = build_segmented_button_qss(min_width=28, padding_h=6)
-        for index in range(_VIEW_MODE_COUNT):
+        for index in range(VIEW_MODE_COUNT):
             button = QPushButton(str(index + 1))
             button.setCheckable(True)
             button.setStyleSheet(_view_qss)
-            button.setToolTip(
-                f"Saved view {index + 1} — recall this plot's stored zoom and "
-                "bunch factor (overwrites it when you save the current view)."
-            )
-            button.clicked.connect(
-                lambda _checked=False, idx=index: self._on_view_mode_button_clicked(idx)
-            )
+            button.setToolTip(f"Saved view {index + 1} — edits are kept in the selected view.")
             self._view_mode_button_group.addButton(button, index)
             self._view_mode_buttons.append(button)
             self._main_toolbar.addWidget(button)
+        self._view_mode_button_group.idClicked.connect(self._on_view_mode_button_clicked)
 
         self._main_toolbar.addSeparator()
         self._main_toolbar.addWidget(QLabel("Bunch:"))
@@ -1508,156 +1499,79 @@ class MainWindow(QMainWindow):
         self._view_bunch_spin.valueChanged.connect(self._on_main_bunch_factor_changed)
         self._main_toolbar.addWidget(self._view_bunch_spin)
 
-        self._set_view_mode_button_states(self._active_view_mode_index)
-        self._set_view_bunch_spin_value(
-            self._view_modes[self._active_view_mode_index]["bunch_factor"]
-        )
+        self._sync_saved_view_toolbar("fb_asymmetry")
 
     def _setup_toolbar(self) -> None:
         """Backward-compatible wrapper for older tests/tools."""
         self._create_toolbars()
 
-    @staticmethod
-    def _default_view_mode_state() -> dict[str, float | int]:
-        """Return the default persisted state for one main-window view mode."""
-        return {
-            "bunch_factor": 1,
-            "x_min": 0.0,
-            "x_max": 10.0,
-            "y_min": -30.0,
-            "y_max": 30.0,
-        }
-
-    def _set_view_mode_button_states(self, active_index: int) -> None:
-        """Highlight the currently active saved view mode."""
-        self._syncing_view_mode_ui = True
-        try:
-            for index, button in enumerate(getattr(self, "_view_mode_buttons", [])):
-                button.setChecked(index == active_index)
-        finally:
-            self._syncing_view_mode_ui = False
+    def _sync_saved_view_toolbar(self, view: str) -> None:
+        self._view_mode_buttons[self._active_view_mode_index].setChecked(True)
+        for button in self._view_mode_buttons:
+            button.setEnabled(view == "fb_asymmetry")
+        self._view_bunch_spin.setEnabled(view in {"fb_asymmetry", "groups", "raw_counts"})
 
     def _set_view_bunch_spin_value(self, value: int) -> None:
-        """Update the visible bunch-factor spinbox without re-entering handlers."""
-        if not hasattr(self, "_view_bunch_spin"):
-            return
-        previous = self._view_bunch_spin.blockSignals(True)
-        self._view_bunch_spin.setValue(max(1, int(value)))
-        self._view_bunch_spin.blockSignals(previous)
+        with QSignalBlocker(self._view_bunch_spin):
+            self._view_bunch_spin.setValue(value)
 
-    def _snapshot_active_view_mode(self) -> None:
-        """Store the current bunch factor and axis limits into the active mode."""
-        if not self._view_modes:
-            return
-        mode = self._view_modes[self._active_view_mode_index]
-        if hasattr(self, "_view_bunch_spin"):
-            mode["bunch_factor"] = max(1, int(self._view_bunch_spin.value()))
-        if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
-            x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
-            mode["x_min"] = float(x_min)
-            mode["x_max"] = float(x_max)
-            mode["y_min"] = float(y_min)
-            mode["y_max"] = float(y_max)
-
-    def _collect_view_modes_state(self) -> dict[str, object]:
-        """Return a serializable payload for the saved main-window view modes."""
-        self._snapshot_active_view_mode()
+    def _capture_fb_view(self) -> dict:
         return {
-            "active_index": int(self._active_view_mode_index),
-            "modes": [dict(mode) for mode in self._view_modes],
+            "bunch_factor": self._plot_panel.get_bunch_factor(),
+            "axis_limits": self._plot_panel.axis_limit_state(),
         }
 
-    def _restore_view_modes_state(self, state: object) -> None:
-        """Restore persisted main-window view modes from project state."""
-        restored_modes = [self._default_view_mode_state() for _ in range(_VIEW_MODE_COUNT)]
-        active_index = 0
+    def _collect_view_modes_state(self) -> dict:
+        modes = self._view_modes.copy()
+        if self._plot_workspace.active_view() == "fb_asymmetry":
+            modes[self._active_view_mode_index] = self._capture_fb_view()
+        return {"active_index": self._active_view_mode_index, "modes": modes}
 
-        if isinstance(state, dict):
-            raw_modes = state.get("modes")
-            if isinstance(raw_modes, list):
-                for index in range(min(len(raw_modes), _VIEW_MODE_COUNT)):
-                    raw_mode = raw_modes[index]
-                    if not isinstance(raw_mode, dict):
-                        continue
-                    mode = self._default_view_mode_state()
-                    for key, default in mode.items():
-                        raw_value = raw_mode.get(key, default)
-                        try:
-                            mode[key] = (
-                                int(raw_value) if key == "bunch_factor" else float(raw_value)
-                            )
-                        except (TypeError, ValueError):
-                            mode[key] = default
-                    mode["bunch_factor"] = max(1, int(mode["bunch_factor"]))
-                    restored_modes[index] = mode
-            try:
-                active_index = int(state.get("active_index", 0))
-            except (TypeError, ValueError):
-                active_index = 0
+    def _store_fb_view_before_switch(self, previous_view: str) -> None:
+        if previous_view == "fb_asymmetry" and not self._restoring_project:
+            self._view_modes[self._active_view_mode_index] = self._capture_fb_view()
 
-        self._view_modes = restored_modes
-        self._active_view_mode_index = max(0, min(_VIEW_MODE_COUNT - 1, active_index))
-        self._set_view_mode_button_states(self._active_view_mode_index)
-        self._set_view_bunch_spin_value(
-            self._view_modes[self._active_view_mode_index]["bunch_factor"]
-        )
+    def _activate_saved_fb_view(self) -> bool:
+        """Hand the active slot's policy to the live plot before it draws."""
+        mode = self._view_modes[self._active_view_mode_index]
+        if mode is None:
+            return False
+        self._view_modes[self._active_view_mode_index] = None
+        self._plot_panel.restore_axis_limits(mode["axis_limits"])
+        self._plot_panel.set_bunch_factor(mode["bunch_factor"], emit_signal=False)
+        self._set_view_bunch_spin_value(mode["bunch_factor"])
+        return True
 
-    def _apply_display_bunch_factor(self, bunch_factor: int) -> None:
-        """Merge recorded output bins for display and its fit input."""
-        self._plot_panel.set_bunch_factor(bunch_factor, emit_signal=False)
+    def _refresh_display_bunch(self) -> None:
+        """Refresh the displayed data and fit input after the bunch factor changes."""
         if self._current_dataset is not None:
             self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
         self._render_current_selection_plot()
         self._update_selected_datasets()
 
-    def _apply_view_mode(self, mode_index: int) -> None:
-        """Activate one saved view mode and redraw the current view."""
-        mode = self._view_modes[mode_index]
-        self._applying_view_mode = True
-        try:
-            self._set_view_bunch_spin_value(int(mode["bunch_factor"]))
-            self._apply_display_bunch_factor(int(mode["bunch_factor"]))
-            self._plot_panel.set_view_limits(
-                float(mode["x_min"]),
-                float(mode["x_max"]),
-                float(mode["y_min"]),
-                float(mode["y_max"]),
-            )
-        finally:
-            self._applying_view_mode = False
-
     def _on_view_mode_button_clicked(self, mode_index: int) -> None:
-        """Switch between saved main-window view modes."""
-        if self._syncing_view_mode_ui or mode_index == self._active_view_mode_index:
+        if (
+            self._plot_workspace.active_view() != "fb_asymmetry"
+            or mode_index == self._active_view_mode_index
+        ):
             return
-        self._snapshot_active_view_mode()
+        self._view_modes[self._active_view_mode_index] = self._capture_fb_view()
         self._active_view_mode_index = mode_index
-        self._set_view_mode_button_states(mode_index)
-        self._apply_view_mode(mode_index)
+        self._view_mode_buttons[mode_index].setChecked(True)
+        if self._activate_saved_fb_view():
+            self._refresh_display_bunch()
+        self._mark_dirty()
 
     def _on_main_bunch_factor_changed(self, value: int) -> None:
-        """Apply bunch-factor edits from the main toolbar and persist them into the active mode."""
-        bunch_factor = max(1, int(value))
-        self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
-        if self._applying_view_mode:
+        if not self._view_bunch_spin.isEnabled():
             return
-        self._apply_display_bunch_factor(bunch_factor)
+        self._plot_panel.set_bunch_factor(value, emit_signal=False)
+        self._refresh_display_bunch()
+        self._mark_dirty()
 
-    def _on_plot_view_limits_changed(
-        self,
-        x_min: float,
-        x_max: float,
-        y_min: float,
-        y_max: float,
-    ) -> None:
-        """Persist live x/y limit edits into the active saved view mode."""
-        if self._applying_view_mode:
-            return
-        mode = self._view_modes[self._active_view_mode_index]
-        mode["x_min"] = float(x_min)
-        mode["x_max"] = float(x_max)
-        mode["y_min"] = float(y_min)
-        mode["y_max"] = float(y_max)
+    def _on_plot_view_limits_edited(self) -> None:
+        if self._plot_workspace.active_view() == "fb_asymmetry":
+            self._mark_dirty()
 
     # ── panels / docks ─────────────────────────────────────────────────
 
@@ -1701,8 +1615,8 @@ class MainWindow(QMainWindow):
         self._plot_workspace.active_domain_changed.connect(self._on_plot_workspace_domain_changed)
         PlotDisplayControl(self._plot_display_menu, self._plot_panel, self._plot_workspace)
         self._plot_panel.connect_points_changed.connect(self._mark_dirty)
-        if hasattr(self._plot_workspace, "active_view_changed"):
-            self._plot_workspace.active_view_changed.connect(self._on_plot_workspace_view_changed)
+        self._plot_workspace.active_view_leaving.connect(self._store_fb_view_before_switch)
+        self._plot_workspace.active_view_changed.connect(self._on_plot_workspace_view_changed)
         self.setCentralWidget(self._plot_workspace)
 
         # Left dock — data browser / logbook
@@ -2001,8 +1915,7 @@ class MainWindow(QMainWindow):
         # histograms, rather than value-domain rebinning the reduced curve.
         if hasattr(self._plot_panel, "set_counts_rebunch_provider"):
             self._plot_panel.set_counts_rebunch_provider(self._counts_first_rebunched_dataset)
-        if hasattr(self._plot_panel, "view_limits_changed"):
-            self._plot_panel.view_limits_changed.connect(self._on_plot_view_limits_changed)
+        self._plot_panel.view_limits_edited.connect(self._on_plot_view_limits_edited)
         if hasattr(self._plot_panel, "overlay_toggled"):
             self._plot_panel.overlay_toggled.connect(self._on_overlay_toggled)
         if hasattr(self._frequency_plot_panel, "overlay_toggled"):
@@ -9931,6 +9844,8 @@ class MainWindow(QMainWindow):
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
+        self._sync_saved_view_toolbar(view)
+        restored_fb = view == "fb_asymmetry" and self._activate_saved_fb_view()
         self._moment_readout.invalidate()
         self._moment_batch.invalidate()
         # RRF controls show only on the FB-asymmetry representation (W16).
@@ -9959,6 +9874,9 @@ class MainWindow(QMainWindow):
             if hasattr(self._plot_panel, "set_current_time_view_mode"):
                 self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
             self._on_plot_time_view_changed(view)
+            if restored_fb and self._fit_panel.domain() == "time":
+                self._rebind_single_fit_to_active_projection()
+                self._update_selected_datasets()
         else:
             self._sync_frequency_plot_for_current_dataset()
         self._sync_domain_buttons(view)
@@ -16658,13 +16576,15 @@ class MainWindow(QMainWindow):
         self._plot_panel.restore_state(plot_state, current_dataset)
         self._auto_enable_rrf_for_active_project()
         self._frequency_plot_panel.restore_state(plot_state.get("frequency_plot_state", {}), None)
-        self._restore_view_modes_state(state.get("view_modes_state"))
-        if state.get("view_modes_state") is not None:
-            self._apply_view_mode(self._active_view_mode_index)
-        else:
-            self._set_view_bunch_spin_value(self._plot_panel.get_bunch_factor())
-            self._snapshot_active_view_mode()
+        views = state.get("view_modes_state") or {}
+        self._active_view_mode_index = views.get("active_index", 0)
+        self._view_modes = list(views.get("modes", [None] * VIEW_MODE_COUNT))
+        self._set_view_bunch_spin_value(self._plot_panel.get_bunch_factor())
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
+        view = self._plot_workspace.active_view()
+        self._sync_saved_view_toolbar(view)
+        if view == "fb_asymmetry" and self._activate_saved_fb_view():
+            self._render_current_selection_plot()
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
         self._restore_frequency_representations(prepared.model, lost_combined_runs)
         if self._plot_workspace.active_domain() == "frequency":
@@ -16922,6 +16842,11 @@ class MainWindow(QMainWindow):
             self._fourier_panel.set_stale(None)
         self._data_browser.clear()
         self._plot_workspace.clear()
+        self._view_modes = [None] * VIEW_MODE_COUNT
+        self._active_view_mode_index = 0
+        self._plot_panel.set_bunch_factor(1, emit_signal=False)
+        self._set_view_bunch_spin_value(1)
+        self._sync_saved_view_toolbar("fb_asymmetry")
         if hasattr(self._frequency_plot_panel, "_frequency_x_unit_combo"):
             self._frequency_plot_panel._frequency_x_unit_combo.setCurrentIndex(0)
         if hasattr(self._frequency_plot_panel, "set_frequency_axis_mode"):

@@ -77,6 +77,7 @@ class _StubDataBrowser(QWidget):
 class _StubFitPanel(QWidget):
     def __init__(self):
         super().__init__()
+        self._domain = "time"
         self.fit_completed = _DummySignal()
         self.members_changed = _DummySignal()
         self.global_fit_started = _DummySignal()
@@ -135,6 +136,12 @@ class _StubFitPanel(QWidget):
         self.last_datasets = datasets
         return
 
+    def domain(self):
+        return self._domain
+
+    def set_domain(self, domain):
+        self._domain = domain
+
     def set_dataset(self, dataset):
         self.last_dataset = dataset
         return
@@ -157,6 +164,8 @@ class _StubPlotPanel(QWidget):
         self._fit_curves = {}
         self._vector_subplot_datasets = {}
         self.bunch_factor_changed = _DummySignal()
+        self.view_limits_edited = _DummySignal()
+        self._axis_limits = {"axes": {}}
         self.fit_range_changed = _DummySignal()
         # D8: a drag on the range guides while they show the Batch tab's own
         # window reports it here rather than moving the project range.
@@ -236,6 +245,20 @@ class _StubPlotPanel(QWidget):
     def clear_fits_for_series(self, _fit_id):
         return 0
 
+    def get_bunch_factor(self):
+        return self.factor
+
+    def set_bunch_factor(self, value, *, emit_signal=True):
+        self.factor = value
+        if emit_signal:
+            self.bunch_factor_changed.emit(value)
+
+    def axis_limit_state(self):
+        return self._axis_limits
+
+    def restore_axis_limits(self, state):
+        self._axis_limits = state
+
     def get_analysis_dataset(self, dataset):
         if dataset is None or self.factor <= 1:
             return dataset
@@ -243,7 +266,7 @@ class _StubPlotPanel(QWidget):
             time=dataset.time[:: self.factor],
             asymmetry=dataset.asymmetry[:: self.factor],
             error=dataset.error[:: self.factor],
-            metadata={**dataset.metadata, "analysis_factor": self.factor},
+            metadata=dataset.metadata.copy(),
             run=dataset.run,
         )
 
@@ -380,8 +403,8 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     window._plot_panel.factor = 2
     window._plot_panel.bunch_factor_changed.emit(2)
     assert window._fit_panel.last_dataset is not ds
-    assert window._fit_panel.last_dataset.metadata["analysis_factor"] == 2
-    assert all(d.metadata["analysis_factor"] == 2 for d in window._fit_panel.last_datasets)
+    np.testing.assert_array_equal(window._fit_panel.last_dataset.time, ds.time[::2])
+    assert all(d.n_points == 1 for d in window._fit_panel.last_datasets)
 
     monkeypatch.setattr(window, "_grouped_time_domain_available", lambda dataset=None: True)
     monkeypatch.setattr(

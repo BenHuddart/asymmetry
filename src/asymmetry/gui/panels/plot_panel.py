@@ -282,7 +282,7 @@ class PlotPanel(QWidget):
     #: than the project's own (the Batch tab's series window, D8). The project
     #: range is untouched; whoever set the guide owns the new window.
     fit_range_guide_changed = Signal(float, float)
-    view_limits_changed = Signal(float, float, float, float)
+    view_limits_edited = Signal()
     polarization_axis_changed = Signal(str)
     #: Emitted with the projection label when a stacked subplot is clicked to
     #: become the single-fit target (multi-subplot / ALL view only).
@@ -685,13 +685,7 @@ class PlotPanel(QWidget):
         self._y_min.editingFinished.connect(self._on_y_limit_field_edited)
         self._y_max.editingFinished.connect(self._on_y_limit_field_edited)
 
-        # Bunching has a single user-facing control — the toolbar "Bunch:"
-        # spinbox (mainwindow), which drives this panel via set_bunch_factor().
-        # This hidden spinbox is NOT a second UI path: it is the canonical
-        # backing store for the panel's bunch value, read by get/set_bunch_factor
-        # and persisted in project state (the "bunch_factor" key). It is kept as
-        # a (hidden) QSpinBox rather than a plain int so the existing value/
-        # signal API and saved-project schema stay stable. Never show it.
+        # The main toolbar edits this plot's bunch factor via set_bunch_factor.
         self._bunch_factor = QSpinBox()
         self._bunch_factor.setRange(1, 1000)
         self._bunch_factor.setValue(1)
@@ -2207,7 +2201,6 @@ class PlotPanel(QWidget):
         self._mirror_limit_fields(limits)
         self._draw_fit_range_artists()
         self._canvas.draw()
-        self._emit_view_limits_changed()
 
     def _reapply_held_limits(self) -> None:
         """Re-resolve with no data — a blank canvas keeps every held value.
@@ -2243,6 +2236,7 @@ class PlotPanel(QWidget):
     def _on_auto_button_clicked(self, _checked: bool) -> None:
         """Re-render; the render's resolve reads the buttons for the Auto flags."""
         self._refresh_view_for_limits()
+        self.view_limits_edited.emit()
 
     def _on_x_limit_field_edited(self) -> None:
         """Hold x at the typed pair and turn Auto X off."""
@@ -2251,6 +2245,7 @@ class PlotPanel(QWidget):
         with QSignalBlocker(self._auto_x_btn):
             self._auto_x_btn.setChecked(False)
         self._refresh_view_for_limits()
+        self.view_limits_edited.emit()
 
     def _on_y_limit_field_edited(self) -> None:
         """Hold the focused pane's y at the typed pair and turn Auto Y off."""
@@ -2259,6 +2254,7 @@ class PlotPanel(QWidget):
         with QSignalBlocker(self._auto_y_btn):
             self._auto_y_btn.setChecked(False)
         self._refresh_view_for_limits()
+        self.view_limits_edited.emit()
 
     def _active_label_field_key(self) -> str:
         """Return the label field that should currently be shown/used.
@@ -3301,13 +3297,35 @@ class PlotPanel(QWidget):
             self._auto_y_btn.setChecked(False)
         self._refresh_view_for_limits()
 
-    def reset_view_limits(self) -> None:
-        """Forget every held axis limit, so the next render frames afresh.
+    def axis_limit_state(self) -> dict:
+        """Capture the policy in control units, keyed by axis and projection."""
+        if not self._has_mpl:
+            return {"axes": {}}
+        state = self._limits.state()
+        # Auto Y is common to all projections, including panes of another run.
+        for axis_id, axis in state["axes"].items():
+            if axis_id != "x":
+                axis["auto"] = self._auto_y_btn.isChecked()
+        return state
 
-        Project teardown only (close / new project): a blank canvas or a run
-        switch never resets a held value.
-        """
-        self._limits.reset()
+    def restore_axis_limits(self, state: dict) -> None:
+        """Restore Auto/Hold before the next render resolves its data bounds."""
+        if self._has_mpl:
+            self._limits.restore(state)
+            axes = state["axes"]
+            y_id = self._y_axis_id(self._active_y_axis())
+            y_ids = [y_id] if y_id in axes else [key for key in axes if key != "x"]
+            self._mirror_auto_buttons(y_ids)
+
+    def reset_view_limits(self) -> None:
+        """Return to the initial Auto/Hold policy at project teardown."""
+        if not self._has_mpl:
+            return
+        self._limits = AxisLimitPolicy()
+        with QSignalBlocker(self._auto_x_btn), QSignalBlocker(self._auto_y_btn):
+            self._auto_x_btn.setChecked(False)
+            self._auto_y_btn.setChecked(False)
+        self._sync_auto_from_buttons(["y"])
         self.set_connect_points_enabled(False)
 
     def get_bunch_factor(self) -> int:
@@ -3423,12 +3441,6 @@ class PlotPanel(QWidget):
         self._persistent_frequency_markers = []
         if self._has_mpl and self.has_plot_content():
             self._redraw_current_view()
-
-    def _emit_view_limits_changed(self) -> None:
-        """Broadcast the current view limits to external UI owners."""
-        if not self._has_mpl:
-            return
-        self.view_limits_changed.emit(*self.get_view_limits())
 
     def _set_alpha_label(self, text: str | None) -> None:
         """Update the header metadata label with alpha / unit info."""
@@ -7027,22 +7039,14 @@ class PlotPanel(QWidget):
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
         if self._current_navigation_mode() != "none":
-            # A completed pan/zoom gesture is the user choosing a window, exactly
-            # like typing in a limit field. The toolbar's own release handler has
-            # already applied the zoom rectangle / pan by the time this runs, so
-            # comparing the axes against the button-press snapshot holds only the
-            # axes the gesture actually moved — a horizontal zoom leaves Auto Y
-            # on. Only interactive gestures reach here; a programmatic set_xlim
-            # never produces a button_release.
             after = self._axis_limits_snapshot()
-            y_ids = [axis_id for axis_id in after if axis_id != "x"]
-            # Buttons in, policy decides what moved, buttons out: syncing first
-            # means a toggle changed since the last render cannot be written
-            # back stale by the mirror below.
-            self._sync_auto_from_buttons(y_ids)
-            self._limits.record_gesture(self._gesture_start, after)
-            self._mirror_auto_buttons(y_ids)
-            self._refresh_view_for_limits()
+            if after != self._gesture_start:
+                y_ids = [axis_id for axis_id in after if axis_id != "x"]
+                self._sync_auto_from_buttons(y_ids)
+                self._limits.record_gesture(self._gesture_start, after)
+                self._mirror_auto_buttons(y_ids)
+                self._refresh_view_for_limits()
+                self.view_limits_edited.emit()
             return
 
         if self._active_fit_handle is not None:
@@ -8059,9 +8063,7 @@ class PlotPanel(QWidget):
                 "offset": self.waterfall_offset(),
             },
             "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
-            # One per-axis Auto/Hold snapshot replaces the old x_min/x_max/
-            # y_min/y_max + auto flags + per-projection y cache (schema v18).
-            "axis_limits": self._limits.state(),
+            "axis_limits": self.axis_limit_state(),
             "polarization_axis": self._current_polarization_axis,
             "projection_selection": list(self._selected_projection_labels),
             "projection_memory": {
@@ -8199,14 +8201,8 @@ class PlotPanel(QWidget):
             str(key): [str(label) for label in selected]
             for key, selected in (state.get("projection_memory") or {}).items()
         }
-        # The per-axis Auto/Hold snapshot IS the restored view: the buttons
-        # mirror its Auto flags and the replot below resolves through it, so
-        # there is no separate lock and no post-plot re-apply.
-        # Optional like every other key here: partial states are a legal input
-        # (the file boundary migrates real projects to a complete block).
         if "axis_limits" in state:
-            self._limits.restore(state["axis_limits"])
-        self._mirror_auto_buttons([self._y_axis_id(self._active_y_axis())])
+            self.restore_axis_limits(state["axis_limits"])
 
         # Adopt the saved current selection as the default when valid, then let the
         # combo target that intent. A saved *custom* column that the host has not
@@ -8278,10 +8274,7 @@ class PlotPanel(QWidget):
                 *self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
             )
 
-        # Keep bunch factor at default in restored projects; control is hidden.
-        self._bunch_factor.blockSignals(True)
-        self._bunch_factor.setValue(1)
-        self._bunch_factor.blockSignals(False)
+        self.set_bunch_factor(state.get("bunch_factor", 1), emit_signal=False)
 
         fit_x_min = state.get("fit_x_min")
         fit_x_max = state.get("fit_x_max")

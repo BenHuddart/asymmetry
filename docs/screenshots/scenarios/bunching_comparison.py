@@ -29,7 +29,7 @@ from ._base import CaptureContext, Scenario, register
 
 class BunchingComparisonScenario(Scenario):
     name = "bunching_comparison"
-    description = "Toolbar counts-first bunching of a seeded TF run at ×1, ×4 and ×16."
+    description = "Three Saved views of a seeded TF run with Bunch factors 1, 4, and 16."
     size = (1600, 540)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
@@ -66,12 +66,19 @@ class BunchingComparisonScenario(Scenario):
         try:
             window._data_browser.add_dataset(raw_dataset)
             window._on_dataset_selected(raw_dataset.run_number)
-            for factor, caption in (
-                (1, "×1 (raw, 16.7 ns)"),
-                (4, "×4 (66.7 ns)"),
-                (16, "×16 (267 ns)"),
-            ):
+            views = window._view_mode_buttons
+            factors = (1, 4, 16)
+            for button, factor in zip(views, factors, strict=True):
+                button.click()
                 window._view_bunch_spin.setValue(factor)
+            captions = (
+                "View 1 · ×1 (16.7 ns)",
+                "View 2 · ×4 (66.7 ns)",
+                "View 3 · ×16 (267 ns)",
+            )
+            for button, factor, caption in zip(views, factors, captions, strict=True):
+                button.click()
+                assert window._view_bunch_spin.value() == factor
                 analysis = window._plot_panel.get_analysis_dataset(raw_dataset)
                 assert analysis.n_points == raw_dataset.n_points // factor
                 assert raw_dataset.run.grouping["bunching_factor"] == 1
