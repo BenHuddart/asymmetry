@@ -76,34 +76,104 @@ def test_large_observation_snapshot_runs_on_existing_worker(qapp, monkeypatch, n
     assert not result.source.histograms[0].counts.flags.writeable
 
 
+def test_quick_worker_snapshot_does_not_show_progress(qapp, monkeypatch):
+    from asymmetry.gui.utils import reduction_cache
+    from asymmetry.gui.utils.scientific_input import ScientificInputDialog
+    from tests.core.test_binning_entry_points import _run
+
+    shown = []
+
+    class ObservedDialog(ScientificInputDialog):
+        def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+            shown.append(self.labelText())
+            super().showEvent(event)
+
+    monkeypatch.setattr(reduction_cache, "ScientificInputDialog", ObservedDialog)
+    source = _run(np.full(8192, 100.0), np.full(8192, 80.0))
+    result = reduction_cache.capture_histogram_observation(
+        source, facility=None, reference=None, parent=None
+    )
+
+    assert result.identity == histogram_observation(source).identity
+    assert shown == []
+
+
+def test_snapshot_completion_wins_over_progress_timeout_in_same_event(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QTimer
+
+    from asymmetry.gui.utils import scientific_input
+
+    shown = []
+
+    class ObservedDialog(scientific_input.ScientificInputDialog):
+        def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+            shown.append(self.labelText())
+            QTimer.singleShot(0, self._loop.quit)
+            super().showEvent(event)
+
+    dialog = ObservedDialog(None, "Recording histogram observation…", "Histogram observation")
+    snapshot = object()
+
+    class DeadlineTimer(QTimer):
+        def start(self, _interval):
+            QTimer.singleShot(0, self.complete_and_expire)
+
+        def complete_and_expire(self):
+            dialog._on_finished(snapshot)
+            self.timeout.emit()
+
+    worker = SimpleNamespace(is_cancelled=lambda: False)
+    monkeypatch.setattr(dialog._tasks, "start", lambda *args, **kwargs: worker)
+    monkeypatch.setattr(scientific_input, "QTimer", DeadlineTimer)
+
+    assert dialog.run(None, show_after_ms=400) is snapshot
+    assert shown == []
+
+
 def test_large_observation_snapshot_cancels_without_publishing_context(qapp, monkeypatch):
-    import threading
+    from threading import Event
+    from time import monotonic
 
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
     import asymmetry.core.transform.preparation as preparation
-    from asymmetry.gui.utils.reduction_cache import capture_histogram_observation
+    from asymmetry.gui.utils import reduction_cache
+    from asymmetry.gui.utils.scientific_input import ScientificInputDialog
     from tests.core.test_binning_entry_points import _run
 
     source = _run(np.full(8192, 100.0), np.full(8192, 80.0))
+    initially_modal = []
+    shown = []
 
     def wait_for_cancel(*args, cancel_check, **kwargs):
-        while True:
+        checkpoint = Event()
+        deadline = monotonic() + 5
+        while monotonic() < deadline:
             cancel_check()
-            threading.Event().wait(0.005)
+            checkpoint.wait(0.005)
+        raise AssertionError("Snapshot progress could not be cancelled")
 
-    def cancel():
-        dialog = QApplication.activeModalWidget()
-        assert dialog is not None
-        dialog.findChild(QPushButton).click()
+    class CancellableDialog(ScientificInputDialog):
+        def showEvent(self, event) -> None:  # noqa: N802 — Qt override
+            if not shown:
+                QTimer.singleShot(0, self.findChild(QPushButton).click)
+            shown.append(self.labelText())
+            super().showEvent(event)
 
     parent = QWidget()
     parent.show()
     monkeypatch.setattr(preparation, "histogram_observation", wait_for_cancel)
-    QTimer.singleShot(20, cancel)
+    monkeypatch.setattr(reduction_cache, "ScientificInputDialog", CancellableDialog)
+    QTimer.singleShot(0, lambda: initially_modal.append(QApplication.activeModalWidget()))
     with pytest.raises(ValueError, match="snapshot cancelled"):
-        capture_histogram_observation(source, facility=None, reference=None, parent=parent)
+        reduction_cache.capture_histogram_observation(
+            source, facility=None, reference=None, parent=parent
+        )
+    assert initially_modal == [None]
+    assert shown[0] == "Recording histogram observation…"
 
 
 def test_warm_toolbar_refreshes_current_metadata_and_copies_reduction_provenance(qapp):

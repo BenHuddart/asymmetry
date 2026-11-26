@@ -468,6 +468,10 @@ several overrides and edit each in turn. The only guard is closing the window
 with uncommitted changes, which prompts and lists exactly what would be lost —
 e.g. "profile 'Default (GPS)' and overrides for runs 12, 15".
 
+**Apply** captures the histogram inputs used to produce each run's new curve.
+If a capture is still running after 400 ms, **Recording histogram observation…**
+appears. **Cancel** stops the current capture.
+
 Applying reports, in the LOG and the status bar, how many runs the profile
 reached and which overrides were updated. A preset that requires channels
 absent from the file is a preset/data mismatch: it cannot be trimmed or

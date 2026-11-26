@@ -90,8 +90,6 @@ Its tooltip is ``Merge this many recorded output bins.`` The grouping dialog
 sets the base binning; the toolbar composes with it. Fixed factor 4 and
 **Bunch:** 2 therefore combine eight acquisition bins per displayed point.
 The display factor is stored independently in each saved view mode.
-Large inputs show **Recording histogram observation…** with **Cancel** while
-the resolved operation context is captured; Cancel stops that preparation.
 
 For histogram-backed F–B asymmetry, **Fixed**, **Variable** and **Constant error**
 all merge counts and their shared-background uncertainty before forming the

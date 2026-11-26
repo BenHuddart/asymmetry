@@ -221,10 +221,13 @@ def capture_histogram_observation(run, *, facility, reference, parent):
         prepare=partial(histogram_observation, run, facility=facility, reference=reference),
         label="Recording histogram observation…",
         context="Histogram observation",
+        show_after_ms=400,
     )
 
 
-def prepare_histogram_operation(run, *, reference, parent, prepare, label, context):
+def prepare_histogram_operation(
+    run, *, reference, parent, prepare, label, context, show_after_ms=0
+):
     """Keep substantial count preparation and snapshots on a cancellable worker."""
     from asymmetry.core.transform.preparation import observation_histograms
 
@@ -245,7 +248,7 @@ def prepare_histogram_operation(run, *, reference, parent, prepare, label, conte
 
     dialog = ScientificInputDialog(parent, label, context)
     try:
-        result = dialog.run(capture)
+        result = dialog.run(capture, show_after_ms=show_after_ms)
     finally:
         dialog.close()
         dialog.deleteLater()
