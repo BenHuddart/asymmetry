@@ -74,6 +74,7 @@ from asymmetry.core.io.periods import (
     selected_period_index,
 )
 from asymmetry.core.io.persist_run import needs_histogram_file
+from asymmetry.core.io.psi import PSI_HEADER_SAMPLE_SENSOR
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
@@ -2845,21 +2846,9 @@ class DataBrowserPanel(QWidget):
         )
 
     def _temperature_suspect_tooltip(self, dataset: MuonDataset) -> str | None:
-        """Warning tooltip when the run's Kelvin temperature is a suspected °C value.
-
-        The loader sets ``temperature_unit_suspect`` for EMU furnace runs that
-        store Celsius under a ``Kelvin`` label (see
-        ``NexusLoader._temperature_unit_suspect``); the value is surfaced, never
-        converted. Returns ``None`` for ordinary runs.
-
-        The suspicion only fires when the file carries no logged sample
-        thermometer, so the **Options ▸ Use temperature from log** toggle has
-        nothing to fall back to here — the tooltip says so and spells out the
-        °C→K conversion the user must apply by hand if the run really is a
-        furnace point.
-        """
-        metadata = getattr(dataset, "metadata", None)
-        if not isinstance(metadata, dict) or not metadata.get("temperature_unit_suspect"):
+        """Report a loader-flagged unit mismatch and the corresponding Kelvin value."""
+        metadata = dataset.metadata
+        if not metadata.get("temperature_unit_suspect"):
             return None
         try:
             value = float(metadata.get("temperature", 0.0))
@@ -2891,7 +2880,15 @@ class DataBrowserPanel(QWidget):
     def _temperature_from_log_for_display(self, dataset: MuonDataset) -> float | None:
         """Return the log-derived temperature used by the browser column."""
         sources = self.get_combined_source_datasets(int(dataset.run_number))
-        return self._series_mean_for_field(sources[0] if sources else dataset, "temperature")
+        source = sources[0] if sources else dataset
+        mean = self._series_mean_for_field(source, "temperature")
+        if (
+            mean is not None
+            or source.metadata.get("sample_temperature_log_source") != PSI_HEADER_SAMPLE_SENSOR
+        ):
+            return mean
+        reading = source.sample_temperature_logged
+        return reading if reading is not None and math.isfinite(reading) else None
 
     def _field_for_display(self, dataset: MuonDataset) -> float:
         """Return the field shown in the fixed browser B column."""

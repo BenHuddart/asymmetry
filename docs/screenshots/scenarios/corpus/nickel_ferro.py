@@ -7,32 +7,10 @@ the spec (``GROUND_TRUTH.md``); the physics reference is Foy, Heiman, Kossler &
 Stronach, "Precession of Positive Muons in Nickel and Iron," Phys. Rev. Lett.
 **30**, 1064 (1973).
 
-Ni is the corpus' only high-temperature ferromagnet. In zero applied field a
-**spontaneous** muon precession at the internal field B_µ is the magnetic order
-parameter; its frequency ν(T) softens to zero at the ordering temperature.
-Three facts shape every scenario and are documented in ``NOTES_nickel.md``:
-
-* **Temperature units are °C, not K (GROUND_TRUTH §2 warning block).** The file
-  headers and the guide's run log quote the furnace controller's **Celsius**
-  readings even though the NeXus units attribute claims Kelvin. Read as °C the
-  data land exactly on the literature: the spontaneous precession softens to
-  zero at 358 °C = **631 K = bulk-Ni T_C** (guide/paper ≈ 630 K). Scenarios
-  that plot temperature trends therefore **add 273.15 K**; on-screen per-run
-  labels (``nickel_T=345.0_F=0`` etc.) are the raw controller readings from the
-  files. Critical exponents are unaffected — the offset cancels in T_C − T.
-* **Pulsed-source band-pass (guide Q7/Q9).** EMU's ~80 ns ISIS pulse limits the
-  resolvable frequency to ≲ 10 MHz. Near saturation the Ni internal field
-  (guidance B_µ(0) ≈ 1550 G ⇒ ν ≈ 21 MHz) is **beyond** that band, so the
-  lower-temperature ZF runs (e.g. controller "100" = 373 K ≈ 0.6 T_C, where
-  the 1973 Fig. 2 curve gives ν ≈ 18 MHz) show *no* resolvable oscillation —
-  the precession is only in-band in a window a few tens of K below T_C. The
-  order-parameter branch is therefore fitted on runs 124227–124236
-  (593–629 K, controller 320–356 °C), where ν falls 9.4 → 2.8 MHz in
-  quantitative agreement with the digitised 1973 Fig. 2 points
-  (GROUND_TRUTH §11).
-* **Deliverable.** The OrderParameter trend fit recovers **T_C ≈ 631 K**
-  (literature ≈ 630 K) and **β ≈ 0.39**, i.e. 3D-Heisenberg-like (table value
-  0.367), distinct from mean-field 0.5 / 3D-Ising 0.326 (GROUND_TRUTH §6).
+The spontaneous ZF precession softens towards the Curie temperature. The
+furnace controller readings are interpreted as Celsius for the trend. EMU
+resolves the precession over a limited interval below the transition because
+the source pulse averages out the faster low-temperature oscillation.
 
 Scenarios registered:
 
@@ -42,8 +20,7 @@ Scenarios registered:
   matching the 1973 Fig. 2 curve (~5.8 MHz at ~615 K).
 * ``corpus_ni_nu_t_order_parameter`` — headline: real per-run ZF fits →
   ν(T) in kelvin with the fitted OrderParameter power law ν=y0·(1−T/Tc)^β;
-  recovers T_C ≈ 631 K (literature 630 K) and β ≈ 0.39 (deliverable vs the
-  Heisenberg 0.367 table value).
+  shows a range-sensitive effective exponent and T_C near 631 K.
 * ``corpus_ni_zf_fft`` — the frequency-domain money shot: the FFT of the 618 K
   ZF run showing a single spontaneous-precession line at ν ≈ 6.1 MHz, inside
   EMU's pulsed-source band (contrast guide Q7/Q9).
@@ -72,6 +49,7 @@ _DATA = "Magnetism/Ferromagnetic nickel/Data/emu00%d.nxs"
 # additive baseline (~30) is absorbed by the Constant, exactly as the guide's
 # extra-relaxation discussion (§5 Q4) anticipates.
 _ZF_MODEL = (["Oscillatory", "Exponential", "Constant"], ["*", "+"])
+_ZF_FIT_RANGE_US = (0.0, 4.5)
 
 # The in-band order-parameter branch (GROUND_TRUTH §3): runs where the internal
 # field has softened enough that ν sits inside EMU's ≲10 MHz band and the
@@ -95,49 +73,41 @@ def _process(ms: int = 80) -> None:
     _process_events_for(milliseconds=ms)
 
 
-def _fit_zf_frequency(dataset, nu_seed: float, amp_seed: float):
-    """Fit the spontaneous ZF precession of one run through the core engine.
-
-    Returns ``(nu_MHz, nu_err, amplitude)``. Warm-starting ν *downward* (and the
-    amplitude *upward*) as temperature rises keeps every run in the correct
-    minimum — a cold seed lets the oscillator amplitude collapse to zero on the
-    faster (lower-T) runs, exactly the EuO/YMnAl warm-start lesson.
-    """
+def _fit_zf_frequency(dataset, chained_seed: float, amp_seed: float):
+    """Resolve the precession using spectral and chained frequency seeds."""
     from asymmetry.core.fitting.composite import CompositeModel
     from asymmetry.core.fitting.engine import FitEngine
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.fourier.fft import fft_asymmetry
 
     model = CompositeModel(_ZF_MODEL[0], operators=_ZF_MODEL[1])
     bg = float(np.nanmean(dataset.asymmetry))
-    seeds = {
-        "A_1": amp_seed,
-        "frequency": nu_seed,
-        "phase": 0.0,
-        "Lambda": 0.5,
-        "A_bg": bg,
-    }
-    bounds = {"A_1": (0.0, None), "frequency": (0.0, 15.0), "Lambda": (0.0, None)}
-    params = ParameterSet(
-        [
-            Parameter(
-                name=n,
-                value=seeds[n],
-                min=bounds.get(n, (None, None))[0]
-                if bounds.get(n, (None, None))[0] is not None
-                else -float("inf"),
-                max=bounds.get(n, (None, None))[1]
-                if bounds.get(n, (None, None))[1] is not None
-                else float("inf"),
-            )
-            for n in model.param_names
-        ]
-    )
-    result = FitEngine().fit(dataset, model.function, params, t_min=0.0, t_max=4.5)
-    by_name = {p.name: p.value for p in result.parameters}
-    unc = result.uncertainties or {}
-    nu = abs(float(by_name["frequency"]))
-    err = float(unc.get("frequency", np.nan))
-    return nu, (err if err == err else 0.05), abs(float(by_name["A_1"]))
+    t_min, t_max = _ZF_FIT_RANGE_US
+    frequency, _, magnitude = fft_asymmetry(dataset, t_min=t_min, t_max=t_max, padding_factor=4)
+    # Frequencies above 10 MHz are attenuated by the EMU source pulse.
+    in_band = (frequency >= 2.0) & (frequency <= 10.0)
+    spectral_seed = frequency[in_band][np.argmax(magnitude[in_band])]
+    engine = FitEngine()
+    resolved = []
+    for nu_seed, amplitude in ((chained_seed, amp_seed), (spectral_seed, 10.0)):
+        params = ParameterSet(
+            [
+                Parameter("A_1", amplitude, min=0.0),
+                Parameter("frequency", nu_seed, min=0.0, max=15.0),
+                Parameter("phase", 0.0),
+                Parameter("Lambda", 0.5, min=0.0),
+                Parameter("A_bg", bg),
+            ]
+        )
+        result = engine.fit(dataset, model.function, params, t_min=t_min, t_max=t_max)
+        amp = result.parameters["A_1"].value
+        amp_error = result.uncertainties.get("A_1", np.inf)
+        error = result.uncertainties.get("frequency", np.nan)
+        if result.success and amp > 3.0 * amp_error and np.isfinite(error) and error > 0.0:
+            resolved.append(result)
+    if not resolved:
+        raise RuntimeError(f"Ni run {dataset.run_number} has no resolved precession fit")
+    return min(resolved, key=lambda result: result.chi_squared)
 
 
 def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:
@@ -206,6 +176,7 @@ class NiZfPrecessionFitScenario(CorpusScenario):
                     item.setText("0.0")
         _process(60)
 
+        window._plot_panel.set_fit_range(*_ZF_FIT_RANGE_US)
         single_tab._run_fit()
         single_tab.wait_for_fit()
         _process(80)
@@ -246,15 +217,11 @@ class NiNuTOrderParameterScenario(CorpusScenario):
         "Ni magnetic order parameter: spontaneous ZF precession frequency "
         "ν(T) from real per-run fits (temperatures converted °C → K), with "
         "the fitted OrderParameter power law ν=y0·(1−T/Tc)^β "
-        "(T_C ≈ 631 K vs literature 630 K; β ≈ 0.39 — Heisenberg-like)."
+        "(T_C ≈ 631 K, with a range-sensitive effective exponent)."
     )
     example = EXAMPLE
     size = (1240, 760)
     requires_fit = True
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._fit_summary: dict[str, float] = {}
 
     def build(self) -> QWidget:
         from asymmetry.core.fitting.parameter_models import (
@@ -266,51 +233,42 @@ class NiNuTOrderParameterScenario(CorpusScenario):
         from asymmetry.core.fitting.parameters import Parameter, ParameterSet
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
-        # Fit each ZF run's spontaneous frequency in ascending-T order,
-        # warm-starting ν downward from the highest-frequency resolved run so
-        # every run lands in the correct minimum (GROUND_TRUTH §4 workflow).
-        # File temperatures are controller °C (GROUND_TRUTH §2 warning);
-        # convert to kelvin so the trend reads against the literature T_C.
-        temps: list[float] = []
-        nus: list[float] = []
-        errs: list[float] = []
+        rows = []
         nu_seed, amp_seed = 9.6, 5.0
         for run in _ZF_OP_RUNS:
-            ds = load_corpus_datasets([_DATA % run])[0]
-            nu, err, amp = _fit_zf_frequency(ds, nu_seed, amp_seed)
-            temps.append(float(ds.temperature) + CELSIUS_ZERO_K)
-            nus.append(nu)
-            errs.append(err)
-            if amp > 0.5:
-                nu_seed = max(nu * 0.92, 1.0)
-                amp_seed = min(amp * 1.05, 15.0)
-        temperature = np.array(temps)
-        nu = np.array(nus)
-        nu_err = np.array(errs)
+            dataset = load_corpus_datasets([_DATA % run])[0]
+            result = _fit_zf_frequency(dataset, nu_seed, amp_seed)
+            nu = result.parameters["frequency"].value
+            amp = result.parameters["A_1"].value
+            # The transition falls near 358 on the furnace controller scale,
+            # matching the 630 K reference after conversion from Celsius.
+            temperature = float(dataset.temperature) + CELSIUS_ZERO_K
+            rows.append(
+                {
+                    "run_number": run,
+                    "run_label": dataset.run_label,
+                    "field": 0.0,
+                    "temperature": temperature,
+                    "values": {"frequency": nu},
+                    "errors": {"frequency": result.uncertainties["frequency"]},
+                }
+            )
+            nu_seed = max(nu * 0.92, 1.0)
+            amp_seed = min(amp * 1.05, 15.0)
 
         batch_id = "ni-nu-t-corpus"
-        row_dicts = [
-            {
-                "run_number": run,
-                "run_label": f"{temperature[i]:.0f} K",
-                "field": 0.0,
-                "temperature": float(temperature[i]),
-                "values": {"frequency": float(nu[i])},
-                "errors": {"frequency": float(nu_err[i])},
-            }
-            for i, run in enumerate(_ZF_OP_RUNS)
-        ]
-
         panel = FitParametersPanel()
         panel.load_representation_series(
-            [(batch_id, "ν(T) — Ni ZF (corpus)", row_dicts)],
+            [(batch_id, "ν(T) — Ni ZF", rows)],
             select_id=batch_id,
         )
 
-        # Guide's order-parameter law f_ZF(T) ∝ (T_C − T)^β is the α = 1 case of
-        # the panel's OrderParameter model y0·[1 − (T/Tc)^α]^β; fix α = 1 and fit
-        # y0, T_C, β. β is the graded deliverable (GROUND_TRUTH §6 table);
-        # the fitted T_C lands on the literature 630 K.
+        panel._x_combo.setCurrentText("𝑇 (K)")
+        selected_rows = panel._included_trend_rows("temperature")
+        temperature = np.array([row.temperature for row in selected_rows])
+        nu, nu_err = panel._series_y_arrays(selected_rows, "frequency")
+
+        # Fix the shape exponent to one for ν(T) ∝ (T_C − T)^β.
         model = ParameterCompositeModel(["OrderParameter"])
         params = ParameterSet(
             [
@@ -331,7 +289,6 @@ class NiNuTOrderParameterScenario(CorpusScenario):
         )
         if not result.success:
             raise RuntimeError("Ni OrderParameter ν(T) fit did not converge")
-        self._fit_summary = {n: float(result.parameters[n].value) for n in model.param_names}
 
         fit_range = ModelFitRange(
             x_min=float(temperature.min()),
