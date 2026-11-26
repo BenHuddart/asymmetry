@@ -302,7 +302,6 @@
       "DataBrowserPanel._period_state|asymmetry.core.data.dataset.Run|Call(func=Name(id='getattr', ctx=Load()), args=[Attribute(value=Name(id='dataset', ctx=Load()), attr='run', ctx=Load()), Constant(value='grouping'), Constant(value=None)], keywords=[])": 1,
       "DataBrowserPanel._reapply_two_line_heights|asymmetry.gui.panels.data_browser.DataBrowserPanel|Call(func=Name(id='hasattr', ctx=Load()), args=[Name(id='self', ctx=Load()), Constant(value='_table')], keywords=[])": 1,
       "DataBrowserPanel._sync_rail_header_height|asymmetry.gui.panels.data_browser.DataBrowserPanel|Call(func=Name(id='hasattr', ctx=Load()), args=[Name(id='self', ctx=Load()), Constant(value='_add_field_btn')], keywords=[])": 1,
-      "DataBrowserPanel._temperature_suspect_tooltip|asymmetry.core.data.dataset.MuonDataset|Call(func=Name(id='getattr', ctx=Load()), args=[Name(id='dataset', ctx=Load()), Constant(value='metadata'), Constant(value=None)], keywords=[])": 1,
       "DataBrowserPanel._two_line_row_height|asymmetry.gui.panels.data_browser.DataBrowserPanel|Call(func=Name(id='getattr', ctx=Load()), args=[Name(id='self', ctx=Load()), Constant(value='_two_line_height_cache'), Constant(value=None)], keywords=[])": 1,
       "_RowHighlightDelegate._line_metrics|asymmetry.gui.panels.data_browser._RowHighlightDelegate|Call(func=Name(id='getattr', ctx=Load()), args=[Name(id='self', ctx=Load()), Constant(value='_metrics_cache'), Constant(value=None)], keywords=[])": 1
     },
@@ -707,7 +706,7 @@
     "src/asymmetry/core/workflow/survey.py": 1625,
     "src/asymmetry/gui/mainwindow.py": 17212,
     "src/asymmetry/gui/panels/alc_panel.py": 1500,
-    "src/asymmetry/gui/panels/data_browser.py": 5452,
+    "src/asymmetry/gui/panels/data_browser.py": 5449,
     "src/asymmetry/gui/panels/fit/global_tab.py": 6351,
     "src/asymmetry/gui/panels/fit/panel.py": 1353,
     "src/asymmetry/gui/panels/fit/single_tab.py": 1573,

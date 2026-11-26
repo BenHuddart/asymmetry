@@ -692,6 +692,12 @@ recorded in ``temperature_log_rejected`` with the reason (how far from the
 setpoint, or how much it scattered), so a PSI run with no logged temperature
 says why instead of silently reporting nothing.
 
+**Options → Use temperature from log** uses the labelled time-series mean
+when available. For runs with a loader-accepted PSI header sensor, the
+Data Browser and the **Fit Parameters** temperature axis use that sample
+temperature when there is no suitable time series. Runs without either
+keep the header setpoint.
+
 MusrRoot / LEM ROOT (.root)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

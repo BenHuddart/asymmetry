@@ -18,11 +18,10 @@ zero-field (ZF) μSR temperature scan through a magnetic ordering
 transition. It runs on the EuO runs from the Rigi school data — the PSI GPS
 histograms ``deltat_pta_gps_2923``–``2973`` — which is the same data
 analysed by Blundell *et al.* in their study of the localised
-ferromagnet EuO (*Phys. Rev. B* **81**, 092407 (2010)). Every number and
-figure below comes from driving the GUI over those files, so the results
-can be checked directly against the paper. The same workflow applies,
-with minor adaptations, to metallic ferromagnets and to molecular
-antiferromagnets; two such variants are shown at the end.
+ferromagnet EuO (*Phys. Rev. B* **81**, 092407 (2010)). The walkthrough
+follows the zero-field precession frequency through the transition.
+Examples on metallic nickel and a molecular antiferromagnet show how
+temperature units, fit intervals, and detector balance affect the analysis.
 
 EuO is a textbook case. It is a ferromagnetic semiconductor in which the
 Eu²⁺ 4f⁷ moments are nearly fully localised, making it one of the best
@@ -55,31 +54,25 @@ Near :math:`T_C` it follows a power law
    \nu(T) = \nu_0 \left(1 - \frac{T}{T_C}\right)^{\beta},
 
 with the critical exponent :math:`\beta` depending on the universality
-class (:math:`\beta = 1/2` in Landau mean field,
-:math:`\beta \approx 0.37` in the 3D Heisenberg model,
-:math:`\beta \approx 0.33` in 3D Ising). Measuring :math:`\beta` from μSR
-is one of the most direct ways to test which class a given material
-belongs to — but, as EuO illustrates below, the exponent recovered
-depends critically on the temperature range fitted.
+class. A critical-exponent measurement requires frequencies sufficiently
+close to the transition on a well-calibrated temperature axis.
 
 The data
 --------
 
-The zero-field temperature scan is runs **2923–2960** (the file series
-continues to 2973 with a set of transverse-field 60 G runs, not used
-here). The Rigi school folder includes a logbook giving the measured sample
-temperature of each run; the scan reads from :math:`T = 1.6` K, deep in
-the ordered phase, up through :math:`T_C \approx 69` K into the
-paramagnet at 200 K. Two early runs (2923, 2924) are dropped because
-their short statistics and unreliable thermometry make their temperatures
-untrustworthy, and the very-near-:math:`T_C` runs, where the precession
-is barely a fraction of a cycle before it damps away, are left out of the
-order-parameter trend. That leaves eighteen well-resolved ZF runs from
-1.6 K to 68.7 K.
+The zero-field temperature scan comprises runs 2923–2960. The figure
+fits one spectrum at each selected temperature, in the order 2960,
+2925, and 2928–2943. It leaves out 2923 and 2924 because of their short
+counting times and unstable thermometer readings, and 2926 and 2927
+because they repeat the 10 K point. Runs 2944–2959 sample the transition
+or the high-temperature phase outside this selected oscillatory branch.
+Runs 2961–2973 use a 60 G transverse field and form a separate scan.
 
-Asymmetry reads the PSI ``.bin`` histograms natively, so no format
-conversion is needed — **Open** the run series and the temperatures and
-fields populate the browser directly from the file headers.
+Asymmetry reads the PSI ``.bin`` histograms natively. Open the series and
+enable **Options → Use temperature from log** to use the sample sensor
+for **T (K)**. This recorded sensor agrees with the school logbook for
+the selected runs. For run 2960 it reads 1.604 K, with a header setpoint of
+1.5 K. The captions round the logged temperature to 1.6 K.
 
 Step 1 — Load and inspect
 -------------------------
@@ -88,13 +81,10 @@ Step 1 — Load and inspect
    :alt: EuO ZF temperature scan loaded from PSI .bin files in the main window
    :width: 100%
 
-   The zero-field EuO scan loaded from the real ``deltat_pta_gps``
-   histograms. The data browser lists one run per temperature, sorted
-   coldest-to-hottest; the plot shows the base-temperature run (2960,
-   1.6 K) over its first 0.6 μs, where the spontaneous precession is
-   fastest. The **T (K)** column is read straight from the file metadata,
-   and every run is zero-field (**B (G)** = 0). The PSI headers carry no
-   run title, so the **Title** column is blank — cosmetic, and harmless.
+   The zero-field EuO scan loaded from the ``deltat_pta_gps`` histograms.
+   The plot shows the base-temperature run (2960, 1.6 K) over its first
+   0.6 μs, where the spontaneous precession is fastest. **T (K)** shows
+   the logged sample temperature where available.
 
 The data browser doubles as a run logbook: with the runs grouped and
 sorted by temperature, the scan reads top-to-bottom for the rest of the
@@ -120,16 +110,11 @@ is formed as
 
    G_z(t) = \frac{N_f(t) - \alpha\, N_b(t)}{N_f(t) + \alpha\, N_b(t)} ,
 
-with :math:`\alpha` the detector-balance constant. Here :math:`\alpha` is
-left at its uncalibrated value of 1, which leaves the asymmetry sitting on
-a large (~28 %) constant offset from the unequal detector efficiencies.
-That offset is harmless — it is absorbed by an additive constant term in
-the fit model (Step 3) — but it dominates the vertical scale, so the
-time-domain plots below are zoomed in time and framed to the oscillation
-window. When a balanced asymmetry *is* wanted, open the **Grouping**
-dialog, use **Calibrate…** to estimate :math:`\alpha` from a
-transverse-field run, and **Apply** the grouping to the whole selection so
-every run in the scan is treated identically.
+with :math:`\alpha` the detector-balance constant. The frequency example
+uses :math:`\alpha = 1` and includes an additive constant to describe the
+detector offset. Absolute amplitudes require detector balance calibration.
+Use the same forward and backward groups, calibration choices, and timing
+across all runs in the trend.
 
 Step 3 — Fit an ordered run
 ---------------------------
@@ -138,15 +123,9 @@ Step 3 — Fit an ordered run
    :alt: Converged zero-field oscillation fit on the EuO 1.6 K run
    :width: 100%
 
-   The converged single-run fit on the base-temperature run (2960,
-   1.6 K), zoomed to the first 0.45 μs so the individual cycles resolve.
-   The model is ``Oscillatory * Exponential + Constant`` — a damped cosine
-   on a constant background — and the parameter table reports
-   :math:`f = 30.18\;\mathrm{MHz}`, a damping rate
-   :math:`\lambda = 3.09\;\mathrm{\mu s^{-1}}`, and the large
-   :math:`A_{bg} = 27.3\,\%` baseline that the uncalibrated :math:`\alpha`
-   leaves behind. The reduced chi-square is
-   :math:`\chi^2_\nu = 1.30`.
+   Run 2960 (1.6 K) fitted over 0–6 μs and displayed over 0–0.45 μs to
+   resolve the cycles. ``Oscillatory * Exponential + Constant`` gives
+   a frequency of about 30.2 MHz and a damping rate of about 3 μs⁻¹.
 
 For each ordered run the fit model is a single damped cosine on a
 constant background,
@@ -156,21 +135,14 @@ constant background,
    A(t) = A_1 \cos(2\pi\, f\, t + \varphi)\, e^{-\lambda t} + A_{bg},
 
 entered as the composite ``Oscillatory * Exponential + Constant``. The
-frequency at base temperature, :math:`f = 30.18\;\mathrm{MHz}`,
-reproduces the paper's :math:`\nu(0) \approx 30` MHz and corresponds to an
-internal field :math:`B_\mu(0) = f/(\gamma_\mu/2\pi) = 0.22\;\mathrm{T}`
-at the muon site.
+frequency at base temperature is about 30.2 MHz, corresponding to a
+local field of about 0.22 T.
 
-One practical point governs the whole scan: **seed the frequency near the
-expected value and warm-start it downward** as the temperature climbs.
-The single-frequency fit has a spurious low-amplitude minimum, and a seed
-that starts too far below the true frequency collapses into it. Fitting
-in ascending-temperature order, carrying each converged :math:`f` forward
-as the seed for the next run, keeps every fit in the correct minimum. The
-Single tab's **Wizard…** button (:doc:`/reference/fit_wizard`) can be used on
-a mid-transition run to confirm the model choice before committing to the
-batch; below :math:`T_C` it settles on the damped-oscillation family, above
-:math:`T_C` on a plain exponential.
+Seed the frequency near the visible precession line. Fit over 0–6 μs
+in ascending temperature order, using each fitted frequency to seed the
+next run. The trend here uses 30 MHz initially and starts each subsequent
+run 10% below the previous fitted value. Check that each fit resolves a
+finite-amplitude oscillation before adding it to the series.
 
 The frequency-domain view gives an independent check that only *one*
 precession frequency is present:
@@ -182,20 +154,18 @@ precession frequency is present:
    The **FFT** of the base-temperature run over the Forward/Back pair,
    with a Lorentzian **Apodisation** matched to the signal's short
    coherence time. A single precession line stands clear at
-   :math:`\nu \approx 30\;\mathrm{MHz}`, confirming that EuO orders with a
-   single muon site and a single internal field — the frequency-domain
-   analogue of Blundell *et al.* Fig. 1(c). The averaged grouped
-   transform carries a low-frequency skirt from the detector baselines, so
-   the view is framed to 20–42 MHz where the line dominates.
+   :math:`\nu \approx 30\;\mathrm{MHz}`, consistent with the single
+   resolved line in Blundell *et al.* Fig. 1(c). The view is framed to
+   20–42 MHz.
 
 The qualitative collapse of the order parameter is seen most vividly by
 overlaying several runs across the transition:
 
 .. figure:: /_generated/corpus_screenshots/corpus_euo_waterfall.png
-   :alt: Waterfall of EuO zero-field spectra from 1.6 K to 68.3 K
+   :alt: Waterfall of EuO zero-field spectra from 1.6 K to 68.69 K
    :width: 100%
 
-   A waterfall of six zero-field spectra from 1.6 K (bottom) to 68.3 K
+   A waterfall of six zero-field spectra from 1.6 K (bottom) to 68.69 K
    (top). The precession visibly slows as :math:`\nu(T)` falls toward
    :math:`T_C`: the base-temperature trace fits many cycles into the first
    0.6 μs, while the hottest trace barely completes one before it damps
@@ -205,125 +175,78 @@ overlaying several runs across the transition:
 Step 4 — Trend the order parameter
 ----------------------------------
 
-Repeating the single-run fit across the scan yields one frequency per
-temperature. Opening the **Fit Parameters** panel (from the **Analysis**
-menu) and selecting all the runs populates a trend table; choosing
-``f (MHz)`` for the y-axis plots the order parameter against temperature.
+Record a fit series with the 18 selected runs. Open **Fit Parameters**
+from **Analysis**, select that series, set **x** to **𝑇 (K)**, and
+choose ``f (MHz)`` for the plotted parameter. The temperature comes
+from the logged sample sensor selected in Step 1.
 
 .. figure:: /_generated/corpus_screenshots/corpus_euo_nu_t_trend.png
-   :alt: EuO order parameter — precession frequency versus temperature with a fitted power law
+   :alt: EuO precession frequency versus logged sample temperature with a fitted curve
    :width: 100%
 
-   The EuO order parameter: the spontaneous zero-field precession
-   frequency :math:`\nu(T)` from eighteen real per-run fits (1.6 → 68.7 K),
-   with the fitted ``OrderParameter`` power law overlaid (the card's **Fit
-   ✓** button flags the active fit). The frequency starts at
-   :math:`\sim 30\;\mathrm{MHz}` at base temperature and falls with
-   downward concavity toward zero at :math:`T_C \approx 69\;\mathrm{K}`.
-   The fitted curve reproduces the paper's Fig. 1(d) — but see the caveat
-   below on which exponent it does, and does not, measure.
+   The fitted zero-field frequencies fall from 30.19 MHz at 1.604 K to
+   5.53 MHz at 68.691 K. Error bars show the symmetric uncertainties of
+   the frequency fits.
 
 Step 5 — Fit the order parameter to a power law
 -----------------------------------------------
 
-In the trend panel, check the ``f (MHz)`` chip and click **Fit…** on its
-card to fit the built-in ``OrderParameter`` model,
+Click **Fit…** on the ``f (MHz)`` card and select ``OrderParameter``.
+The function used by the curve is
 
 .. math::
 
    \nu(T) = \nu_0 \left[1 - (T/T_C)^{\alpha}\right]^{\beta},
    \quad T < T_C ,
 
-which is the phenomenological form used in the paper and reduces to the
-Landau power law :math:`\nu_0 (1 - T/T_C)^{\beta}` when
-:math:`\alpha = 1`. The model vanishes identically at and above
-:math:`T_C`, so the temperature at which :math:`\nu` reaches zero
-constrains :math:`T_C` directly.
+with frequency zero at and above :math:`T_C`. Use the whole selected
+range, 1.604–68.691 K, and select **Column (propagated errors)**.
+Use seeds of 30 MHz, 70 K, 1.5, and 0.4 for :math:`\nu_0`, :math:`T_C`,
+:math:`\alpha`, and :math:`\beta`, respectively. The fit bounds keep
+:math:`\nu_0 \geq 0`, :math:`\alpha, \beta \geq 0.01`, and :math:`T_C` at or above the
+hottest selected temperature. The measured frequency errors span
+0.040–0.157 MHz. **Column (propagated errors)** weights each point by
+the inverse square of its supplied frequency error. The fit treats the
+measured temperatures as fixed coordinates.
 
-Fitting the full 1.6–68.7 K range recovers
-:math:`\nu_0 \approx 30.6\;\mathrm{MHz}`, :math:`\alpha \approx 1.5`,
-:math:`\beta \approx 0.44`, and :math:`T_C \approx 69.9\;\mathrm{K}`.
-These match the paper's own **full-range phenomenological** numbers
-(:math:`\alpha \approx 1.5`, :math:`\beta \approx 0.4`), and the amplitude
-:math:`\nu_0 \approx 30\;\mathrm{MHz}` and :math:`T_C` near 69 K are both
-sound. But the exponent from this fit is **not** the reliable critical
-:math:`\beta`.
+The curve gives :math:`\nu_0 = 30.5\;\mathrm{MHz}`,
+:math:`T_C = 70.5\;\mathrm{K}`, :math:`\alpha = 1.63`, and
+:math:`\beta = 0.48` at the displayed precision. The weighted chi-square
+is about 190 for 14 degrees of freedom. Inspect the residuals before
+interpreting the curve. At this precision the model misses the observed
+frequencies by several measured errors at some temperatures, so 70.5 K
+is a model-dependent extrapolation from the ordered branch.
 
-.. admonition:: Critical versus phenomenological exponents — a teachable trap
-   :class: warning
+.. dropdown:: Reproduce the trend from the exported series
 
-   The full-range fit reproduces the paper's phenomenological curve, but
-   Blundell *et al.* explicitly warn that its exponent
-   (:math:`\beta \approx 0.4`) is **not** the critical exponent. The
-   authoritative value, :math:`\beta = 0.32(1)` with
-   :math:`T_C = 69.05(1)\;\mathrm{K}`, comes from a separate fit
-   restricted to the critical regime — small :math:`1 - T/T_C`, on
-   log–log axes (the paper's Fig. 3) — which the whole-curve fit does not
-   perform. The whole-curve fit also runs :math:`T_C` a little high
-   (:math:`\approx 69.9` versus 69.05 K) because :math:`\nu` has not quite
-   reached zero at the last included run. So the trend render above is
-   correct *as a full-range order-parameter fit*, but recovering the
-   published critical :math:`\beta` requires the log–log restriction. This
-   regime sensitivity is a genuine physics lesson, not a quirk of the
-   program: the exponent you extract depends on how close to :math:`T_C`
-   you dare to fit.
+   With only the EuO series selected in **Fit Parameters**, choose
+   **⋯ → Export TSV…**. Save the file as ``euo.tsv``. The
+   :download:`EuO example script <../../examples/euo_order_parameter.py>`
+   reads the run IDs, logged temperatures, fitted frequencies, and their
+   measured errors from that export. It selects the 18 walkthrough runs
+   and prints each observation, the range, and the fitted parameters.
 
-.. dropdown:: Reproducing the trend fit outside the GUI
+   .. code-block:: console
 
-   The trend can be exported (**⋯ → Export TSV…**) and refitted with
-   ``scipy.optimize.curve_fit``. Using the per-run frequencies from the
-   scan:
-
-   .. code-block:: python
-
-      import numpy as np
-      from scipy.optimize import curve_fit
-
-      # Per-run ZF fit results (measured sample T, fitted frequency)
-      T = np.array([1.6, 10.1, 17.2, 24.2, 30.1, 36.3, 41.3, 46.2,
-                    50.3, 52.8, 57.8, 61.3, 65.9, 68.7])
-      nu = np.array([30.19, 29.86, 29.22, 27.98, 26.61, 24.88, 23.41,
-                     21.58, 20.06, 18.79, 16.46, 14.24, 10.66, 5.53])
-      nu_err = np.full_like(T, 0.3)
-
-      def order_parameter(T, nu0, Tc, alpha, beta):
-          arg = np.clip(1.0 - (T / Tc) ** alpha, 1e-9, None)
-          return nu0 * arg ** beta
-
-      popt, _ = curve_fit(order_parameter, T, nu, sigma=nu_err,
-                          p0=[30.0, 69.0, 1.5, 0.4])
-      nu0, Tc, alpha, beta = popt
-      print(f"nu0 = {nu0:.1f} MHz, Tc = {Tc:.1f} K, "
-            f"alpha = {alpha:.2f}, beta = {beta:.2f}")
-
-   This returns the full-range phenomenological numbers
-   (:math:`\alpha \approx 1.5`, :math:`\beta \approx 0.4`); restricting
-   the arrays to the runs nearest :math:`T_C` and fitting
-   :math:`\log \nu` against :math:`\log(1 - T/T_C)` is what recovers the
-   critical :math:`\beta = 0.32(1)`.
+      python euo_order_parameter.py euo.tsv
 
 Interpretation
 --------------
 
-The analysis pins down several physical quantities:
+The low-temperature frequency and its fall toward the transition follow
+the same qualitative trend as the pure EuO data in Fig. 1(d) of
+Blundell *et al.* The paper uses the same full-range function in
+Fig. 1(d) and (e), with approximate shape exponents :math:`\alpha = 1.5`
+and :math:`\beta = 0.4`. Its separate fit to the pure EuO frequencies
+in the critical regime gives :math:`\beta = 0.32(1)` and
+:math:`T_C = 69.05(1)\;\mathrm{K}` (Fig. 3(a), log–log fit at small
+:math:`1 - T/T_C`). The authors note that the exponent is sensitive to
+their choice of :math:`T_C` and the stability of the sample temperature.
 
-- :math:`T_C \approx 69` K is the Curie temperature; the critical-regime
-  fit sharpens it to :math:`69.05(1)` K.
-- :math:`\beta = 0.32(1)` (critical regime) places EuO near the 3D
-  Heisenberg / Ising boundary, consistent with a nearly isotropic
-  localised-moment ferromagnet.
-- :math:`\nu_0 \approx 30\;\mathrm{MHz}` gives the muon-site internal
-  field :math:`B_\mu(0) \approx 0.22\;\mathrm{T}`. In EuO the muon sits at
-  the ¼¼¼ interstitial site where the dipolar field vanishes, so this
-  field is dominated by the hyperfine (contact) contribution — combined
-  with a dipolar-tensor calculation it fixes both the site and the
-  hyperfine coupling.
-- The damping :math:`\lambda(T)` rises toward :math:`T_C`, the signature
-  of critical slowing-down of the spin fluctuations.
-
-A more accurate :math:`\beta` would need more temperature points within a
-few kelvin of :math:`T_C`, a consistent grouping across every run, and
-asymmetric error analysis on the per-run fits.
+At base temperature the resolved line gives a local field of about
+0.22 T. Blundell *et al.* use the measured frequency together with a
+dipolar-field calculation to infer the muon site and discuss the
+hyperfine and Lorentz contributions to that field.
 
 Variants
 --------
@@ -335,60 +258,66 @@ range of precession frequencies.
 Ferromagnetic nickel — a metallic ferromagnet
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Nickel is a 3D Heisenberg ferromagnet with :math:`T_C \approx 631` K, and
-the muon precesses in its spontaneous internal field with *no applied
-field at all* — the cleanest possible demonstration that the signal is
-intrinsic to the ordered state.
+Nickel precesses in its spontaneous internal field below the Curie
+temperature. The ISIS pulse limits the frequencies the time spectrum can
+resolve, so the trend uses only the interval where the oscillation is
+visible.
 
 .. figure:: /_generated/corpus_screenshots/corpus_ni_zf_precession_fit.png
    :alt: Spontaneous zero-field precession in ferromagnetic nickel at 618 K
    :width: 100%
 
-   Spontaneous zero-field precession in nickel at 618 K
-   (:math:`0.98\,T_C`), from the EMU/ISIS run 124232, fitted with the same
-   ``Oscillatory * Exponential + Constant`` model:
-   :math:`f = 6.13\;\mathrm{MHz}` (:math:`B_\mu \approx 0.045\;\mathrm{T}`),
-   :math:`\chi^2_\nu = 1.14`. Note the run label reads ``T=345`` — see the
-   metadata caution below.
+   EMU run 124232 at 618.15 K (controller label ``T=345``). The
+   ``Oscillatory * Exponential + Constant`` fit over 0–4.5 μs gives
+   6.13 MHz, corresponding to a local field of about 0.045 T.
+
+The NeXus temperature unit says kelvin, and the run titles repeat the
+controller values, such as ``nickel_T=345.0_F=0``. The school run log
+puts the controller readings around 358 in the transition region.
+Reading them in Celsius gives 618.15 K at 345 °C and 631.15 K at 358 °C,
+consistent with Foy *et al.* finding the transition near 630 K.
+A 6.13 MHz line at 618 K is also consistent with the softening of the
+precession frequency in their Fig. 2. To use the converted temperatures in
+**Fit Parameters**, select **𝑇 (K)** in the **x** picker. On that rail,
+choose **ƒ → Custom…** and enter ``x + 273.15``. Apply the transform
+before fitting so the points and the fit limits both use kelvin.
+
+Fit each run over 0–4.5 μs with two starting frequencies. Start one fit
+at the strongest **FFT** magnitude between 2 and 10 MHz, and the other
+from the chain in ascending temperature order. The chain starts at
+9.6 MHz and then uses 92% of the preceding fitted frequency. Keep
+converged fits with an oscillation amplitude greater than three times
+its symmetric error and a finite, positive frequency error. Where both
+starts give usable fits, keep the one with the lower chi-square.
 
 .. figure:: /_generated/corpus_screenshots/corpus_ni_nu_t_order_parameter.png
-   :alt: Nickel order parameter — precession frequency versus temperature
+   :alt: Nickel precession frequency versus converted sample temperature
    :width: 100%
 
-   The nickel order parameter over 593–629 K, fitted with the
-   ``OrderParameter`` law (:math:`\alpha` fixed at 1, matching the
-   :math:`f_{ZF}(T) \propto (T_C - T)^{\beta}` form). The fit returns
-   :math:`T_C = 630.9(2)\;\mathrm{K}` — exactly the literature Curie
-   temperature — and :math:`\beta = 0.390(8)`, close to the 3D Heisenberg
-   value (0.367) and clearly distinct from mean-field (0.5) and 3D Ising
-   (0.326), the expected class for bulk nickel.
+   The resolved zero-field runs 124227–124236 cover 593.15–629.15 K.
+   The frequency falls from 9.42 to 2.80 MHz. The fitted
+   ``OrderParameter`` curve fixes :math:`\alpha = 1` to give a single
+   power of :math:`T_C - T`.
 
-.. admonition:: Metadata vigilance — these temperatures are in °C
-   :class: caution
-
-   The nickel run labels and the on-file temperatures are the furnace
-   controller's **Celsius** readings, even though the file's units
-   attribute claims kelvin. The 618 K run above is labelled ``T=345``
-   (i.e. 345 °C). Read naively as kelvin, the scan would place
-   :math:`T_C` near 358 K and disagree with the literature by a factor of
-   almost two; converting to kelvin (:math:`+273.15`) makes
-   :math:`345\,^{\circ}\mathrm{C} = 618\;\mathrm{K}` and
-   :math:`358\,^{\circ}\mathrm{C} = 631\;\mathrm{K}`, the known
-   :math:`T_C`, and every consistency check falls into place. Always
-   confirm what a temperature axis actually means before trusting a
-   transition temperature read off it — the critical exponent is
-   unaffected by the offset (it cancels in :math:`T_C - T`), but
-   :math:`T_C` itself is not.
+Select **Column (propagated errors)** for the 593.15–629.15 K fit.
+It gives :math:`T_C \approx 631` K and an effective exponent of about 0.39.
+The reduced chi-square is about 172. Raise the lower fit limit to
+623.15 K to check its range sensitivity. The four remaining runs give
+about 0.35 and leave one residual degree of freedom. Even this narrower interval has a reduced chi-square around
+15 with the supplied frequency errors. The range sensitivity is much
+larger than the conditional errors on the exponents. These fits locate
+the transition near 631 K and show why the scan does not discriminate
+between the Heisenberg and Ising exponents or establish a universality
+class.
 
 .. _molecular-antiferromagnet:
 
 A molecular antiferromagnet — the low-frequency contrast
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Where EuO precesses at 30 MHz and nickel at a few MHz, a molecular
-antiferromagnet orders in a far weaker internal field and precesses more
-slowly still — a useful reminder that the same model spans three orders of
-magnitude in frequency.
+The base-temperature precession in this molecular antiferromagnet
+is about 1.55 MHz. Its weaker internal field gives a much longer
+oscillation period than the 30 MHz line in EuO.
 
 .. dropdown:: Download the ISIS runs
 
@@ -437,30 +366,69 @@ magnitude in frequency.
         - 10 K
         - 20 G transverse field (calibration)
 
+Select run 17104 in **Grouping** and use **Diamagnetic** in the
+:doc:`balance calibration panel </reference/detector_grouping>` to estimate
+:math:`\alpha = 1.252` from its 20 G transverse-field counts. Apply that
+balance to the zero-field runs with the same on-file forward/backward
+groups and deadtime correction off. This quick estimate supplies a
+central value for :math:`\alpha`. The asymmetry errors propagate counting
+errors at that fixed balance.
+
+The NeXus header gives ``sample/magnetic_field_state`` as ``TF`` for
+runs 17094, 17099, 17100, and 17104. The recorded
+``sample/magnetic_field`` is 0 G in 17094, 17099, and 17100 and 20 G
+in 17104, consistent with the school run assignments above.
+
 .. figure:: /_generated/corpus_screenshots/corpus_molafm_zf_fit.png
    :alt: Slow zero-field precession in a molecular antiferromagnet at 1.2 K
    :width: 100%
 
-   The base-temperature (1.2 K) zero-field run of a molecular
-   antiferromagnet on ISIS MuSR, fitted with the same
-   composite model: :math:`f = 1.56\;\mathrm{MHz}`, a period of ~0.65 μs
-   that is visible cycle-by-cycle over several microseconds. The fine
-   16 ns time base and low per-run statistics give a high
-   :math:`\chi^2_\nu`, but the fit tracks the oscillation and the
-   frequency is what matters.
+   The calibrated 1.2 K zero-field run 17094 with a weighted
+   ``Oscillatory * Exponential + Constant`` fit over 0.11–8 μs. The
+   fitted 1.55 MHz precession has a period of about 0.64 μs. The
+   **Transverse-field run** warning follows the file's ``TF`` tag.
+   The field recorded for 17094 is 0 G, and the forward/backward
+   grouping uses the balance measured on 17104.
 
-.. figure:: /_generated/corpus_screenshots/corpus_molafm_nu_t.png
-   :alt: Molecular antiferromagnet order parameter versus temperature
+At 1.2 K the reduced chi-square is about 21. The normalised residuals
+:math:`(A_{\rm data} - A_{\rm fit}) / \sigma_A` have a lag-one
+correlation of about 0.91, and the discrepancies are strongest at early
+times. Refitting over 0.27–10 μs gives about 1.56 MHz and reduces the
+chi-square per degree of freedom to about 15. The 0.003 MHz shift is
+larger than the approximately 0.0014 MHz symmetric frequency error from
+the first fit. Eight-bin counts-first bunching over 0.11–8 μs leaves
+the structured residuals and increases the reduced chi-square to about
+131. The frequency scale is stable across these checks, while the
+quoted counting-statistical errors give an incomplete description of
+the uncertainty for this model.
+
+.. figure:: /_generated/corpus_screenshots/corpus_molafm_zf_overlay.png
+   :alt: Calibrated zero-field asymmetry of the 6 K and 7 K molecular-magnet runs
    :width: 100%
 
-   The order parameter for the molecular antiferromagnet:
-   :math:`\nu(T)` falls from 1.56 MHz at 1.2 K toward zero between 6 and
-   7 K, giving a Néel temperature :math:`T_N \approx 6.3\;\mathrm{K}` from
-   the ``OrderParameter`` fit — consistent with a direct comparison of the
-   6 K (still oscillating) and 7 K (paramagnetic) spectra. With only six
-   points, three of them on the flat low-temperature plateau, the exponent
-   is loosely constrained and is not quoted as a result; :math:`T_N` is
-   the robust deliverable here.
+   Runs 17099 (6 K) and 17100 (7 K) with the same balance and eight native
+   16 ns bins merged at the count level for display. Both headers have
+   a ``TF`` tag, and both applied fields are 0 G. The damped oscillation
+   at 6 K gives way to a smooth relaxation at 7 K.
+
+Compare ``Oscillatory * Exponential + Constant`` and
+``Exponential + Constant`` on the same native bins over 0.11–8 μs.
+At 6 K the precession fit gives about 0.79 MHz, with weighted chi-square
+about 3,566 compared with 7,247 for the relaxation curve. At 7 K
+the forced oscillatory fit lands at its 0.3 MHz lower bound and gives
+about 78,526 compared with 5,639 for relaxation. The spectra and the
+change in relative fit quality indicate a loss of resolved precession
+between these runs, bracketing the ordering temperature at 6–7 K.
+
+.. figure:: /_generated/corpus_screenshots/corpus_molafm_nu_t.png
+   :alt: Molecular antiferromagnet fitted frequencies versus temperature
+   :width: 100%
+
+   The calibrated zero-field frequencies of runs 17094–17099 fall from
+   about 1.55 MHz at 1.2 K to 0.79 MHz at 6 K. The ``OrderParameter``
+   curve, with :math:`\alpha = 1` and the fitted frequency errors as
+   weights, extrapolates to about 6.3 K with a reduced chi-square of
+   about 181. The extrapolated temperature depends on the chosen model.
 
 Common pitfalls
 ---------------
@@ -475,10 +443,9 @@ Common pitfalls
   warm-start it downward through ascending temperature, so no run collapses
   into the wrong minimum.
 
-- **Reading the exponent from the whole curve.** The full-range
-  phenomenological fit is *not* a critical-exponent measurement. Restrict
-  to the near-:math:`T_C` regime on log–log axes for the reliable
-  :math:`\beta`.
+- **Reading a critical exponent from the whole curve.** Use data in the
+  critical regime, check how the result changes with the chosen window
+  and :math:`T_C`, and report the uncertainty of the temperature scale.
 
 - **Trusting a temperature axis blindly.** As the nickel example shows,
   file metadata can be in the wrong units. Confirm what the temperature
@@ -490,7 +457,8 @@ References
 .. rubric:: References
 
 - S\. J. Blundell, T. Lancaster, F. L. Pratt, P. J. Baker, W. Hayes, J.-P.
-  Ansermet, and A. Comment, Phys. Rev. B **81**, 092407 (2010). The EuO
+  Ansermet, and A. Comment, Phys. Rev. B **81**, 092407 (2010).
+  `DOI <https://doi.org/10.1103/PhysRevB.81.092407>`__. The EuO
   dataset analysed here; the order parameter is Fig. 1(d) and the
   critical-regime fit (:math:`\beta = 0.32(1)`, :math:`T_C = 69.05(1)` K)
   is Fig. 3.

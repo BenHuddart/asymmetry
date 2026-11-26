@@ -7,13 +7,11 @@ the spec: S. J. Blundell *et al.*, "Phase transition in the localized
 ferromagnet EuO probed by µSR," Phys. Rev. B **81**, 092407 (2010). See the
 example's ``GROUND_TRUTH.md``.
 
-These replaced the retired synthetic EuO archetype scenarios: below T_C ≈ 69 K a single spontaneous
-zero-field precession develops in the transverse Forward/Back detector pair;
-its frequency ν(T) is the magnetic order parameter, ν(0) ≈ 30 MHz
-(B_µ(0) ≈ 0.22 T). Fitting ν(T) with the phenomenological order-parameter
-function ν(T) = ν(0)·[1 − (T/T_C)^α]^β recovers the paper's full-range
-numbers (α ≈ 1.5, β ≈ 0.4, T_C ≈ 69 K); the *critical* β = 0.32(1) needs a
-log–log restriction the trending panel does not do (GROUND_TRUTH §4/§9).
+The zero-field Forward/Backward asymmetry resolves spontaneous precession
+below the transition. The trend uses the logged sample thermometer and the
+18 ordered spectra selected for the walkthrough. Its fitted exponent
+describes the full selected range. The published critical exponent comes
+from Fig. 3(a) of Blundell et al.
 
 Scenarios registered:
 
@@ -30,6 +28,8 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
+from examples.euo_order_parameter import EUO_RUNS
+
 from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/Magnetic ordering in EuO"
@@ -40,45 +40,14 @@ def _rel(run: int) -> str:
     return _DATA % run
 
 
-# Zero-field temperature scan, ordered by *measured* sample temperature
-# (logbook.rtf, GROUND_TRUTH §3). Runs 2923/2924 dropped (bad thermometry /
-# low statistics, §3 note); TF-60 G runs 2961–2973 excluded (paramagnetic, not
-# order-parameter data). Values are the sample-thermometer readings.
-_ZF_SCAN: list[tuple[int, float]] = [
-    (2960, 1.60),
-    (2925, 10.05),
-    (2928, 17.18),
-    (2929, 24.16),
-    (2930, 30.14),
-    (2931, 36.31),
-    (2932, 41.28),
-    (2933, 46.23),
-    (2934, 50.25),
-    (2935, 52.76),
-    (2936, 57.78),
-    (2937, 61.32),
-    (2938, 63.36),
-    (2939, 64.86),
-    (2940, 65.87),
-    (2941, 66.88),
-    (2942, 67.90),
-    (2943, 68.69),
-]
+_ZF_FIT_RANGE_US = (0.0, 6.0)
 
 # Runs shown as a coarse waterfall across the transition (base → just below T_C).
 _WATERFALL_RUNS = [2960, 2930, 2934, 2937, 2940, 2943]
 
 
 def _fit_zf_frequency(dataset, nu_seed: float):
-    """Fit ``Oscillatory*Exponential + Constant`` to one ZF run via the core engine.
-
-    Returns ``(nu_MHz, nu_err, lambda, fit_result)``. The transverse F/B
-    asymmetry the loader builds carries the spontaneous precession on a large
-    uncalibrated (α = 1) baseline, absorbed by the additive ``Constant``. Seeding
-    the frequency near the expected ν(T) and warm-starting downward as T → T_C
-    keeps every fit in the correct minimum (a low seed collapses to a spurious
-    low-amplitude solution).
-    """
+    """Fit a ZF damped cosine and a constant detector offset."""
     from asymmetry.core.fitting.composite import CompositeModel
     from asymmetry.core.fitting.engine import FitEngine
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -93,11 +62,9 @@ def _fit_zf_frequency(dataset, nu_seed: float):
             Parameter("A_bg", float(np.nanmean(dataset.asymmetry))),
         ]
     )
-    result = FitEngine().fit(dataset, model.function, params, t_min=0.0, t_max=6.0)
-    nu = abs(result.parameters["frequency"].value)
-    err = float(result.uncertainties.get("frequency", 0.1)) or 0.1
-    lam = abs(result.parameters["Lambda"].value)
-    return nu, err, lam, result
+    return FitEngine().fit(
+        dataset, model.function, params, t_min=_ZF_FIT_RANGE_US[0], t_max=_ZF_FIT_RANGE_US[1]
+    )
 
 
 def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:
@@ -107,6 +74,15 @@ def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:
             return
         _process_events_for(milliseconds=poll_ms)
         elapsed += poll_ms
+
+
+def _show_logged_temperature(window) -> None:
+    """Show the same logged temperature column used by the EuO trend."""
+    window._use_temperature_from_log_action.setChecked(True)
+    browser = window._data_browser
+    header = browser._table.horizontalHeader()
+    temperature = browser._COLUMNS.index("T (K)")
+    header.moveSection(header.visualIndex(temperature), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +117,7 @@ class EuoLoadBrowseScenario(CorpusScenario):
         )
         # Select the base-temperature run so the plot shows a real ordered
         # (oscillating) ZF spectrum next to the browser.
+        _show_logged_temperature(window)
         window._on_dataset_selected(datasets[0].run_number)
         _process_events_for(milliseconds=80)
         window._plot_panel.set_view_limits(0.0, 0.6, *window._plot_panel.get_view_limits()[2:])
@@ -177,6 +154,7 @@ class EuoZfFitScenario(CorpusScenario):
         datasets = load_corpus_datasets([_rel(2960)])
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
+        _show_logged_temperature(window)
         window._on_dataset_selected(datasets[0].run_number)
 
         single_tab = window._fit_panel._single_tab
@@ -202,6 +180,7 @@ class EuoZfFitScenario(CorpusScenario):
                 _set_param_table_value(param_table, rows[name], value)
         _process_events_for(milliseconds=40)
 
+        window._plot_panel.set_fit_range(*_ZF_FIT_RANGE_US)
         single_tab._run_fit()
         single_tab.wait_for_fit()
 
@@ -308,102 +287,99 @@ class EuoFftScenario(CorpusScenario):
 class EuoNuTTrendScenario(CorpusScenario):
     name = "corpus_euo_nu_t_trend"
     description = (
-        "EuO order parameter: spontaneous ZF precession frequency ν(T) from "
-        "the real corpus runs, with the fitted OrderParameter power law "
-        "ν(T)=ν0·[1−(T/Tc)^α]^β (Tc ≈ 69 K)."
+        "EuO spontaneous ZF precession frequency versus logged sample temperature. "
+        "The phenomenological fit to the 18 ordered runs gives Tc = 70.5 K. "
+        "Blundell et al. obtain 69.05(1) K in their separate critical-regime fit."
     )
     example = EXAMPLE
     size = (1240, 760)
     requires_fit = True  # real per-run ZF fits + the OrderParameter trend fit
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._fit_summary: dict[str, float] = {}
-
     def build(self) -> QWidget:
+        from asymmetry.gui.panels.data_browser import DataBrowserPanel
+
+        browser = DataBrowserPanel()
+        browser.set_use_temperature_from_log(True)
+        rows = []
+        nu_seed = 30.0
+        with browser.batch_updates():
+            for run in EUO_RUNS:
+                dataset = load_corpus_datasets([_rel(run)])[0]
+                browser.add_dataset(dataset.fit_record())
+                temperature = browser.displayed_coordinate(run)["temperature"]
+                if temperature is None or not browser._temperature_uses_log_for_display(dataset):
+                    raise RuntimeError(f"Missing GPS sample thermometer for EuO run {run}")
+                result = _fit_zf_frequency(dataset, nu_seed)
+                nu = result.parameters["frequency"].value
+                error = result.uncertainties.get("frequency")
+                if not result.success or error is None or not np.isfinite(error) or error <= 0:
+                    raise RuntimeError(f"EuO run {run} has no usable fitted frequency uncertainty")
+                rows.append(
+                    {
+                        "run_number": run,
+                        "run_label": dataset.run_label,
+                        "field": 0.0,
+                        "temperature": temperature,
+                        "values": {"frequency": nu},
+                        "errors": {"frequency": error},
+                        "model_name": "Oscillatory * Exponential + Constant",
+                        "chi_squared": result.chi_squared,
+                        "reduced_chi_squared": result.reduced_chi_squared,
+                    }
+                )
+                nu_seed = max(nu * 0.9, 2.0)
+        browser.deleteLater()
+        return self.build_trend_panel(rows)
+
+    @staticmethod
+    def build_trend_panel(rows: list[dict]) -> QWidget:
+        """Attach the fitted curve to the same Fit Parameters rows used for TSV export."""
         from asymmetry.core.fitting.parameter_models import (
             ModelFitRange,
             ParameterCompositeModel,
             ParameterModelFit,
             fit_parameter_model,
-            suggest_trend_seeds,
         )
         from asymmetry.core.fitting.parameters import Parameter, ParameterSet
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
-        # Fit each ZF run's spontaneous frequency in ascending-temperature order,
-        # warm-starting ν downward from ν(0) ≈ 30 MHz so every run lands in the
-        # correct minimum (GROUND_TRUTH §4 workflow).
-        temps: list[float] = []
-        nus: list[float] = []
-        errs: list[float] = []
-        nu_seed = 30.0
-        for run, temp in _ZF_SCAN:
-            ds = load_corpus_datasets([_rel(run)])[0]
-            nu, err, _lam, _res = _fit_zf_frequency(ds, nu_seed)
-            temps.append(temp)
-            nus.append(nu)
-            errs.append(err)
-            nu_seed = max(nu * 0.9, 2.0)
-        temperature = np.array(temps)
-        nu = np.array(nus)
-        nu_err = np.array(errs)
-
         batch_id = "euo-nu-t-corpus"
-        row_dicts = [
-            {
-                "run_number": run,
-                "run_label": f"{temperature[i]:.1f} K",
-                "field": 0.0,
-                "temperature": float(temperature[i]),
-                "values": {"frequency": float(nu[i])},
-                "errors": {"frequency": float(nu_err[i])},
-            }
-            for i, (run, _t) in enumerate(_ZF_SCAN)
-        ]
-
         panel = FitParametersPanel()
         panel.load_representation_series(
-            [(batch_id, "ν(T) — EuO (corpus)", row_dicts)],
+            [(batch_id, "ν(T) — EuO ZF (logged sample temperature)", rows)],
             select_id=batch_id,
         )
-
-        # Full-range phenomenological OrderParameter fit — the machinery the
-        # panel's Model Fit dialog runs.
+        panel._x_combo.setCurrentText("𝑇 (K)")
+        x_key = panel._effective_x_key()
+        selected_rows = panel._included_trend_rows(x_key)
+        temperature = np.array([panel._x_value(row, x_key) for row in selected_rows])
+        nu, nu_err = panel._series_y_arrays(selected_rows, "frequency")
+        t_min, t_max = float(temperature.min()), float(temperature.max())
         model = ParameterCompositeModel(["OrderParameter"])
-        seeds = suggest_trend_seeds(model, temperature, nu)
         params = ParameterSet(
             [
-                Parameter(
-                    name=p,
-                    value=float(seeds.get(p, model.param_defaults[p])),
-                )
-                for p in model.param_names
+                Parameter("y0", 30.0, min=0.0),
+                Parameter("Tc", 70.0, min=t_max),
+                Parameter("beta", 0.4, min=0.01),
+                Parameter("alpha", 1.5, min=0.01),
             ]
         )
         result = fit_parameter_model(
-            temperature,
-            nu,
-            nu_err,
-            model,
-            params,
-            x_min=float(temperature.min()),
-            x_max=float(temperature.max()),
+            temperature, nu, nu_err, model, params, x_min=t_min, x_max=t_max
         )
         if not result.success:
             raise RuntimeError("EuO OrderParameter ν(T) fit did not converge")
-        self._fit_summary = {n: float(result.parameters[n].value) for n in model.param_names}
 
         fit_range = ModelFitRange(
-            x_min=float(temperature.min()),
-            x_max=float(temperature.max()),
+            x_min=t_min,
+            x_max=t_max,
             model=model,
             parameters=result.parameters,
             result=result,
         )
         panel._model_fits["frequency"] = ParameterModelFit(
             parameter_name="frequency",
-            x_key="temperature",
+            x_key=x_key,
             ranges=[fit_range],
             active=True,
         )
