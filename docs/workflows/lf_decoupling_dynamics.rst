@@ -13,12 +13,12 @@ LF decoupling and static-vs-dynamic field distributions
    window and candidate models from your own spectra, and check whether the
    time resolution and field range can distinguish their predictions.
 
-A longitudinal-field (LF) series tests models for the local fields at the muon.
-Static fields can be decoupled by a sufficiently large longitudinal field, but
-slowly fluctuating fields can also give a nearly flat high-field spectrum.
-Interpret the field dependence together with the time dependence, experimental
-resolution, and the assumptions of the candidate models. Decoupling alone does
-not establish a unique static or dynamic mechanism.
+Do the local fields fluctuate on the timescale of the muon measurement?
+Static and slowly fluctuating fields can both give a nearly flat
+high-field spectrum. In a longitudinal-field (LF) scan, use **Fit**
+to measure the relaxation rate as the field changes, then compare the
+rate trend with a model in **Fit Parameters**. The time resolution and
+the choice of model limit what decoupling can establish.
 
 This chapter works the dynamic case on real data: the Ca₃Co₂O₆ magnetic-plateau
 decoupling scan from the Rigi school data (HiFi runs 9023–9051, 15 K,
@@ -158,7 +158,8 @@ Step 2 — Fit each run with a single exponential
    \mathrm{s}^{-1}`, and a background :math:`A_{bg} = 7.23\,\%`. The fit runs
    on the unbinned 0–16 µs data and converges cleanly.
 
-The per-run model is ``Exponential + Constant``,
+Open **Analysis → Fit** and use **Single** for run 9044. Set
+**Fit range** to 0–16 µs and fit ``Exponential + Constant``,
 :math:`A(t) = A_1\,\exp(-\lambda t) + A_{bg}`, consistent with the single-exponential limit
 of the Redfield picture with an additive background. Seed :math:`\lambda`
 high (~9 µs⁻¹) at low field and carry it downward from run to run in field
@@ -191,8 +192,9 @@ Step 3 — Build the λ(B) trend
    a slow decrease across the 0.5–3.6 T plateau, and a levelling to ~0.3 µs⁻¹
    above 3.6 T.
 
-Fitting every run from 0.2 T upward and collecting the rates builds the
-:math:`\lambda(B_L)` curve. Its shape is the physics of the plateau. Below
+Fit each run from 0.2 T upward. Open **View → Show Fit Parameters**,
+select the fit series, and plot ``λ (µs⁻¹)`` against ``𝐵 (G)`` to build
+the :math:`\lambda(B_L)` curve. Its shape is the physics of the plateau. Below
 0.5 T the bulk magnetisation is still rising and :math:`\lambda` falls
 steeply; across the 0.5–3.6 T plateau it decreases slowly, the regime where
 the Redfield model holds; above 3.6 T the sample saturates into a
@@ -213,8 +215,8 @@ Step 4 — The Redfield linearisation (headline)
    :alt: Redfield linearisation — 1/lambda against B squared with a linear fit over the plateau
    :width: 100%
 
-   The headline result: :math:`1/\lambda` against :math:`B^2` (paper
-   Fig. 2(b)), built in the real trending panel with the card's **ƒ** button
+   The headline result: :math:`1/\lambda` in μs against :math:`B^2` in G²
+   (compare Fig. 2(b) of Baker *et al.*), built in **Fit Parameters** with the card's **ƒ** button
    set to ``1/y  (reciprocal)`` (reading ``1/y``) and the x rail's **ƒ**
    button set to ``x²  (square)`` (reading ``x²``), and a ``Linear`` model
    fit run on the transformed plateau. The
@@ -248,7 +250,9 @@ left in the series but excluded from the trend (the series'
 action), so they remain visible and ringed but do not pull the fit — the
 0.4 T point below the plateau and the 3.8 T saturated point. See
 :doc:`/reference/parameter_trending` for the transform presets and the
-model-fit dialog.
+model-fit dialog. On the rate card, use **Fit…** and choose ``Linear``.
+Set **Errors** to **Column (stabilised errors)**. This raises small
+propagated reciprocal-rate errors to half the median included error.
 
 Reading the slope and intercept back through the algebra gives
 :math:`\Delta_B = 41.0\;\mathrm{mT}` and :math:`\tau = 929\;\mathrm{ps}`, against
@@ -257,9 +261,11 @@ the paper's :math:`\Delta_B = 40.6(3)\;\mathrm{mT}` and
 The transformed linear fit and a fit
 in the original rate coordinates have different finite-error weighting;
 reciprocal propagation is a local approximation, particularly for uncertain
-rates. The reduced :math:`\chi^2` of the ``Linear`` fit is 1.84. The paper
+rates. With the stabilised weights, the sum of squared weighted
+residuals per degree of freedom is 1.83. The paper
 reports that its estimates are insensitive to small reductions of its fitted
-field interval; that does not validate every choice of points or weights here.
+field interval. The estimates here depend on the eight selected plateau
+points and their effective weights.
 
 .. dropdown:: Solving the slope and intercept for :math:`\Delta_B` and :math:`\tau`
 
@@ -281,23 +287,15 @@ field interval; that does not validate every choice of points or weights here.
       \Delta_B = \sqrt{\frac{\tau}{2m}}.
 
    With the transformed fit returning :math:`m = 0.276\;\mu\mathrm{s\,T^{-2}}`
-   and :math:`b = 0.442\;\mu\mathrm{s}`, and
+   and :math:`b = 0.441\;\mu\mathrm{s}`, and
    :math:`\gamma_\mu = 2\pi\times 135.5\;\mathrm{MHz\,T^{-1}}`, this gives
    approximately :math:`\tau = 0.93\;\mathrm{ns}` and
    :math:`\Delta_B = 41\;\mathrm{mT}` from the rounded coefficients.
 
-.. note::
-
-   **Read the transformed-axis units from the physics, not the labels.** The
-   trending panel stores field in gauss as its native unit, so a squared field
-   axis is nominally in gauss-squared. This scan stores the field in tesla so
-   that :math:`B^2` comes out in :math:`\mathrm{T}^2` and the Redfield slope in
-   :math:`\mu\mathrm{s\,T^{-2}}`; the transformed axes on the figure carry the
-   bare symbols :math:`B^2` and :math:`1/\lambda` without units. Read
-   :math:`B^2` as :math:`\mathrm{T}^2` (0.25–14.4 across the scan) and
-   :math:`1/\lambda` as :math:`\mu\mathrm{s}`. A dataset natively held in tesla
-   is best trended through a custom logbook column carrying its own unit
-   (:doc:`/reference/parameter_trending`).
+The plotted square uses the native field in gauss, so the abscissa is in
+G² and the fitted slope in μs G⁻². Multiply that slope by :math:`10^8`
+to use the equations above with field in tesla and slope in μs T⁻².
+The intercept is in μs in either convention.
 
 Within the single-timescale Redfield interpretation, the plateau data support
 a correlation time just under a nanosecond and an effective field scale near
@@ -306,11 +304,13 @@ background treatment; they do not uniquely identify a microscopic process.
 
 .. _re6zr-lf:
 
-Contrast: the static counter-example
--------------------------------------
+Comparing zero and longitudinal field in Re₆Zr
+----------------------------------------------
 
 The Re₆Zr measurements come from the `ISIS dataset for MuSR runs 38176–38275
-<https://doi.org/10.5286/ISIS.E.24088625>`__.
+<https://doi.org/10.5286/ISIS.E.24088625>`__. Select runs 38224 and
+38263, choose **F-B asymmetry**, and turn on **Overlay**. Compare
+the extent of the relaxation over the same time range in both runs.
 
 .. figure:: /_generated/corpus_screenshots/corpus_trsb_lf_decoupling.png
    :alt: Re₆Zr base-temperature zero-field spectrum overlaid with the 10 mT longitudinal-field spectrum

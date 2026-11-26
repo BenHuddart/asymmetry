@@ -12,23 +12,13 @@ F–µ–F entangled states: measuring a bond length with muons
    is appropriate for your sample, then choose the time window and additional
    relaxation or background terms from your own data.
 
-Most muon-spin experiments read out a *field* — the internal field of a magnet,
-the width of a nuclear-dipolar distribution, the penetration depth of a
-superconductor. This chapter does something different: it reads out a *distance*.
-When a positive muon stops in a fluoropolymer it binds between two fluorine
-nuclei and the three spins evolve as a single quantum-entangled object, whose
-zero-field polarisation beats at frequencies fixed entirely by the muon–fluorine
-separation. Fit that beating and you have measured a sub-ångström bond length
-with a spin-½ probe — a genuine quantum ruler. The worked example is
-poly-tetrafluoroethylene (PTFE, Teflon, (–CF₂–CF₂–)\ :sub:`n`), the textbook
-host for the effect, using real MuSR data from the ISIS pulsed source.
-
-This page is a companion to the :ref:`Nuclear dipolar <fit-nuclear-dipolar>`
-fit-function reference, which sets out the whole F–µ–F model family and the
-dipolar Hamiltonian behind it; here the focus is the end-to-end workflow on real
-data — calibrate, recognise the signature, fit the bond length, and read the
-frequency-domain view — and, just as importantly, an honest account of where the
-simplest model stops being adequate.
+How far is the muon from its two fluorine neighbours in PTFE? The
+three coupled spins give the zero-field asymmetry a distinctive dip and
+recovery. In **Fit**, the ``FmuF_Linear`` model uses the frequencies of
+that beating to estimate the muon–fluorine separation. Compare the fit
+with the measured beats before interpreting its distance or uncertainty.
+The :ref:`nuclear dipolar reference <fit-nuclear-dipolar>` describes the
+models and their assumptions.
 
 Why PTFE hosts an entangled three-spin state
 ---------------------------------------------
@@ -111,8 +101,8 @@ time domain.
 
    The TF 20 G calibration run ``17293`` (Teflon, cooling), framed over the
    first 12 µs. The 20 G field drives a slow transverse precession —
-   :math:`\gamma_\mu B \approx 0.27` MHz, a period of about 3.7 µs — and it is
-   the *amplitude* of this oscillation that fixes the detector balance. The
+   :math:`\gamma_\mu B \approx 0.27` MHz, a period of about 3.7 µs.
+   An imbalance in detector response shifts the oscillation's baseline. The
    advisory banner (*"Transverse-field run: the current grouping washes out the
    precession. Open Grouping… and apply 'Transverse (Vector)'."*) points to the
    :doc:`/reference/grouping_calibration` dialog, where **Grouping** and the
@@ -121,15 +111,19 @@ time domain.
    raw asymmetry ratio grows noisy, which is normal for pulsed MuSR data and does
    not affect the estimate.
 
-With :math:`\alpha` calibrated, every zero-field run in the scan inherits the
-same detector balance.
+To estimate the detector balance for your analysis, open **Grouping**,
+select run 17293 under **Calibration run**, and choose the method
+appropriate for the observed transverse-field signal. Use **Estimate
+calibration** and **Apply** to save the result in the grouping profile.
+Reuse the profile across the zero-field runs if they share the detector
+arrangement. The figures below use the on-file grouping and
+:math:`\alpha=1`, with a constant offset in the fit.
 
 Step 2 — Read the raw zero-field signature
 ------------------------------------------
 
-Before fitting anything, load the base-temperature zero-field run and look at
-the raw asymmetry. The F–µ–F signature is distinctive enough to identify by eye,
-and recognising it is half the analysis.
+Load zero-field run 17294 and select **F-B asymmetry**. Set the plot's
+**X:** limits to 0–8 µs to inspect the dip and recovery.
 
 .. figure:: /_generated/corpus_screenshots/corpus_ptfe_zf_signature.png
    :width: 100%
@@ -189,9 +183,10 @@ envelope, which absorbs those distant-neighbour couplings, and add a flat
    rather than a frequency. The full model family — including the numerically
    powder-averaged variants — is documented at :ref:`fit-nuclear-dipolar`.
 
-Seed the amplitude near the ~15 % initial asymmetry, :math:`r_{\mu F}` at the
-literature guidance value of about 1.15 Å, and the Gaussian width near
-0.35 µs⁻¹, then press **Fit**.
+In **Fit → Single**, seed the amplitude at 14%, :math:`r_{\mu F}` at
+1.15 Å, the Gaussian width at 0.35 µs⁻¹, and the offset at 0.5%. Use
+**Bounds** to set the minima for the amplitude and the Gaussian width
+to zero. Click **Fit** with the default good-time range.
 
 .. figure:: /_generated/corpus_screenshots/corpus_ptfe_fmuf_fit.png
    :width: 100%
@@ -211,12 +206,11 @@ literature guidance value of about 1.15 Å, and the Gaussian width near
    ``χ²/ν = 1.4160 · npar = 4 · ndof = 1956``, with a quality verdict of
    **poor** — a point taken up below.
 
-The headline number is :math:`r_{\mu F} = 1.30` Å — a bond length measured to
-about a picometre from a spin oscillation. It is the right order of magnitude and
-carries the correct physics, but it sits *above* the literature band of
-1.1–1.2 Å (Brewer *et al.* found 1.172 Å in CaF₂), and the quality chip flags the
-fit as **poor**. Both facts are honest and instructive rather than
-embarrassing — see the next section.
+The fitted separation is about 1.30 Å. The 0.001 Å standard error
+is conditional on the linear three-spin model and Gaussian envelope.
+The residuals and **poor** quality rating limit the precision of a
+structural interpretation. Brewer *et al.* found 1.172 Å in CaF₂, within
+the 1.1–1.2 Å range reported for related systems.
 
 .. note::
 

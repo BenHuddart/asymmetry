@@ -462,7 +462,16 @@ def _build_arrhenius_fit(temps, nu, nu_err, *, x_min):
         ]
     )
     x_max = float(temps.max())
-    result = fit_parameter_model(temps, nu, nu_err, model, params, x_min=x_min, x_max=x_max)
+    result = fit_parameter_model(
+        temps,
+        nu,
+        nu_err,
+        model,
+        params,
+        x_min=x_min,
+        x_max=x_max,
+        error_mode="column_stabilized",
+    )
     if not result.success:
         raise RuntimeError("Cu ν(T) Arrhenius trend fit did not converge for the screenshot")
 

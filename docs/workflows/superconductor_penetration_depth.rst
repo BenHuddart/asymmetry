@@ -14,11 +14,13 @@ Superconductor penetration depth from σ(T)
    own component model and non-superconducting linewidth before converting a
    linewidth trend to penetration depth.
 
-This chapter shows how to compare transverse-field (TF) μSR linewidths
-through the superconducting transition and what assumptions enter a
-penetration-depth estimate. The Rigi school example **A high-Tc cuprate**
-uses a bismuth-strontium-calcium-copper-oxide (BiSCCO) sample measured on
-ISIS MuSR at 400 G and 200 G over 10–125 K.
+How does the width of the local-field distribution change as a
+superconductor cools through its transition? In transverse-field (TF)
+μSR the spread of precession frequencies damps the oscillation. Fit that
+damping in **Fit**, then compare the linewidths at two applied fields in
+**Fit Parameters**. The Rigi school example **A high-Tc cuprate** uses a
+bismuth-strontium-calcium-copper-oxide (BiSCCO) sample measured on ISIS
+MuSR at 400 G and 200 G over 10–125 K.
 
 The same workflow reappears, with material-specific twists, in two further
 examples cross-referenced at the end: the iron-pnictide LiFeAs, where
@@ -30,76 +32,13 @@ signal.
 Physical motivation
 -------------------
 
-In the mixed state of a type-II superconductor, between :math:`H_{c1}`
-and :math:`H_{c2}`, magnetic flux penetrates the sample as vortices.
-Each muon precesses at a frequency proportional to the local magnetic
-field. Muons in different fields accumulate different phases. As these
-phases spread, their contributions cancel in the measured ensemble
-polarisation and damp the oscillation. In an ideal triangular vortex
-lattice the field distribution :math:`p(B)` is asymmetric, with a peak
-at the saddle-point field and a high-field tail from near the vortex
-cores (Brandt, Phys. Rev. B **37**, 2349 (1988)). For a Gaussian
-approximation with root-mean-square field width
-:math:`\langle\Delta B^2\rangle^{1/2}`, the time-domain envelope is
-
-.. math::
-
-   G(t)=\exp(-\sigma_2^2t^2/2)=\exp(-\sigma_G^2t^2),
-   \qquad \sigma_2=\gamma_\mu\langle\Delta B^2\rangle^{1/2}
-   =\sqrt{2}\sigma_G.
-
-The ``Gaussian`` component fits :math:`\sigma_G`, while the second-moment
-width :math:`\sigma_2` enters the London conversion. In the fitted trends
-below, :math:`\sigma` denotes :math:`\sigma_G`. For a triangular vortex lattice
-in the London limit the superconducting width
-:math:`\sigma_{G,\mathrm{sc}}` is proportional to :math:`\lambda_L^{-2}`.
-The teaching guide uses the rounded relation
-
-.. math::
-
-   \sigma_{G,\mathrm{sc}}\;[\mu\mathrm{s}^{-1}]
-   =\frac{75780}{\lambda_L^2\;[\mathrm{nm}^2]},
-
-so that :math:`\lambda_L=\sqrt{75780/\sigma_{G,\mathrm{sc}}}`.
-
-The :ref:`thermal-kernel accuracy <sc-kernel-accuracy>` is specified in the
-model reference. When the linewidth follows the London relation,
-:math:`\rho_s(T) \propto \sigma_{G,\mathrm{sc}}(T) \propto 1/\lambda^2(T)`
-connects the fitted width to the temperature dependence of the superfluid
-density.
-
-.. dropdown:: Derivation — the London-limit σ ↔ λ relation and its conventions
-
-   For an ideal triangular vortex lattice at large Ginzburg–Landau
-   parameter :math:`\kappa=\lambda/\xi`, Brandt's London approximation
-   applies in the regime :math:`0.13/\kappa^2 \ll b \ll 1`, where
-   :math:`b=\langle B\rangle/B_{c2}` is the mean induction relative to
-   the upper critical induction. In this approximation the second-moment
-   relaxation rate is
-
-   .. math::
-
-      \sigma = 0.0609\,\gamma_\mu\,\frac{\Phi_0}{\lambda_L^2},
-
-   with :math:`\Phi_0` the flux quantum; the width in this equation is
-   :math:`\sigma_2`. Brandt's field variance is
-   :math:`\langle\Delta B^2\rangle=0.00371\Phi_0^2/\lambda_L^4`
-   (Brandt, Phys. Rev. B **68**,
-   `054506 (2003), Eq. (11) <https://arxiv.org/pdf/cond-mat/0304237#page=5>`__).
-   The rounded square root gives the coefficient 0.0609. Brandt's numerical
-   comparison finds good agreement near the maximum of the field variance
-   for :math:`\kappa\gtrsim70`.
-
-   :func:`asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm` takes
-   ``width=GaussianWidth.GAUSSIAN_COMPONENT`` for the fitted
-   :math:`\sigma_G`, or ``width=GaussianWidth.SECOND_MOMENT`` for
-   :math:`\sigma_2`. With the library constants, the coefficient for
-   :math:`\sigma_G` is approximately :math:`7.58\times10^4`, consistent with
-   the guide's rounded 75780. See :ref:`sc-width-convention` for the API and
-   the trend-panel conversion required by the Brandt field models.
-   Known Gaussian sources need that explicit conversion at the field-fit request;
-   temperature laws retain their input convention. See :ref:`trend-width-inputs`.
-
+In the mixed state of a type-II superconductor, magnetic flux
+penetrates the sample as vortices. Muons precess faster in stronger local
+fields, so their phases spread and the ensemble oscillation damps.
+Use the fitted **Gaussian** width :math:`\sigma_G` in μs⁻¹ to
+measure that damping. The width includes broadening that survives above
+the transition. Keep one normal-state run in each field series to measure
+this residual contribution before estimating a penetration depth.
 
 .. _biscco-linewidth:
 
@@ -127,8 +66,8 @@ Step 1 — Fit a transverse-field run for σ
 
    The **Fit** dock (**Single** tab) for run 1277 at 10 K and 400 G. The
    **PARAMETERS** table shows a precession frequency of about 5.24 MHz
-   and a Gaussian width of about 1.16 μs⁻¹. The plot zoom shows how the
-   oscillation damps within about 2 μs.
+   and a Gaussian width of about 1.16 μs⁻¹. The display spans 0.1–2.5 μs
+   to show the damping within about 2 μs.
 
 Use the file's MuSR detector grouping. The time-domain fits use
 forward/backward asymmetry from file groups 1 and 2 with :math:`\alpha=1`.
@@ -136,21 +75,26 @@ In **Grouping**, retain the imported **t0 Bin**, **t_good Offset**, and
 **Last Good Bin** settings for each run. Use no extra bunching, dead-time
 correction, or background correction.
 
-In the **Fit** dock, build ``Oscillatory * Gaussian + Constant`` (see
-:doc:`/reference/composite_models`). The oscillation has a free amplitude,
-frequency, and phase. The Gaussian envelope is
-:math:`\exp[-(\sigma_G t)^2]`, and the **Constant** term absorbs the
-non-precessing offset in the asymmetry. Keep the minimum of ``sigma`` at
-zero. Record :math:`\sigma_G=\gamma_\mu B_\mathrm{rms}/\sqrt{2}` and its
-uncertainty. The reference WiMDA fits use detector-group counts, so the
-numbers shown here are from the Asymmetry asymmetry fits.
+Open **Analysis → Fit** and choose **Single**. Under **Edit… → Edit as
+text**, enter ``Oscillatory * Gaussian + Constant`` and click **OK**.
+For run 1277, start the amplitude at 8%, frequency at 5.3 MHz, phase
+at zero, ``sigma`` at 1.1 μs⁻¹, and the constant near the asymmetry
+median. Leave the parameters free. Enable **Bounds** and set the
+minimum of the amplitude and ``sigma`` to zero.
+
+Click **Fit** and read the width and its standard error from the
+**χ²ᵣ** indicator. The Gaussian envelope is
+:math:`\exp[-(\sigma_G t)^2]`, and the constant absorbs the non-precessing
+offset. Inspect how well the curve follows the damping before adding
+the width to a series. The quoted results use asymmetry fits, while the
+school's WiMDA reference fits use detector-group counts.
 
 Step 2 — Inspect the frequency-domain line shape
 ------------------------------------------------
 
 The frequency-domain views show how the distribution of precession
 frequencies changes between the mixed and normal states. Select the
-10 K, 400 G run for the FFT.
+10 K, 400 G run 1277 and open **FFT**.
 
 .. figure:: /_generated/corpus_screenshots/corpus_bscco_vortex_fft.png
    :alt: FFT showing a broad line near 5.4 MHz for BiSCCO at 10 K and 400 G
@@ -190,10 +134,12 @@ start frequency at 5.3 MHz with bounds 4.8–6.0 MHz and ``sigma`` at
 0.90 μs⁻¹. Use 0–3 μs⁻¹ for the width bounds in both series.
 
 Under **Seeding**, choose **Chain from previous run** to initialise
-successive fits in temperature order. The figure fits warm-start the
-width from the preceding fit and initialise the other parameters afresh
-for each run. Click **Run series** and check convergence and residuals
-for each run. See :ref:`global-fitting` for the series controls.
+successive fits from the preceding result in temperature order.
+Click **Run series** and check convergence and residuals for each run.
+The displayed series were fitted with separate per-run seeds. Each width
+starts at 90% of the previous fitted width, with a minimum seed of
+0.05 μs⁻¹. The other seeds are reset for each run, including the offset
+from its median asymmetry. See :ref:`global-fitting` for the series controls.
 
 Open **View → Show Fit Parameters**, select the 400 G series, choose
 ``𝑇 (K)`` on the **x** rail, and check ``σ (µs⁻¹)`` on the **y** rail.
@@ -238,8 +184,8 @@ and its evolution with field in this specimen.
 Estimating a penetration depth
 ------------------------------
 
-Use the normal-state reference at the same field to estimate the residual
-width. At 400 G, the fitted :math:`\sigma_G` values are 1.164 μs⁻¹ at
+For an estimate from the export, take the ``sigma (µs⁻¹)`` values for
+runs 1277 and 1276 in the 400 G series. At 400 G, the fitted :math:`\sigma_G` values are 1.164 μs⁻¹ at
 10 K and 0.064 μs⁻¹ at 125 K. If the residual broadening is a
 temperature-independent Gaussian contribution statistically independent of
 the vortex broadening, their variances add. Subtract in quadrature to
@@ -252,7 +198,7 @@ obtain
    \approx 1.162\,\mu\mathrm{s}^{-1}.
 
 If an ideal triangular vortex lattice in the London limit describes the
-sample, the conversion above gives
+sample, the school guide's rounded London conversion gives
 :math:`\lambda_L(10\,\mathrm{K})=\sqrt{75780/\sigma_{G,\mathrm{sc}}}
 \approx 255\,\mathrm{nm}`. This estimate assumes the sample dominates the
 precessing signal and the fitted Gaussian approximates the second moment
@@ -262,12 +208,56 @@ vortex structure, reduced-field regime, and any additional precessing
 components unresolved. Bernhard *et al.* discuss the conditions for
 relating this linewidth to penetration depth in separately measured cuprates.
 
+.. dropdown:: Deriving the London-limit relation and the width conventions
+
+   The field distribution of an ideal triangular vortex lattice has a
+   peak at the saddle-point field and a high-field tail from the vortex
+   cores (Brandt, Phys. Rev. B **37**, 2349 (1988)). For a Gaussian
+   approximation, the root-mean-square field width
+   :math:`\langle\Delta B^2\rangle^{1/2}` gives
+   :math:`\sigma_2=\gamma_\mu\langle\Delta B^2\rangle^{1/2}`.
+   The time envelope :math:`\exp(-\sigma_2^2t^2/2)` equals
+   :math:`\exp(-\sigma_G^2t^2)` for
+   :math:`\sigma_2=\sqrt{2}\sigma_G`.
+
+   For an ideal triangular vortex lattice at large Ginzburg–Landau
+   parameter :math:`\kappa=\lambda/\xi`, Brandt's London approximation
+   applies in the regime :math:`0.13/\kappa^2 \ll b \ll 1`, where
+   :math:`b=\langle B\rangle/B_{c2}` is the mean induction relative to
+   the upper critical induction. In this approximation the second-moment
+   relaxation rate is
+
+   .. math::
+
+      \sigma = 0.0609\,\gamma_\mu\,\frac{\Phi_0}{\lambda_L^2},
+
+   with :math:`\Phi_0` the flux quantum; the width in this equation is
+   :math:`\sigma_2`. Brandt's field variance is
+   :math:`\langle\Delta B^2\rangle=0.00371\Phi_0^2/\lambda_L^4`
+   (Brandt, Phys. Rev. B **68**,
+   `054506 (2003), Eq. (11) <https://arxiv.org/pdf/cond-mat/0304237#page=5>`__).
+   The rounded square root gives the coefficient 0.0609. Brandt's numerical
+   comparison finds good agreement near the maximum of the field variance
+   for :math:`\kappa\gtrsim70`.
+
+   :func:`asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm` takes
+   ``width=GaussianWidth.GAUSSIAN_COMPONENT`` for the fitted
+   :math:`\sigma_G`, or ``width=GaussianWidth.SECOND_MOMENT`` for
+   :math:`\sigma_2`. With the library constants, the coefficient for
+   :math:`\sigma_G` is approximately :math:`7.58\times10^4`, consistent with
+   the guide's rounded 75780. See :ref:`sc-width-convention` for the API and
+   the trend-panel conversion required by the Brandt field models.
+   Known Gaussian sources need that explicit conversion at the field-fit request;
+   temperature laws retain their input convention. See :ref:`trend-width-inputs`.
+
 Fitting a gap model
 -------------------
 
-If a single penetration depth describes a dataset, fit the corrected
-superconducting width :math:`\sigma_\mathrm{sc}(T)` as a proxy for the
-superfluid density and compare gap models. Asymmetry's parametric-model
+If the London conversion applies, the corrected superconducting width
+:math:`\sigma_\mathrm{sc}(T)` is proportional to the superfluid density
+:math:`\rho_s(T)\propto 1/\lambda_L^2(T)`. Fit that width to compare gap
+models. See the :ref:`thermal-kernel accuracy <sc-kernel-accuracy>` for
+the model calculations. Asymmetry's parametric-model
 registry ships the standard family, each documented in the component-info
 dialog:
 
@@ -337,9 +327,13 @@ temperature-independent nuclear width, :math:`\sigma^2 = \sigma_\mathrm{VL}^2
 Re₆Zr transverse-field linewidth and zero-field relaxation
 -----------------------------------------------------------
 
-The illustrative transverse-field scan fits one asymmetry trace per
-40 mT run (38180–38219) with **Oscillatory × Gaussian + Constant**.
-Its Gaussian component applies
+Does the fitted transverse-field width change through the Re₆Zr
+transition? In **Fit → Batch**, fit one asymmetry trace per 40 mT run
+(38180–38219) with ``Oscillatory * Gaussian + Constant`` and keep
+the parameters **Local**. In **View → Show Fit Parameters**, select
+the series, then choose ``𝑇 (K)`` on the **x** rail and
+``σ (µs⁻¹)`` on the **y** rail. The Gaussian
+component applies
 the envelope :math:`\exp[-(\sigma_G t)^2]`, so the fit parameter
 ``sigma`` gives the linewidth :math:`\sigma_G` directly. The runs come from
 the `ISIS dataset for MuSR runs 38176–38275

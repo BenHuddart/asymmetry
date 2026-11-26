@@ -138,6 +138,7 @@ def fit_carrier_decay(
             ),
             x_min=min_delay_us,
             x_max=max_delay_us,
+            error_mode="column_stabilized",
         )
         if not result.success or result.covariance is None:
             raise RuntimeError(

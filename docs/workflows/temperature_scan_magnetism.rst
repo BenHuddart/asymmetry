@@ -13,23 +13,15 @@ Temperature scan through a magnetic transition
    assignments with your own; check each spectrum before choosing a precession
    model or fitting a transition trend.
 
-This chapter is a worked example showing how Asymmetry handles a
-zero-field (ZF) μSR temperature scan through a magnetic ordering
-transition. It runs on the EuO runs from the Rigi school data — the PSI GPS
-histograms ``deltat_pta_gps_2923``–``2973`` — which is the same data
-analysed by Blundell *et al.* in their study of the localised
-ferromagnet EuO (*Phys. Rev. B* **81**, 092407 (2010)). The walkthrough
-follows the zero-field precession frequency through the transition.
-Examples on metallic nickel and a molecular antiferromagnet show how
-temperature units, fit intervals, and detector balance affect the analysis.
-
-EuO is a textbook case. It is a ferromagnetic semiconductor in which the
-Eu²⁺ 4f⁷ moments are nearly fully localised, making it one of the best
-physical approximations to a Heisenberg ferromagnet, and it orders at a
-conveniently accessible Curie temperature :math:`T_C \approx 69` K. The
-zero-field muon therefore precesses in a clean spontaneous internal field
-whose collapse toward :math:`T_C` traces out the magnetic order
-parameter.
+How does the spontaneous local field change as a magnet approaches its
+ordering temperature? In zero field (ZF), the fitted muon precession
+frequency tracks that field. Fit the oscillation in each ordered run,
+then plot the frequencies against temperature in **Fit Parameters**.
+The EuO runs from the Rigi school data are the PSI GPS histograms
+``deltat_pta_gps_2923``–``2973``, analysed by Blundell *et al.* in
+their study of this localised ferromagnet. Nickel and a molecular
+antiferromagnet show how temperature units, usable fit intervals, and
+detector balance affect the comparison.
 
 Physical motivation
 -------------------
@@ -127,8 +119,8 @@ Step 3 — Fit an ordered run
    resolve the cycles. ``Oscillatory * Exponential + Constant`` gives
    a frequency of about 30.2 MHz and a damping rate of about 3 μs⁻¹.
 
-For each ordered run the fit model is a single damped cosine on a
-constant background,
+Open **Analysis → Fit** and select **Single**. For each ordered run,
+use a single damped cosine on a constant background,
 
 .. math::
 
@@ -158,8 +150,9 @@ precession frequency is present:
    resolved line in Blundell *et al.* Fig. 1(c). The view is framed to
    20–42 MHz.
 
-The qualitative collapse of the order parameter is seen most vividly by
-overlaying several runs across the transition:
+To see the precession slow before fitting a trend, select the spectra
+across the transition and enable **Overlay** and **Waterfall** in the
+time plot.
 
 .. figure:: /_generated/corpus_screenshots/corpus_euo_waterfall.png
    :alt: Waterfall of EuO zero-field spectra from 1.6 K to 68.69 K
@@ -175,8 +168,8 @@ overlaying several runs across the transition:
 Step 4 — Trend the order parameter
 ----------------------------------
 
-Record a fit series with the 18 selected runs. Open **Fit Parameters**
-from **Analysis**, select that series, set **x** to **𝑇 (K)**, and
+Record a fit series with the 18 selected runs. Open
+**View → Show Fit Parameters**, select that series, set **x** to **𝑇 (K)**, and
 choose ``f (MHz)`` for the plotted parameter. The temperature comes
 from the logged sample sensor selected in Step 1.
 
@@ -258,8 +251,9 @@ range of precession frequencies.
 Ferromagnetic nickel — a metallic ferromagnet
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Nickel precesses in its spontaneous internal field below the Curie
-temperature. The ISIS pulse limits the frequencies the time spectrum can
+Where does the zero-field precession frequency in nickel fall towards
+zero? Below the Curie temperature the muon precesses in nickel's
+spontaneous internal field. The ISIS pulse limits the frequencies the time spectrum can
 resolve, so the trend uses only the interval where the oscillation is
 visible.
 
@@ -282,7 +276,8 @@ precession frequency in their Fig. 2. To use the converted temperatures in
 choose **ƒ → Custom…** and enter ``x + 273.15``. Apply the transform
 before fitting so the points and the fit limits both use kelvin.
 
-Fit each run over 0–4.5 μs with two starting frequencies. Start one fit
+In **Fit → Single**, use the model from the caption and set **Fit range**
+to 0–4.5 μs. Fit each run with two starting frequencies. Start one fit
 at the strongest **FFT** magnitude between 2 and 10 MHz, and the other
 from the chain in ascending temperature order. The chain starts at
 9.6 MHz and then uses 92% of the preceding fitted frequency. Keep
@@ -315,9 +310,10 @@ class.
 A molecular antiferromagnet — the low-frequency contrast
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The base-temperature precession in this molecular antiferromagnet
-is about 1.55 MHz. Its weaker internal field gives a much longer
-oscillation period than the 30 MHz line in EuO.
+At what temperature does the molecular antiferromagnet lose resolved
+precession? Inspect the calibrated zero-field traces together and compare
+fits with and without an oscillating term. The base-temperature line near
+1.55 MHz has a much longer oscillation period than the 30 MHz line in EuO.
 
 .. dropdown:: Download the ISIS runs
 
@@ -411,8 +407,9 @@ the uncertainty for this model.
    a ``TF`` tag, and both applied fields are 0 G. The damped oscillation
    at 6 K gives way to a smooth relaxation at 7 K.
 
-Compare ``Oscillatory * Exponential + Constant`` and
-``Exponential + Constant`` on the same native bins over 0.11–8 μs.
+In **Fit → Single**, compare ``Oscillatory * Exponential + Constant`` and
+``Exponential + Constant`` on the same native bins with **Fit range** set
+to 0.11–8 μs. Read their χ² values from the **χ²ᵣ** indicator.
 At 6 K the precession fit gives about 0.79 MHz, with weighted chi-square
 about 3,566 compared with 7,247 for the relaxation curve. At 7 K
 the forced oscillatory fit lands at its 0.3 MHz lower bound and gives

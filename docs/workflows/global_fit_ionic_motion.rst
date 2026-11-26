@@ -12,10 +12,11 @@ Global fitting across fields: Li⁺ ionic motion in a garnet electrolyte
    temperatures, verify the field units, and decide which parameters can
    physically be shared before fitting them together.
 
-Fit three longitudinal-field (LF) measurements at a time to resolve the
-fluctuation rate of the local field, then use its temperature dependence to
-estimate an activation energy for lithium-ion motion. The measurements come
-from EMU at ISIS and probe an aluminium-doped lithium garnet (Al-LLZ), a
+What energy barrier governs lithium-ion hopping in a garnet electrolyte?
+The hopping changes the local fields that relax the muon spin. Fit three
+longitudinal-field (LF) measurements at a time to resolve the fluctuation
+rate, then use its temperature dependence to estimate the activation energy.
+The measurements come from EMU at ISIS and probe an aluminium-doped lithium garnet (Al-LLZ), a
 candidate solid electrolyte for lithium-ion batteries. Amores *et al.*
 use these measurements to study lithium diffusion within grains [Amores2016]_.
 
@@ -25,8 +26,8 @@ interpretation in detail. Read that page for the theory of Kubo–Toyabe decoupl
 this page concentrates on *why you need a global fit at all*, and on the practical mechanics of tying parameters across a
 field triplet.
 
-Why a global fit is unavoidable here
--------------------------------------
+Why fit three fields together?
+------------------------------
 
 In a solid electrolyte the muon spin relaxes because it sits in a fluctuating
 local field: the nuclear moments of the lithium (and other) ions that diffuse
@@ -257,9 +258,8 @@ an implanted muon more frequently. The fitted :math:`\nu` is close to
 0.27 MHz at the five lowest setpoints and rises to about 1.09 MHz at 404 K.
 The rising part of the rate is the signal used to estimate a hopping barrier.
 
-Each Batch fit records one series of three fields. In the **Parameters** dock
-(**View → Show Fit Parameters**), select that series and open **Table** to
-see the shared :math:`\nu` and its fitted standard error under **Global fitting
+Each Batch fit records one series of three fields. Open **View → Show Fit
+Parameters**, select that series, and open **Table** to see the shared :math:`\nu` and its fitted standard error under **Global fitting
 parameters**. Choose **⋯ → Export TSV…** to save the entry.
 In the export's header, read the line ``#   nu (MHz) = ... +/- ...``. Record the
 EMU setpoint in kelvin, the rate before ``+/-``, and the standard error after it,
@@ -285,8 +285,8 @@ belongs to the time-domain fit and has units of percent.
    numerical rate difference in MHz (:math:`\mathrm{\mu s}^{-1}`).
 #. In **Table**, clear **Trend** for the five plateau points. Click **Fit…**
    on the :math:`\nu` card and use the ``Linear`` model with **Errors** set to
-   **Column** for the eight setpoints from 264 to 404 K, inclusive. Click the
-   **χ²ᵣ** chip to read the slope :math:`m` and its uncertainty in **Fit results**.
+   **Column (propagated errors)** for the eight setpoints from 264 to 404 K,
+   inclusive. Click the **χ²ᵣ** chip to read the slope :math:`m` and its uncertainty in **Fit results**.
 
 .. figure:: /_generated/corpus_screenshots/corpus_llz_nu_arrhenius.png
    :width: 100%
@@ -307,9 +307,8 @@ Subtracting :math:`c` leaves the activated contribution. Its natural
 logarithm has slope :math:`m=-E_a/k_B` against :math:`1/T`. You can check the
 fit directly from the rate and error columns. For each selected point, take
 :math:`x_i=1/T_i`, :math:`y_i=\ln[(\nu_i-c)/(1\,\mathrm{MHz})]`, and
-:math:`s_i=\sigma_{\nu_i}/(\nu_i-c)`. Use the **Column** weights
-:math:`w_i=1/s_i^2` after flooring :math:`s_i` at half the median selected
-error. The weighted slope is
+:math:`s_i=\sigma_{\nu_i}/(\nu_i-c)`. Use the **Column (propagated errors)** weights
+:math:`w_i=1/s_i^2`. The weighted slope is
 
 .. math::
 
@@ -319,7 +318,9 @@ error. The weighted slope is
 where the bars denote weighted means. This gives :math:`m=-2577(96)` K and
 :math:`E_a=-k_Bm=0.222(8)` eV, using
 :math:`k_B\simeq 8.61733\times10^{-5}\ \mathrm{eV\,K^{-1}}`. The slope error
-holds the plateau fixed.
+holds the plateau fixed. Moving the plateau or the fit interval changes the
+energy by several meV, as quantified below. The corresponding μSR value in
+Amores *et al.* is 0.19(1) eV (Fig. 7) [Amores2016]_.
 
 Multiplying :math:`\nu`, :math:`c`, and :math:`\sigma_\nu` by :math:`2\pi`
 adds :math:`\ln(2\pi)` to every :math:`y_i` and preserves each :math:`s_i`.
@@ -356,7 +357,7 @@ the energy, conditional fit error, and plateau sensitivity.
            raise ValueError("Every selected rate must exceed the plateau")
        y = np.log(excess)
        sigma = scale * error[selected] / excess
-       weight = 1 / np.maximum(sigma, np.median(sigma) / 2)**2
+       weight = 1 / sigma**2
        x_mean = np.average(x, weights=weight)
        y_mean = np.average(y, weights=weight)
        spread = np.sum(weight * (x - x_mean)**2)
@@ -406,10 +407,10 @@ For the eight-point branch, the plateau change shifts the energy by about
 branch temperatures increases it by 0.003 eV. These are sensitivity checks
 separate from the 0.008 eV conditional fit error.
 
-Amores *et al.* report :math:`0.19(1)` eV from the μSR Arrhenius analysis
-(Fig. 7) and :math:`0.55(3)` eV from impedance spectroscopy [Amores2016]_.
-The μSR rate probes local lithium motion within grains, while the impedance
-measurement also samples transport across grain boundaries. The teaching fit
+Amores *et al.* also report :math:`0.55(3)` eV from impedance
+spectroscopy [Amores2016]_. The μSR rate probes local lithium motion within
+grains, while the impedance measurement also samples transport across grain
+boundaries. The teaching fit
 gives a higher μSR energy than the paper across the tested intervals and
 plateau shifts. The sensitivity checks leave the origin of that difference
 unresolved.

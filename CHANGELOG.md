@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open matching single-period legacy EMU and HiFi files with all-zero grouping
   tables using the editable Longitudinal preset, with an import warning.
 
+- Guide readers through the school examples with named controls, observable
+  signals, and the comparisons and caveats needed to interpret the figures.
+
 - Run the full release test gate across six parallel CI runners.
 
 - Export every visible fit curve in plot text and GLE exports, with a separate
