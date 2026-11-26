@@ -578,9 +578,9 @@ Waterfall stacking
    :width: 100%
 
 *The same five-field generic LF Kubo–Toyabe decoupling series as the*
-:doc:`LF decoupling walkthrough </workflows/lf_decoupling_dynamics>`, *now with*
-**Waterfall** *enabled: each field's trace is shifted onto its own baseline*
-*instead of sharing one axis with the rest.*
+:doc:`LF decoupling walkthrough </workflows/lf_decoupling_dynamics>`, *with*
+**Waterfall** *enabled. Each field's trace sits on its own shifted baseline.
+Plain-text and GLE exports reproduce these vertical offsets.*
 
 An overlay of several runs is easiest to compare when every trace shares one
 baseline, but that is exactly what makes closely-spaced curves hard to read
