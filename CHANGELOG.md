@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open matching single-period legacy EMU and HiFi files with all-zero grouping
   tables using the editable Longitudinal preset, with an import warning.
 
+- Run the full release test gate across six parallel CI runners.
+
 ## [0.29.0] - 2026-11-25
 
 - Derive the analytic RF comparison helper directly from spin perturbation theory,

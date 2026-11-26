@@ -231,17 +231,15 @@ removing a duplicate requires lowering its count or removing its entry.
   per task, not per iteration.
 - **`full`** — every test, including `slow`/`integration`. The reusable `Full test
   suite` workflow runs inside the release workflow on the exact tagged commit
-  and gates publication alongside both platform builds. Manual dispatch can
-  validate other refs without publishing. It runs with reduced parallelism (`-n 2`
-  and a raised per-test timeout) rather than `-n auto`: the exhaustive
-  global-wizard harness test fans its own fits across a `cpu_count - 2` process
-  pool, so a worker-per-core layout oversubscribes the runner and stalls
-  neighbour fits past the timeout (historically crashing the release-tag run).
-  The full-tier workflow logs each test's identity and stops on the first worker
-  crash, retaining the failing test in the log instead of restarting workers.
-  All tiers also pin the numeric backends to one thread each (`*_NUM_THREADS=1`)
-  so xdist's process-per-core parallelism isn't multiplied by per-process BLAS
-  threads.
+  and requires all six `--shard K/6` jobs to pass before publication. Manual
+  dispatch can validate other refs without publishing and runs the `fast` and
+  `standard` tiers on one runner when explicitly selected. Each full-tier runner
+  uses two xdist workers and a 600-second per-test timeout. The worker cap leaves
+  CPU capacity for nested process pools in tests such as the exhaustive global
+  fit wizard regression. Each shard logs test identities and the 20 slowest test
+  durations. A worker crash fails its shard without a restart, and the other
+  shards continue to completion. All tiers pin the numeric backends to one
+  thread each (`*_NUM_THREADS=1`) to bound per-process BLAS work.
 
 Standard CI configures pytest's native stack watchdog at 90 seconds; the full
 suite uses 600 seconds. Pytest resets this timer for each test and owns its
@@ -302,19 +300,12 @@ pytest markers and node-id hashes, not by directory, so this layout is
 transparent to `--tier`/`--subset`/`--shard` and to CI's path filters (which
 match `tests/**` recursively).
 
-CI splits the standard tier across six runners with `--shard {1..6}/6`, each
-running `-n auto --dist worksteal` on its 4 vCPUs. `--shard K/N` (a
-`conftest.py` option) keeps a stable 1-of-N slice partitioned by a hash of each
-test's node id, so the independent shard processes cover every test exactly once
-with no overlap, regardless of `pytest-randomly` ordering, and together cover
-exactly the standard tier. Each shard mixes GUI and non-GUI tests; the hash
-keeps per-shard test time within about 25% of even, which is less than the
-runner-to-runner variation, so the split needs no recorded durations. Every
-shard pays a fixed cost of roughly 1.5 min (checkout, uv install, and test
-collection, most of which is pytest rewriting asserts in ~430 test modules on
-each xdist worker), so adding shards stops paying off as that fixed cost
-dominates. `--subset gui`/`--subset non-gui` still select by marker for local
-runs.
+Both CI workflows use `--shard K/N` to assign each selected test to exactly one
+runner by hashing its node ID. The assignment is independent of collection
+order and mixes GUI and non-GUI tests in each shard. Standard CI uses six
+runners with `-n auto --dist worksteal`. Each shard repeats the checkout,
+dependency installation, and test collection. `--subset gui` and
+`--subset non-gui` select by marker for local runs.
 
 The harness sets `QT_QPA_PLATFORM=offscreen` by default for command runs so GUI
 tests and smoke checks can execute in CI and local agent sessions. The current

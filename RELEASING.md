@@ -27,11 +27,10 @@ authorises the release and approves the protected PyPI deployment.
    distributions, macOS DMG, and Windows installer.
    `release.yml` checks that the tag matches `pyproject.toml` and the changelog
    was rolled. Its macOS and Windows builds run alongside the reusable full
-   Linux test suite, all checking out the triggering commit. Publication waits
-   for successful validation and both artifact builds. A failed, cancelled,
-   skipped, or pending validation cannot publish, and validation on another
-   commit does not satisfy this dependency. The exact Python candidate also
-   passes the installation matrix below. After maintainer approval in the
+   Linux test suite on the triggering commit. Publication
+   requires all six test shards and both artifact builds to succeed for that
+   commit. The exact Python candidate also passes the installation matrix
+   below. After maintainer approval in the
    `pypi` environment, Trusted Publishing uploads the checked distributions.
    Only then does the workflow publish the GitHub release, including Python
    artifacts and their records, and dispatch `docs-pages.yml` at that tag.

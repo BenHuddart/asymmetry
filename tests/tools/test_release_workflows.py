@@ -91,17 +91,29 @@ def test_validation_cannot_be_skipped_or_hang() -> None:
     job = _workflow("full-suite.yml")["jobs"]["full-suite"]
     assert "if" not in job
     assert 0 < job["timeout-minutes"] <= 60
+    assert job["strategy"]["fail-fast"] is False
 
 
-def test_validation_runs_full_tier_when_called() -> None:
+def test_validation_shards_full_tier_when_called() -> None:
     workflow = _workflow("full-suite.yml")
     assert not _triggers(workflow)["workflow_call"]
     job = workflow["jobs"]["full-suite"]
-    run = next(step["run"] for step in job["steps"] if step["name"] == "Run full test suite")
-    assert (
-        run.partition(" -- ")[0]
-        == "python tools/harness.py test --tier=${{ inputs.tier || 'full' }}"
+    shards = ",".join(f'"{index}/6"' for index in range(1, 7))
+    assert job["strategy"]["matrix"]["shard"] == (
+        "${{ fromJSON((inputs.tier == 'fast' || inputs.tier == 'standard')"
+        f" && '[\"1/1\"]' || '[{shards}]') }}}}"
     )
+    step = next(step for step in job["steps"] if step["name"] == "Run full test suite")
+    assert "if" not in step
+    assert step["env"]["TEST_TIER"] == "${{ inputs.tier || 'full' }}"
+    assert step["env"]["TEST_SHARD"] == "${{ matrix.shard }}"
+    assert shlex.split(step["run"].partition(" -- ")[0]) == [
+        "python",
+        "tools/harness.py",
+        "test",
+        "--tier=$TEST_TIER",
+        "--shard=$TEST_SHARD",
+    ]
     assert "github.event.inputs" not in yaml.safe_dump(workflow)
     assert _triggers(workflow)["workflow_dispatch"]["inputs"]["tier"]["default"] == "full"
 
