@@ -3242,40 +3242,6 @@ class TestMainWindowBasic:
         assert mainwindow._fit_stack.currentWidget() is mainwindow._multi_group_fit_window
         assert not mainwindow._dock_fit.isHidden()
 
-    def test_grouped_preview_request_updates_group_plots_without_fit_result(
-        self,
-        mainwindow: MainWindow,
-    ) -> None:
-        grouped_datasets = [
-            _make_dataset(4204, with_grouping=True),
-            _make_dataset(4205, with_grouping=True),
-        ]
-        captured: dict[str, object] = {}
-
-        mainwindow._plot_panel.set_global_fits = lambda payload: captured.update(
-            {"payload": payload}
-        )
-        mainwindow._plot_panel.plot_grouped_time_domain_subplots = lambda datasets: captured.update(
-            {"datasets": list(datasets)}
-        )
-
-        preview_curves = {
-            4204: (object(), (np.array([0.0, 1.0]), np.array([1.0, 0.5])), tuple()),
-            4205: (object(), (np.array([0.0, 1.0]), np.array([0.8, 0.4])), tuple()),
-        }
-
-        mainwindow._on_grouped_preview_requested(
-            grouped_datasets,
-            preview_curves,
-            fit_function="A(t)",
-        )
-
-        assert captured["datasets"] == grouped_datasets
-        payload = captured["payload"]
-        assert payload[4204][2] == "Grouped Preview"
-        assert payload[4204][4] is None
-        assert payload[4204][5] == "A(t)"
-
     def test_count_fit_overlay_routes_to_group_subplots(
         self,
         mainwindow: MainWindow,

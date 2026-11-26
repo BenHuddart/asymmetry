@@ -22,10 +22,15 @@ from PySide6.QtWidgets import QApplication, QFileDialog  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
-from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from asymmetry.core.utils.constants import (
+    GAUSS_TO_TESLA,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    MUON_LIFETIME_US,
+)
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.utils import gle_export
@@ -391,9 +396,107 @@ def test_grouped_toolbar_bunch_plot_and_exports(
             assert f"!  Datarow: (Time) ({quantity}) (Error)\n" in header
             assert f"!  Ylabel: {quantity}\n" in header
             assert f"!  Display bunching factor: {factor}\n" in header
+            assert "!  Deadtime correction off\n" in header
             assert "asymmetry" not in header.lower()
             np.testing.assert_allclose(np.loadtxt(path, comments="!"), expected[name])
     assert dataset.run.grouping["bunching_factor"] == base_bunch
+
+
+@pytest.mark.parametrize(
+    "settings,status",
+    [
+        (
+            {"deadtime_mode": "manual", "dead_time_us": [0.01, 0.01], "good_frames": 25000},
+            "applied",
+        ),
+        ({"deadtime_mode": "from_file", "deadtime_file_us": []}, "skipped"),
+    ],
+)
+def test_grouped_export_reports_prepared_deadtime(mainwindow, tmp_path, settings, status):
+    dataset = _histogram_run_dataset(
+        np.arange(1.0, 65.0),
+        np.arange(101.0, 165.0),
+        grouping_extra={"deadtime_correction": True, **settings},
+    )
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._data_browser.select_runs({dataset.run_number})
+    mainwindow._raw_counts_action.trigger()
+    mainwindow._view_bunch_spin.setValue(2)
+
+    panel = mainwindow._plot_panel
+    payload = panel.get_current_plot_export_data()[0]
+    path = tmp_path / "counts.dat"
+    panel._write_data_file(path, payload)
+    assert f"!  Deadtime correction {status}\n" in path.read_text()
+
+
+@pytest.mark.parametrize("complete", [False, True], ids=["preview", "completed"])
+def test_grouped_fit_overlays_keep_the_toolbar_bins(mainwindow, complete):
+    time = np.arange(256) * BIN_WIDTH_US
+    field = 200.0
+    frequency = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * field
+    decay = np.exp(-time / MUON_LIFETIME_US)
+    counts = [
+        np.rint(n0 * (1 + 0.12 * np.cos(2 * np.pi * frequency * time + phase)) * decay)
+        for n0, phase in [(6000, 0.0), (5000, np.pi)]
+    ]
+    dataset = _histogram_run_dataset(*counts)
+    dataset.run.metadata["field"] = field
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._data_browser.select_runs({dataset.run_number})
+    mainwindow._domain_buttons_by_token["groups"].click()
+    mainwindow._view_bunch_spin.setValue(2)
+
+    tab = mainwindow._multi_group_fit_window._single_fit_tab
+    signal = tab.grouped_fit_completed if complete else tab.grouped_preview_requested
+    emitted = []
+    signal.connect(lambda _datasets, curves: emitted.append(curves))
+    button = tab._fit_btn if complete else tab._preview_btn
+    assert button.isEnabled()
+    button.click()
+    if complete:
+        assert tab.wait_for_fit()
+    (base_curves,) = emitted
+    if complete:
+        assert all(result.success for result, *_ in base_curves.values())
+
+    panel = mainwindow._plot_panel
+    centres = time.reshape(-1, 2).mean(axis=1)
+    correction = np.exp(centres / MUON_LIFETIME_US)
+    fit_label = "Grouped Fit" if complete else "Grouped Preview"
+    for group, axis, raw, exported in zip(
+        build_grouped_time_domain_datasets(dataset),
+        panel._figure.axes,
+        counts,
+        panel.get_current_plot_export_data(),
+        strict=True,
+    ):
+        (markers,) = [line for line in axis.lines if isinstance(line, errorbar_dots_line_class())]
+        np.testing.assert_allclose(markers.get_xdata(), centres, atol=1e-15)
+        np.testing.assert_allclose(markers.get_ydata(), raw.reshape(-1, 2).sum(axis=1) * correction)
+
+        native_t, native_y = base_curves[group.run_number][1]
+        pairs = time.reshape(-1, 2)
+        covered = (pairs[:, 0] >= native_t[0] - 1e-12) & (pairs[:, 1] <= native_t[-1] + 1e-12)
+        native_counts = np.interp(time, native_t, native_y) * decay
+        prediction = native_counts.reshape(-1, 2).sum(axis=1) * correction
+        (line,) = [
+            line
+            for line, _, name in panel._time_view.fits
+            if line.axes is axis and name.endswith(fit_label)
+        ]
+        np.testing.assert_allclose(line.get_xdata(), centres[covered], atol=1e-15)
+        np.testing.assert_allclose(line.get_ydata(), prediction[covered])
+        np.testing.assert_allclose(exported["fit"]["t"], centres[covered], atol=1e-15)
+        np.testing.assert_allclose(exported["fit"]["y"], prediction[covered])
+        assert ("chi_squared" in exported["fit_metadata"]) == complete
+
+    mainwindow._view_bunch_spin.setValue(1)
+    for exported, (_, (native_t, native_y), _) in zip(
+        panel.get_current_plot_export_data(), base_curves.values(), strict=True
+    ):
+        np.testing.assert_array_equal(exported["fit"]["t"], native_t)
+        np.testing.assert_array_equal(exported["fit"]["y"], native_y)
 
 
 def test_fb_toolbar_bunch_plot_and_text_export(mainwindow, tmp_path, monkeypatch):

@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report Poisson deviance and residuals at the fitted parameters in block-separable
   grouped-series fits.
 
-- Apply display bunching once in **Raw counts** and **Individual groups** and
-  label their count quantities in text and GLE exports.
+- Apply display bunching once in **Raw counts** and **Individual groups**, with
+  fit overlays and labelled text and GLE exports on the displayed count scale.
 
 - Recover marginal errors for coupled global fits with stable curvature at
   strictly interior parameter values near a bound.

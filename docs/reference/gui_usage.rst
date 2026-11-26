@@ -930,7 +930,8 @@ For **Raw counts** and **Individual groups**, **Export plotted data (text)**
 and **Export Plot(s) to GLE** write one data table per detector group. The
 headers identify the source run, detector group, effective display bunching
 factor, time in microseconds, and the quantity (**Counts** or
-**Lifetime-corrected counts**). GLE uses the same quantity on each y-axis.
+**Lifetime-corrected counts**). They also report the grouped reduction's
+deadtime correction outcome. GLE uses the same quantity on each y-axis.
 
 The grouping block states ``Context: source settings at export capture``.
 Its editable source settings are separate from the result's immutable

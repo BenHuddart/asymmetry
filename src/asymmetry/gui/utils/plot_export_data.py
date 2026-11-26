@@ -281,7 +281,11 @@ class PlotExportData:
                 f.write(f"!  Constant-error binning, initial bin = {binning.bin0_us} us\n")
             elif bunching_factor is not None and (grouping or not is_grouped):
                 f.write(f"!  Fixed binning, bunching factor = {bunching_factor}\n")
-            f.write(f"!  Deadtime correction {'on' if deadtime_correction else 'off'}\n")
+            if is_grouped:
+                outcome = run_metadata.get("deadtime_outcome") or {}
+                f.write(f"!  Deadtime correction {outcome.get('status', 'unknown')}\n")
+            else:
+                f.write(f"!  Deadtime correction {'on' if deadtime_correction else 'off'}\n")
             f.write("! END OF GROUPING INFORMATION\n")
             f.write("!\n")
 

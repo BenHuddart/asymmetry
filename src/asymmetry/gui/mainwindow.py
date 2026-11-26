@@ -2655,62 +2655,6 @@ class MainWindow(QMainWindow):
             return None
         return self._select_non_overlay_target(selected)
 
-    @staticmethod
-    def _grouped_member_source_run(dataset: MuonDataset) -> int | None:
-        """Source run a synthetic grouped-fit member belongs to (None if unknown)."""
-        meta = getattr(dataset, "metadata", {}) or {}
-        source = meta.get("source_run_number")
-        if source is None:
-            try:
-                # Synthetic member keys are -(source_run * 1000 + group); recover
-                # the source run when the explicit metadata is absent.
-                source = abs(int(dataset.run_number)) // 1000
-            except (TypeError, ValueError):
-                return None
-        try:
-            return int(source)
-        except (TypeError, ValueError):
-            return None
-
-    def _grouped_members_for_display(
-        self, grouped_datasets: list[MuonDataset]
-    ) -> list[MuonDataset]:
-        """Restrict batch grouped-fit members to the current run's detector groups.
-
-        A batch fit returns every ``(run, group)`` member, but the groups view
-        shows a single run's detector groups. Rendering all members produced one
-        dense subplot per member (e.g. 84 for 21 runs × 4 groups), freezing the
-        GUI for seconds when the fit returned. A single-run fit (one source run)
-        is returned unchanged.
-        """
-        members_by_run: dict[int, list[MuonDataset]] = {}
-        for dataset in grouped_datasets:
-            run = self._grouped_member_source_run(dataset)
-            if run is None:
-                continue
-            members_by_run.setdefault(run, []).append(dataset)
-        if len(members_by_run) <= 1:
-            return grouped_datasets
-
-        # Prefer the run whose groups are currently shown (the representative
-        # member of the selection); fall back to the lowest-numbered run so the
-        # plot still reflects part of the batch.
-        selected = self._selected_or_current_datasets()
-        target = self._single_group_view_target(selected)
-        if target is None and len(selected) == 1:
-            target = selected[0]
-        if target is None:
-            target = self._current_dataset
-        current_run = None
-        if target is not None:
-            try:
-                current_run = int(target.run_number)
-            except (TypeError, ValueError):
-                current_run = None
-        if current_run in members_by_run:
-            return members_by_run[current_run]
-        return members_by_run[min(members_by_run)]
-
     def _overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays should be shown."""
         if hasattr(self._plot_panel, "is_overlay_enabled"):
@@ -13326,18 +13270,7 @@ class MainWindow(QMainWindow):
                 None,
             )
 
-        self._plot_panel.set_global_fits(fit_curves)
-        if not self._grouped_display_lifetime_corrected():
-            # The fit ran on lifetime-corrected counts; keep the Raw counts
-            # display raw — the overlay shows in the Individual groups view.
-            self._render_current_selection_plot()
-        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
-            # A batch fit returns every (run, group) member; the groups view shows
-            # one run's detector groups, so render only the current run's members.
-            # Rendering all members (e.g. 21 runs × 4 groups = 84 dense subplots)
-            # froze the GUI for several seconds when the values came back.
-            display_members = self._grouped_members_for_display(grouped_datasets)
-            self._plot_panel.plot_grouped_time_domain_subplots(display_members)
+        self._set_grouped_fit_overlays(fit_curves, grouped_datasets)
         completion = self._grouped_fit_completion_summary(grouped_datasets, results_dict)
         self._log_panel.log(f"Grouped time-domain fit completed: {completion}")
         self.statusBar().showMessage(f"Grouped time-domain fit completed: {completion}")
@@ -13369,11 +13302,16 @@ class MainWindow(QMainWindow):
                 None,
             )
 
-        self._plot_panel.set_global_fits(fit_payloads)
-        if not self._grouped_display_lifetime_corrected():
-            self._render_current_selection_plot()
-        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
-            self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
+        self._set_grouped_fit_overlays(fit_payloads, grouped_datasets)
+
+    def _set_grouped_fit_overlays(self, curves: dict, members: list[MuonDataset]) -> None:
+        """Store the fit's producing bin factors and redraw the current observations."""
+        factors = {
+            member.run_number: member.metadata["grouped_time_domain_bunch_factor"]
+            for member in members
+            if member.metadata.get("grouped_time_domain")
+        }
+        self._plot_panel.set_global_fits(curves, grouped_bunch_factors=factors)
 
     def _on_count_fit_completed(self, dataset, payload) -> None:
         """Overlay a finished count fit on the Individual-Groups plot.

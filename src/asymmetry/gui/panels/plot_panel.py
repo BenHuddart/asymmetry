@@ -56,7 +56,7 @@ from asymmetry.core.transform.grouping import (
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
-from asymmetry.core.transform.rebin import binning_spec
+from asymmetry.core.transform.rebin import binning_spec, rebin_grouped_fit_curve
 from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import (
@@ -3707,11 +3707,9 @@ class PlotPanel(QWidget):
             if fit_id is None:
                 shown = self.shown_fit_ids(run_number)
                 fit_id = shown[0] if shown else SINGLE_FIT_ID
-            fit_data = self._fit_curves_by_key.get((run_number, axis_key, fit_id))
-            if fit_data is not None:
-                return fit_data
-
-            if axis_key is not None:
+            key = (run_number, axis_key, fit_id)
+            fit_data = self._fit_curves_by_key.get(key)
+            if fit_data is None and axis_key is not None:
                 has_axis_specific_fit = any(
                     key_run == run_number and key_axis is not None and key_fit == fit_id
                     for key_run, key_axis, key_fit in self._fit_curves_by_key
@@ -3719,9 +3717,14 @@ class PlotPanel(QWidget):
                 if has_axis_specific_fit:
                     return None
 
-                fit_data = self._fit_curves_by_key.get((run_number, None, fit_id))
-                if fit_data is not None:
-                    return fit_data
+                key = (run_number, None, fit_id)
+                fit_data = self._fit_curves_by_key.get(key)
+            if fit_data is not None:
+                return rebin_grouped_fit_curve(
+                    dataset,
+                    fit_data,
+                    self._fit_metadata_by_key.get(key, {}).get("grouped_bunch_factor"),
+                )
 
             # Legacy per-run stores mirror the single fit only, so they can only
             # answer for it.
@@ -7355,6 +7358,7 @@ class PlotPanel(QWidget):
         *,
         fit_id: str = SINGLE_FIT_ID,
         fit_labels: dict[str, str] | None = None,
+        grouped_bunch_factors: dict[int, int] | None = None,
     ) -> None:
         """Set fit curves from global fitting.
 
@@ -7373,13 +7377,15 @@ class PlotPanel(QWidget):
             ``{fit_id: display name}`` for the toolbar's Fits menu
             (:meth:`set_fit_labels`) — the series' own name, not the generic
             per-curve legend text a caller may pass as *label*.
+        grouped_bunch_factors : dict, optional
+            Recorded fit bin factor by synthetic group run number.
         """
         if not self._has_mpl:
             return
         if fit_labels:
             self._fit_label_by_id.update({str(k): str(v) for k, v in fit_labels.items()})
 
-        # Update fit curves, preserving results from other groups
+        grouped_bunch_factors = grouped_bunch_factors or {}
         for run_number, payload in fit_curves_dict.items():
             axis_key = None
             if len(payload) >= 6:
@@ -7409,13 +7415,15 @@ class PlotPanel(QWidget):
                 self._fit_components_by_run[run_key] = list(component_curves or [])
             self._fit_curves_by_key[(run_key, axis_key, fit_id)] = (t_fit, y_fit, label)
             self._fit_components_by_key[(run_key, axis_key, fit_id)] = list(component_curves or [])
-            if fit_result is not None or fit_function:
+            source_factor = grouped_bunch_factors.get(run_key)
+            if fit_result is not None or fit_function or source_factor is not None:
                 self._store_fit_metadata(
                     run_key,
                     fit_result,
                     fit_function=fit_function,
                     axis_key=axis_key,
                     fit_id=fit_id,
+                    grouped_bunch_factor=source_factor,
                 )
         # Clear single fit curve
         self._fit_curve = None
@@ -7592,9 +7600,14 @@ class PlotPanel(QWidget):
         fit_function: str | None = None,
         axis_key: str | None = None,
         fit_id: str = SINGLE_FIT_ID,
+        grouped_bunch_factor: int | None = None,
     ) -> None:
         """Extract and store fit metadata from a FitResult for export headers."""
-        meta: dict = {}
+        meta = (
+            {"grouped_bunch_factor": grouped_bunch_factor}
+            if grouped_bunch_factor is not None
+            else {}
+        )
         if fit_result is not None:
             chi2 = getattr(fit_result, "chi_squared", None)
             red_chi2 = getattr(fit_result, "reduced_chi_squared", None)
@@ -7830,12 +7843,6 @@ class PlotPanel(QWidget):
 
         return payloads
 
-    def _export_axis_suffix(self, axis_key: str | None) -> str:
-        """Return filename-safe suffix for per-axis exports."""
-        if axis_key in {"P_x", "P_y", "P_z"}:
-            return axis_key.lower().replace("_", "")
-        return "main"
-
     def _write_fit_file(
         self,
         fit_path: Path,
@@ -8032,10 +8039,12 @@ class PlotPanel(QWidget):
             written = []
             used_tokens: set[str] = set()
             for axis_key, payloads in axis_groups:
-                axis_suffix = self._export_axis_suffix(axis_key)
+                suffix = (
+                    axis_key.lower().replace("_", "") if axis_key in {"P_x", "P_y", "P_z"} else ""
+                )
                 for i, payload in enumerate(payloads):
                     label = str(payload.get("label", f"dataset_{i}"))
-                    name = f"{label}_{axis_suffix}" if axis_key in {"P_x", "P_y", "P_z"} else label
+                    name = f"{label}_{suffix}" if suffix else label
                     token = dedup_export_token(safe_file_token(name), used_tokens)
                     written.extend(
                         self._write_payload_text_files(

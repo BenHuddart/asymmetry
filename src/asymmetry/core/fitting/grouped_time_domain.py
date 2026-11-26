@@ -171,10 +171,8 @@ def build_grouped_time_domain_datasets(
                 **dict(group.metadata),
                 "run_number": synthetic_run_number,
                 "run_label": str(group.group_name),
-                "group_id": group.group_id,
-                "group_name": group.group_name,
                 "source_run_number": group.source_run_number,
-                "grouped_time_domain": True,
+                "deadtime_outcome": group.deadtime.to_dict(),
                 "x_label": "Time (µs)",
                 "y_label": y_label,
             }
