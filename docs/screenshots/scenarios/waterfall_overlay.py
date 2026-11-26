@@ -21,7 +21,10 @@ from ._base import Scenario, register
 
 class WaterfallOverlayScenario(Scenario):
     name = "waterfall_overlay"
-    description = "Waterfall-stacked time-domain overlay of a generic LF decoupling series."
+    description = (
+        "Waterfall-stacked time-domain overlay of a generic LF decoupling series. "
+        "Plain-text and GLE exports use the displayed vertical offset of each trace."
+    )
     size = (1500, 920)
 
     def build(self) -> QWidget:
