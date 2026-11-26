@@ -301,17 +301,18 @@ def abragam(
     nu: float,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Abragam relaxation function (Abragam, *Principles of Nuclear Magnetism*, 1961).
+    r"""Abragam relaxation function (Abragam, *Principles of Nuclear Magnetism*, 1961).
 
-    G(t) = A0 exp[ -(Delta^2 / nu^2) (e^{-nu t} - 1 + nu t) ] + baseline
+    At positive fluctuation rate :math:`\nu`, the transverse-field envelope is
 
-    A transverse-field envelope with the Gaussian and motional-narrowing limits:
+    .. math::
 
-    - ``nu -> 0``        : G -> A0 exp(-Delta^2 t^2 / 2)  (Gaussian)
-    - ``nu >> Delta``    : G -> A0 exp(-(Delta^2 / nu) t) (exponential)
+        G(t) = A_0 \exp\left[-\frac{\Delta^2}{\nu^2}
+        \left(e^{-\nu |t|}-1+\nu |t|\right)\right] + \mathrm{baseline}.
 
-    This transverse-field convention follows Blundell et al., *Muon Spectroscopy:
-    An Introduction* (OUP, 2022), eqn 5.52: Gaussian at sigma = Delta/sqrt(2).
+    At :math:`\nu=0`, the envelope is Gaussian with :math:`\sigma=\Delta/\sqrt{2}`
+    (Blundell et al., *Muon Spectroscopy: An Introduction*, OUP, 2022, Eq. 5.52).
+    For :math:`\nu\gg\Delta`, it approaches an exponential with rate :math:`\Delta^2/\nu`.
 
     Parameters
     ----------
@@ -652,24 +653,23 @@ def static_lorentzian_kt_lf(
 
 
 def risch_kehr(t: NDArray, Gamma: float) -> NDArray:
-    """Risch-Kehr relaxation for spin transport by 1D diffusion.
+    r"""Risch–Kehr relaxation for spin transport by 1D diffusion.
 
-    G(t) = e^{Gamma t} erfc(sqrt(Gamma t))
+    .. math::
 
-    Relaxation of the muon (or muonium) polarisation when the depolarising
-    agent diffuses in one dimension (e.g. a polaron on a conducting-polymer
-    chain): the return probability of a 1D random walk gives a
-    ``(pi Gamma t)^{-1/2}`` long-time tail instead of an exponential.
+        G(t) = e^x\,\mathrm{erfc}\!\left(\sqrt{x}\right), \qquad x = |\Gamma|\,|t|.
 
-    Evaluated as ``erfcx(sqrt(Gamma t))`` (the scaled complementary error
-    function), which is numerically stable for all ``Gamma t`` — no asymptotic
-    branch switch is needed (WiMDA switches forms at ``Gamma t = 20``).
-    ``Gamma`` is used as ``|Gamma|``; WiMDA's mirrored ``2 - G`` branch for
-    negative rates is an unphysical fitting convenience and is omitted here.
+    The depolarising agent, such as a polaron on a conducting-polymer chain,
+    returns to the muon by a one-dimensional random walk. The return probability
+    gives the muon (or muonium) polarisation a :math:`(\pi x)^{-1/2}` long-time tail.
+
+    The scaled complementary error function :math:`\mathrm{erfcx}(\sqrt{x})` is
+    numerically stable for all :math:`x`. WiMDA switches forms at :math:`\Gamma t=20`
+    and uses a mirrored :math:`2-G` branch for negative rates.
 
     References
     ----------
-    R\\. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).
+    R\. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).
     """
     gt = np.abs(float(Gamma)) * np.abs(np.asarray(t, dtype=float))
     return np.asarray(erfcx(np.sqrt(gt)), dtype=float)

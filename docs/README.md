@@ -126,6 +126,16 @@ per page in a fresh browser profile, at 1440 × 1000 and 390 × 844 CSS pixels. 
 warm immediately repeats the URL with caching enabled. CPU and network are
 unthrottled, so record the machine and connection separately when comparing runs.
 
+Check that the gap and relaxation equations typeset and the two-gap explanation
+follows its equation in a separate paragraph:
+
+```bash
+node tools/docs_browser.mjs --base-url http://127.0.0.1:8000/ --check --trials 1 \
+  --page api/fitting/models.html --page api/fitting/sc.html
+```
+
+The browser report identifies affected API anchors under ``apiMathFailures``.
+
 The JSON report separates HTML transfer and encoded body size, DOM readiness, paint, initiated requests,
 startup layout shifts, font/mathematics readiness, and first/finished search
 results. Layout-shift and paint observations end 250 ms after content readiness;

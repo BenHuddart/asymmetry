@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add machine-readable citation metadata for researchers citing Asymmetry.
 
+- Restore typeset equations and the accompanying explanation in the fit-model
+  and superconductivity Python API reference.
+
 - Use the exact Poisson deviance for occupied bins with very small positive
   expected counts, correcting fit estimates and reported deviance in that regime.
 - Report Poisson deviance and residuals at the fitted parameters in block-separable
