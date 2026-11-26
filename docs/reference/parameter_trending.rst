@@ -99,9 +99,9 @@ Once a parameter carries a converged model fit, a **χ²ᵣ chip** (``χ²ᵣ 0.
 appears in its card header beside the **Fit** button, coloured by the same
 quality verdict the Model Fit window reports — green for *good*, red for
 *poor*, blue for *overdone*, and neutral grey where χ²ᵣ carries no goodness
-information (unit or scatter-estimated errors, or fewer points than
-parameters; see :ref:`assessing a fit <assessing-a-fit>`). Hovering it names
-the verdict, its target band and confidence, and each fitted parameter in the
+information (for example, if a column error floor changes the weights or there
+are no residual degrees of freedom; see :ref:`assessing a fit <assessing-a-fit>`).
+Hovering it names the verdict, its target band and confidence, and each fitted parameter in the
 parenthesised-uncertainty convention (``T꜀ = 35.8(5) K`` is 35.8 ± 0.5 K).
 
 Clicking the chip opens that parameter's **Fit results** window (titled, for
@@ -516,13 +516,15 @@ temperature, so the common critical-behaviour fit converges out of the box.
 The live preview
 ~~~~~~~~~~~~~~~~
 
-The right-hand pane redraws as you edit: the data points (with error bars scaled
-to the current error mode), the in-range points against the greyed-out excluded
+The right-hand pane redraws as you edit: the data points with their propagated
+error bars, the in-fit points against the greyed-out excluded
 ones, and the candidate model curve. The curve is sampled off the GUI thread —
 debounced, with stale results discarded — so dragging an edge or retyping a seed
 never freezes the dialog. The **Show residuals** toggle adds a
 :math:`(\text{data} - \text{model})/\sigma` strip with a :math:`\pm 1\sigma` guide
-band beneath the plot. On a narrow window the preview auto-collapses behind a
+band beneath the plot. Residuals use the same points and uncertainties as the
+objective, including effective variance when you account for x uncertainty.
+On a narrow window the preview auto-collapses behind a
 **Show preview** toggle so the controls stay usable.
 
 The interactive fit region
@@ -784,11 +786,20 @@ Single-Series Fit
 Weighting and error modes
 -------------------------
 
-By default a model fit weights each point by the propagated error of the
-trended parameter (``Column (propagated errors)``). The **Errors** selector in the model-fit
-dialog (and the ``error_mode`` argument of ``fit_parameter_model``) offers
-four alternatives for when those errors are absent or untrustworthy:
+**Column (propagated errors)**, the default in the **Errors** selector, weights
+each point by the inverse square of its supplied standard deviation. Both Column
+modes omit points whose uncertainty is missing, infinite, zero or negative.
+Use **None (unit weights)** or **Estimate from scatter** to include points
+whose uncertainties are unavailable. The single-series and cross-group dialogs
+offer the same alternatives:
 
+- **Column (stabilised errors)** — raise small errors to half the median
+  positive error of the points entering the fit. Each group uses its own
+  retained points to calculate the floor. This is useful for checking sensitivity
+  to very small error bars, for example when a high-field point dominates a fit.
+  The parameter uncertainties are conditional on the floored errors when this
+  changes the weights. The saved result records the policy and whether it changed
+  any weight.
 - **Percent of y** — :math:`\sigma_i = (p/100)\,|y_i|`. Points with
   :math:`y_i = 0` carry no error information and are excluded from the fit.
 - **Absolute** — one constant :math:`\sigma` for every point.
@@ -805,15 +816,15 @@ four alternatives for when those errors are absent or untrustworthy:
   :math:`\chi^2_r = 1`): because a uniform error rescale never moves the
   minimum, the iteration lands on the same answer in one step.
 
-In Column mode (only), errors are floored at half the median positive error
-before fitting, so a single near-zero propagated error cannot dominate the
-fit. Explicit ``Percent of y`` and ``Absolute`` choices are honoured verbatim.
-If ``fit_parameter_model`` receives ``yerr=None`` in Column mode, it assumes
+If ``fit_parameter_model`` receives ``yerr=None`` in either Column mode, it assumes
 unit y errors and records that assumption separately from the requested mode.
 Supplied x errors can still contribute through effective variance. Parameter
-uncertainties in that case are conditional on the assumed y scale. When the
-trend editor supplies an exploratory estimate for a missing point error, the
-result records whether an estimated error contributed in the fitted range.
+uncertainties in that case are conditional on the assumed y scale. Select
+``error_mode="column_stabilized"`` to apply the half-median floor from a script.
+
+.. image:: /_generated/screenshots/trend_model_fit_stabilised.png
+   :alt: EuO trend fit with Column (stabilised errors) selected, weighted residuals and an explanation of the active column error floor
+   :width: 100%
 
 .. code-block:: python
 
@@ -868,9 +879,9 @@ The verdict is two-sided:
   free parameters soaking up noise.
 
 The verdict requires an applicable error model and positive residual degrees of
-freedom. Column fits with assumed unit y errors or estimates, unit-weight
-fits and scatter-estimated fits show an explanation in place of the band and
-verdict. The result and its curve export retain the raw objective and fitted
+freedom. The dialog shows an explanation for Column fits with assumed unit y errors
+or an active error floor, unit-weight fits and scatter-estimated fits. The result
+and its curve export retain the raw objective and fitted
 parameters. If :math:`\nu \leq 0`, ``reduced chi2`` reads ``unavailable``.
 For a Column fit without error columns the result says "No χ² quality verdict
 is available with assumed unit y errors. Parameter uncertainties are
@@ -2179,7 +2190,8 @@ Information criteria for role suggestions
 
 **Suggest roles…** compares the Global/Local partitions on the same data and
 under the same weighting convention. Column, Absolute and Percent errors use
-:math:`\chi^2` as :math:`-2\ln L` up to a data-only constant. None and Scatter
+:math:`\chi^2` as :math:`-2\ln L` up to a data-only constant. With stabilisation,
+the ranking is conditional on the floored uncertainties. None and Scatter
 profile a common unknown variance, using :math:`n\ln(\mathrm{RSS}/n)` and one
 additional fitted parameter for that variance. Scaling all ordinates by a
 common factor therefore preserves the criterion differences between models.

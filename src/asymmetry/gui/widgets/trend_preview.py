@@ -23,6 +23,7 @@ plot grammar used elsewhere in the app.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal
 
 import numpy as np
@@ -30,6 +31,13 @@ from numpy.typing import NDArray
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from asymmetry.core.fitting.parameter_models import (
+    ParameterCompositeModel,
+    sample_parameter_model,
+    windows_mask,
+)
+from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.trend_result import ErrorMode, resolve_trend_weights, trend_residuals
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import plots as plot_styles
 from asymmetry.gui.styles import tokens
@@ -92,6 +100,7 @@ class PreviewSeries:
     y: NDArray
     yerr: NDArray | None
     xerr: NDArray | None
+    group_id: str | None = None
 
 
 @dataclass
@@ -108,6 +117,40 @@ class PreviewRange:
     curve_y: NDArray
     #: Solid (fitted) vs dashed (seed) curve.
     fitted: bool
+    residuals: tuple[NDArray, NDArray] | None = None
+
+
+def sample_preview_range(
+    idx: int,
+    model: ParameterCompositeModel,
+    params: ParameterSet,
+    x_min: float | None,
+    x_max: float | None,
+    windows: list[tuple[float, float]] | None,
+    fitted: bool,
+    *,
+    primary: PreviewSeries | None,
+    mode: ErrorMode,
+    error_value: float | None,
+    use_x_errors: bool,
+    show_residuals: bool,
+) -> PreviewRange:
+    """Sample the curve and evaluate residuals at the selected observations."""
+    curve_x, curve_y = sample_parameter_model(model, params, x_min, x_max, windows)
+    mask = np.array([], dtype=bool)
+    residuals = None
+    if primary is not None:
+        selection = windows_mask(primary.x, windows, x_min, x_max)
+        weights = resolve_trend_weights(
+            primary.x, primary.y, primary.yerr, selection, mode, error_value
+        )
+        mask = weights.mask
+        if show_residuals and weights.sigma.size:
+            x = primary.x[mask]
+            xerr = primary.xerr[mask] if use_x_errors and primary.xerr is not None else None
+            predict = partial(model.function, **{p.name: p.value for p in params})
+            residuals = (x, trend_residuals(predict, x, primary.y[mask], weights.sigma, xerr))
+    return PreviewRange(idx, x_min, x_max, windows, mask, curve_x, curve_y, fitted, residuals)
 
 
 _State = Literal["ready", "empty", "loading", "error"]
@@ -607,7 +650,7 @@ class TrendPreviewCanvas(QWidget):
         # primary series against its candidate curve. Empty axis when there is no
         # curve to residual against.
         if resid_ax is not None:
-            self._draw_residuals(resid_ax, ax)
+            self._draw_residuals(resid_ax)
 
         self._canvas.draw_idle()
 
@@ -643,58 +686,15 @@ class TrendPreviewCanvas(QWidget):
         except Exception:
             pass
 
-    def _draw_residuals(self, resid_ax: object, main_ax: object) -> None:
-        """Draw standardized residuals for the active range's primary series.
-
-        For each in-mask primary-series point, plot ``(y - f(x)) / σ`` where
-        ``f(x)`` is the active range's candidate curve interpolated to the data x
-        (``np.interp(series_x, curve_x, curve_y)``) and ``σ`` is the series yerr
-        (falling back to 1 where yerr is missing/non-positive). A ±1 band and a
-        zero line give scale. With no active-range curve the axis is left empty.
-        """
+    def _draw_residuals(self, resid_ax: object) -> None:
+        """Draw residuals sampled from the same objective as the active fit."""
         self._style_residual_axis(resid_ax)
-        # Zero line + ±1 guide band, always drawn so the strip reads as a residual
-        # plot even before a curve exists.
-        try:
-            resid_ax.axhspan(-1.0, 1.0, color=tokens.PLOT_ZERO_LINE, alpha=0.12, zorder=0)  # type: ignore[union-attr]
-            resid_ax.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8, zorder=1)  # type: ignore[union-attr]
-        except Exception:
-            pass
-
+        resid_ax.axhspan(-1.0, 1.0, color=tokens.PLOT_ZERO_LINE, alpha=0.12, zorder=0)
+        resid_ax.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8, zorder=1)
         active = self._active_range()
-        if active is None or not self._series:
-            return
-        curve_x = np.asarray(active.curve_x, dtype=float)
-        curve_y = np.asarray(active.curve_y, dtype=float)
-        if curve_x.size == 0 or curve_y.size == 0:
-            return
-
-        primary = self._series[0]
-        x = np.asarray(primary.x, dtype=float)
-        y = np.asarray(primary.y, dtype=float)
-        if x.size == 0 or y.size == 0:
-            return
-
-        mask = self._primary_mask(x.size)
-        xs = x[mask]
-        ys = y[mask]
-        if xs.size == 0:
-            return
-
-        yerr = None if primary.yerr is None else np.asarray(primary.yerr, dtype=float)
-        if yerr is not None and yerr.size == x.size:
-            sigma = yerr[mask]
-        else:
-            sigma = np.ones(xs.size, dtype=float)
-        # Guard: a missing / non-positive σ would blow up the standardized
-        # residual — fall back to unit weight for those points.
-        sigma = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, 1.0)
-
-        fitted_y = np.interp(xs, curve_x, curve_y)
-        residuals = (ys - fitted_y) / sigma
-        try:
-            resid_ax.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8, zorder=1)  # type: ignore[union-attr]
-            resid_ax.plot(  # type: ignore[union-attr]
+        if active is not None and active.residuals is not None and self._state == "ready":
+            xs, residuals = active.residuals
+            resid_ax.plot(
                 xs,
                 residuals,
                 marker="o",
@@ -703,8 +703,6 @@ class TrendPreviewCanvas(QWidget):
                 color=tokens.PLOT_DATA,
                 zorder=3,
             )
-        except Exception:
-            pass
 
     def _draw_empty(self, ax: object) -> None:
         """Clear to a titled, muted centred placeholder (no blank white box)."""

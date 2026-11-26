@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -29,7 +30,8 @@ class ErrorMode(str, Enum):
     """How per-point σ values are assigned when weighting a model fit.
 
     ``COLUMN`` uses the propagated errors of the trended parameter (the
-    default and the only mode where the stabilisation floor applies);
+    default). ``COLUMN_STABILIZED`` adds a floor of half the median retained
+    positive uncertainty;
     ``PERCENT`` sets σᵢ = (value/100)·|yᵢ|; ``ABSOLUTE`` a constant σ =
     value; ``NONE`` unit weights; ``SCATTER`` fits with unit weights and
     rescales the parameter errors by √(χ²/ν) afterwards — the standard
@@ -38,10 +40,16 @@ class ErrorMode(str, Enum):
     """
 
     COLUMN = "column"
+    COLUMN_STABILIZED = "column_stabilized"
     PERCENT = "percent"
     ABSOLUTE = "absolute"
     NONE = "none"
     SCATTER = "scatter"
+
+    @property
+    def uses_column(self) -> bool:
+        """Whether this mode starts from the supplied uncertainties."""
+        return self in (ErrorMode.COLUMN, ErrorMode.COLUMN_STABILIZED)
 
 
 class ColumnErrorSource(str, Enum):
@@ -63,16 +71,131 @@ def column_error_source(
     return ColumnErrorSource.SUPPLIED
 
 
-def estimate_missing_trend_errors(
-    y: NDArray, yerr: NDArray
-) -> tuple[NDArray, NDArray[np.bool_] | None]:
-    """Apply the trend editor's exploratory fallback and identify affected points."""
-    missing = ~np.isfinite(yerr) | (yerr <= 0)
-    if not np.any(missing):
-        return yerr, None
-    finite = np.abs(y[np.isfinite(y)])
-    fallback = max(float(np.median(finite)) * 0.02, 1e-9) if finite.size else 1e-3
-    return np.where(missing, fallback, yerr), missing
+def apply_error_mode(
+    y: NDArray,
+    yerr: NDArray | None,
+    mode: ErrorMode | str = ErrorMode.COLUMN,
+    value: float | None = None,
+) -> NDArray[np.float64] | None:
+    """Assign per-point σ before point selection and any selected-range floor.
+
+    ``value`` is the percentage for ``PERCENT`` and the constant σ for
+    ``ABSOLUTE``. A missing, non-finite, or non-positive value falls back to
+    σ = 1 for ``ABSOLUTE`` (matching WiMDA) and to 1 % for ``PERCENT`` (so a
+    zero percentage cannot zero out every error and mask the whole fit).
+    Returns ``None`` for ``COLUMN`` with no error column, which callers treat
+    as unit weights. Percent-mode points with y = 0 get σ = 0 and are
+    excluded by the standard validity mask — they carry no error information.
+    """
+    mode = ErrorMode(mode)
+    yy = np.asarray(y, dtype=float)
+    if mode.uses_column:
+        return None if yerr is None else np.asarray(yerr, dtype=float)
+    if mode is ErrorMode.PERCENT:
+        pct = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
+        if pct <= 0.0:
+            pct = 1.0
+        return (pct / 100.0) * np.abs(yy)
+    if mode is ErrorMode.ABSOLUTE:
+        const = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
+        if const <= 0.0:
+            const = 1.0
+        return np.full_like(yy, const)
+    # NONE and SCATTER both weight uniformly; SCATTER additionally rescales
+    # the resulting parameter errors after the fit.
+    return np.ones_like(yy)
+
+
+@dataclass(frozen=True)
+class TrendWeights:
+    """Fit selection and its aligned vertical uncertainties."""
+
+    mask: NDArray[np.bool_]
+    sigma: NDArray[np.float64]
+    floor_applied: bool
+
+
+def selected_point_errors(errors: NDArray[np.float64], mode: ErrorMode) -> NDArray[np.float64]:
+    """Apply the selected-range floor to finite positive uncertainties."""
+    if mode is ErrorMode.COLUMN_STABILIZED and errors.size:
+        return np.maximum(errors, np.median(0.5 * errors))
+    return errors
+
+
+def resolve_trend_weights(
+    x: NDArray,
+    y: NDArray,
+    yerr: NDArray | None,
+    selection: NDArray[np.bool_],
+    mode: ErrorMode,
+    value: float | None = None,
+) -> TrendWeights:
+    """Select usable points before computing weights for this fit or group."""
+    sigma = apply_error_mode(y, yerr, mode, value)
+    if sigma is None:
+        sigma = np.ones_like(y, dtype=float)
+    mask = selection & np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0)
+    selected = sigma[mask]
+    effective = selected_point_errors(selected, mode)
+    return TrendWeights(mask, effective, bool(np.any(effective != selected)))
+
+
+def trend_x_derivative_step(x: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Choose the central-difference probe for the effective-variance objective."""
+    return np.maximum(np.abs(x), 1.0) * 1e-6
+
+
+def effective_variance_residual(
+    predict: Callable[[NDArray[np.float64]], NDArray[np.float64]],
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    sigma_y2: NDArray[np.float64],
+    xerr2: NDArray[np.float64],
+    x_step: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Orear/York effective-variance residual when both x and y are uncertain.
+
+    ``σ²_eff = σ_y² + (∂f/∂x)²·σ_x²``, with the local slope evaluated by a
+    central finite difference ``(f(x+h) − f(x−h)) / 2h`` (no analytic
+    derivative needed). A model undefined just outside the data range yields a
+    non-finite probe; the slope falls back to zero there rather than poisoning
+    the whole cost (``σ_y² > 0`` is guaranteed by the caller's validity mask, so
+    the denominator stays positive). Shared by the single-series and
+    cross-group fits so the two paths cannot drift numerically.
+    """
+    pred = np.asarray(predict(x), dtype=float)
+    slope = (
+        np.asarray(predict(x + x_step), dtype=float) - np.asarray(predict(x - x_step), dtype=float)
+    ) / (2.0 * x_step)
+    slope = np.where(np.isfinite(slope), slope, 0.0)
+    sigma2 = sigma_y2 + (slope**2) * xerr2
+    return (y - pred) / np.sqrt(sigma2)
+
+
+def trend_residuals(
+    predict: Callable[[NDArray[np.float64]], NDArray[np.float64]],
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    sigma: NDArray[np.float64],
+    xerr: NDArray[np.float64] | None,
+) -> NDArray[np.float64]:
+    """Evaluate the fitted objective's residuals at the actual observations."""
+    if xerr is None:
+        return (y - predict(x)) / sigma
+    xerr = np.where(np.isfinite(xerr) & (xerr > 0.0), xerr, 0.0)
+    return effective_variance_residual(predict, x, y, sigma**2, xerr**2, trend_x_derivative_step(x))
+
+
+def no_trend_points_message(
+    x: NDArray, y: NDArray, selection: NDArray[np.bool_], mode: ErrorMode
+) -> str:
+    """Explain an empty fit selection in terms of the current error mode."""
+    if mode.uses_column and np.any(selection & np.isfinite(x) & np.isfinite(y)):
+        return (
+            "No finite positive column errors in the selected range. "
+            "Choose None (unit weights) or Estimate from scatter to use these points."
+        )
+    return "No valid points in selected range"
 
 
 @dataclass
@@ -108,6 +231,8 @@ class ParameterModelFitResult:
     #: None on legacy results where the Column weighting was not recorded.
     column_error_source: ColumnErrorSource | None = None
     uses_effective_variance: bool | None = None
+    error_value: float | None = None
+    column_error_floor_applied: bool | None = None
 
     def __post_init__(self) -> None:
         dof = self.dof
@@ -131,6 +256,8 @@ class ParameterModelFitResult:
             "reduced_chi_squared": recorded_statistic(self.reduced_chi_squared),
             "message": self.message,
             "error_mode": self.error_mode,
+            "error_value": self.error_value,
+            "column_error_floor_applied": self.column_error_floor_applied,
             "column_error_source": self.column_error_source,
             "uses_effective_variance": self.uses_effective_variance,
             "n_points": self.n_points,
@@ -174,7 +301,9 @@ class ParameterModelFitResult:
             reduced_chi_squared=float("nan") if reduced is None else float(reduced),
             message=str(data.get("message", "")),
             error_mode=str(data.get("error_mode", ErrorMode.COLUMN.value)),
+            error_value=data.get("error_value"),
             column_error_source=None if source is None else ColumnErrorSource(source),
+            column_error_floor_applied=data.get("column_error_floor_applied"),
             uses_effective_variance=data.get("uses_effective_variance"),
             n_points=int(data.get("n_points", 0)),
             parameters=_deserialize_parameter_set(raw_parameters),
@@ -188,7 +317,7 @@ class ParameterModelFitResult:
     @property
     def effective_error_mode(self) -> str | None:
         """Effective y weighting; None when historical Column weighting is unknown."""
-        if self.error_mode == ErrorMode.COLUMN:
+        if ErrorMode(self.error_mode).uses_column:
             if self.column_error_source is None:
                 return None
             if self.column_error_source is ColumnErrorSource.ASSUMED_UNIT:
@@ -204,7 +333,9 @@ class ParameterModelFitResult:
     def quality_reason(self) -> str | None:
         """Reason a χ² verdict is unavailable, or None when applicable."""
         sources = () if self.column_error_source is None else (self.column_error_source,)
-        reason = trend_weighting_reason(self.error_mode, sources, self.uses_effective_variance)
+        reason = trend_weighting_reason(
+            self.error_mode, sources, self.uses_effective_variance, self.column_error_floor_applied
+        )
         return quality_inapplicability_reason(self.dof, reason)
 
     def assess_quality(self, confidence: float = 0.95) -> FitQuality | None:
@@ -220,10 +351,18 @@ def trend_weighting_reason(
     error_mode: str,
     column_sources: tuple[ColumnErrorSource, ...],
     uses_effective_variance: bool | None = None,
+    floor_applied: bool | None = None,
 ) -> str | None:
     """Explain when a trend's weighting fails to support a χ² verdict."""
-    if error_mode == ErrorMode.COLUMN:
-        if not column_sources:
+    if ErrorMode(error_mode).uses_column:
+        if floor_applied:
+            return (
+                "No χ² quality verdict is available when the column error floor changes the weights. "
+                "Parameter uncertainties are conditional on the floored errors."
+            )
+        if not column_sources or (
+            error_mode == ErrorMode.COLUMN_STABILIZED and floor_applied is None
+        ):
             return "No χ² quality verdict is available because the effective weighting is unknown."
         if ColumnErrorSource.INCLUDES_ESTIMATES in column_sources:
             return (
@@ -257,6 +396,7 @@ def trend_fit_statistics(result: ParameterModelFitResult | CrossGroupFitResult) 
         "ndof": result.dof,
         "quality_reason": result.quality_reason,
         "error_mode": result.error_mode,
+        "column_error_floor_applied": result.column_error_floor_applied,
         "uses_effective_variance": result.uses_effective_variance,
     }
     if isinstance(result, ParameterModelFitResult):

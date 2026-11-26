@@ -16,6 +16,7 @@ from asymmetry.core.fitting import (
     as_composite_model,
     fit_scan_baseline,
     fit_scan_model,
+    fit_scan_peaks,
     parameter_set_for_model,
 )
 from asymmetry.core.transform import FieldScan
@@ -109,6 +110,40 @@ def test_fit_scan_baseline_constant_model():
     result = fit_scan_baseline(scan, [(0.0, 20.0), (80.0, 100.0)], model="Constant")
     assert result.success
     assert result.fit.parameters["c"].value == pytest.approx(3.0, abs=1e-3)
+
+
+def test_field_scan_and_baseline_use_the_supplied_weights():
+    scan = _scan([0.0, 1.0, 2.0, 3.0], [1.0, 3.0, 3.0, 5.0], [0.1, 1.0, 1.0, 2.0])
+    expected = 106 / 102
+    chi_squared = np.sum(((scan.value[:3] - expected) / scan.error[:3]) ** 2)
+
+    model_fit = fit_scan_model(scan, "Constant", x_min=0.0, x_max=2.0)
+    baseline = fit_scan_baseline(scan, [(0.0, 2.0)], model="Constant")
+
+    for fit in (model_fit, baseline.fit):
+        assert fit.success
+        assert fit.parameters["c"].value == pytest.approx(expected, abs=1e-4)
+        assert fit.uncertainties["c"] == pytest.approx(1 / np.sqrt(102), abs=1e-4)
+        assert fit.chi_squared == pytest.approx(chi_squared, abs=1e-4)
+    weights = np.array([100.0, 1.0, 1.0, 0.0]) / 102
+    operator = np.eye(4) - weights
+    np.testing.assert_allclose(baseline.correction_operator, operator, atol=1e-7)
+    np.testing.assert_allclose(
+        baseline.corrected_covariance, operator @ np.diag(scan.error**2) @ operator.T, atol=1e-7
+    )
+    peaks = fit_scan_peaks(baseline, "Constant")
+    peak_weights = scan.error**-2
+    influence = peak_weights / peak_weights.sum()
+    corrected = scan.value - expected
+    fitted = influence @ corrected
+    covariance = operator @ np.diag(scan.error**2) @ operator.T
+    residual_operator = np.eye(4) - influence
+    assert peaks.fit.parameters["c"].value == pytest.approx(fitted, abs=1e-4)
+    assert peaks.fit.chi_squared == pytest.approx(np.sum(((corrected - fitted) / scan.error) ** 2))
+    assert peaks.uncertainties["c"] == pytest.approx(np.sqrt(influence @ covariance @ influence))
+    assert peaks.effective_dof == pytest.approx(
+        np.trace(residual_operator @ covariance @ residual_operator.T @ np.diag(peak_weights))
+    )
 
 
 # True cubic baseline coefficients (well-conditioned over x in [0, 200]).

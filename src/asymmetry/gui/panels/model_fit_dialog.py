@@ -6,6 +6,7 @@ import os
 import re
 import traceback
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer
@@ -43,18 +44,17 @@ from asymmetry.core.fitting.experiment_design import (
 from asymmetry.core.fitting.parameter_carry import carry_parameter_set
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
+    CrossGroupFitResult,
     ErrorMode,
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
     ParameterModelFitResult,
-    apply_error_mode,
     carve_window_gap,
     component_names_for_x,
     fit_parameter_model,
     included_intervals,
     is_order_parameter_observable,
-    sample_parameter_model,
     set_included_intervals,
     suggest_model_seeds,
     validate_fit_windows,
@@ -63,6 +63,7 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthConventionError
 from asymmetry.core.fitting.seeding import seed_trend_parameters
+from asymmetry.core.fitting.trend_result import resolve_trend_weights
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -95,6 +96,7 @@ from asymmetry.gui.widgets.trend_preview import (
     SuggestionOverlay,
     TrendPreviewCanvas,
     range_span_color,
+    sample_preview_range,
 )
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
@@ -116,6 +118,7 @@ _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
 #: (label, ErrorMode, value-field meaning) for the dialog-level error selector.
 _ERROR_MODE_OPTIONS: list[tuple[str, ErrorMode, str | None]] = [
     ("Column (propagated errors)", ErrorMode.COLUMN, None),
+    ("Column (stabilised errors)", ErrorMode.COLUMN_STABILIZED, None),
     ("Percent of y", ErrorMode.PERCENT, "%"),
     ("Absolute", ErrorMode.ABSOLUTE, "σ"),
     ("None (unit weights)", ErrorMode.NONE, None),
@@ -124,7 +127,10 @@ _ERROR_MODE_OPTIONS: list[tuple[str, ErrorMode, str | None]] = [
 
 _ERROR_MODE_TOOLTIP = (
     "How each point is weighted in the fit.\n"
-    "Column: the propagated errors of the trended parameter (default).\n"
+    "Column (propagated errors): use finite positive uncertainties as supplied.\n"
+    "Column (stabilised errors): raise small uncertainties to half the median "
+    "positive uncertainty in the selected range, separately for each group.\n"
+    "Both Column modes omit points with invalid or missing entries.\n"
     "Percent of y: σᵢ = (value/100)·|yᵢ|.\n"
     "Absolute: one constant σ for every point.\n"
     "None: unit weights — χ² loses its absolute meaning.\n"
@@ -140,9 +146,9 @@ _QUALITY_TOOLTIP = (
     "toward 1 as ν grows). Above the band (poor): the model misses real\n"
     "structure, or the errors are underestimated. Below it (overdone): the fit\n"
     "reproduces the data better than the errors allow — usually overestimated\n"
-    "errors or too many free parameters. The verdict assumes real (Column-mode)\n"
-    "errors; with unit weights or scatter-estimated errors χ²ᵣ carries no\n"
-    "goodness information and no verdict is shown."
+    "errors or too many free parameters. The verdict requires calibrated errors;\n"
+    "unit weights, scatter-estimated errors, and an active column error floor\n"
+    "make the verdict unavailable."
 )
 
 _Y_PARAM_UNITS = {
@@ -545,7 +551,6 @@ class ModelFitDialog(QDialog):
         x_label: str | None = None,
         model_memory: dict[str, str] | None = None,
         width_context: TrendWidthContext | None = None,
-        y_errors_estimated: np.ndarray | None = None,
     ) -> None:
         super().__init__(parent)
 
@@ -565,9 +570,6 @@ class ModelFitDialog(QDialog):
         self._x = np.asarray(x_values, dtype=float)
         self._y = np.asarray(y_values, dtype=float)
         self._yerr = None if y_errors is None else np.array(y_errors, dtype=float)
-        self._yerr_estimated = (
-            None if y_errors_estimated is None else np.array(y_errors_estimated, dtype=bool)
-        )
         self._width_context = width_context
         self._xerr = None if x_errors is None else np.asarray(x_errors, dtype=float)
         self._removed = False
@@ -672,21 +674,12 @@ class ModelFitDialog(QDialog):
         # subclasses (cross-group) can leave them inert (item 3.2/3.3).
         self._connect_plot_range_signals()
 
-        # "Show residuals" (item 4.1, relocated by P2): opt-in residual strip
-        # beneath the preview plot. Lives in the preview pane itself — right
-        # above the canvas it controls — rather than in the top-of-dialog
-        # toggle row, so it reads as attached to the plot instead of orphaned.
-        # Default UNCHECKED — the user opts in; keeping it off by default also
-        # matches the narrow-screen "don't crowd the pane" stance. When the
-        # preview pane auto-collapses on a narrow screen this checkbox rides
-        # with it (hidden), which is correct — residuals are meaningless with
-        # no visible preview.
         self._show_residuals_check = QCheckBox("Show residuals")
         self._show_residuals_check.setChecked(False)
         self._show_residuals_check.setToolTip(
             "Show a residual strip below the preview plot: (data − model) / σ for "
             "the selected range's in-fit points, with a ±1σ guide band. Uses the "
-            "seed curve before a fit and the fitted curve after."
+            "seed and selected weights before a fit, and the fitted curve and weights after."
         )
         self._show_residuals_check.toggled.connect(self._on_show_residuals_toggled)
         residuals_row = QHBoxLayout()
@@ -783,6 +776,7 @@ class ModelFitDialog(QDialog):
             self._error_value_spin.setRange(1e-12, 1e12)
             self._error_value_spin.setDecimals(6)
             self._error_value_spin.setValue(1.0)
+            self._error_value_spin.valueChanged.connect(self._request_preview_update)
             self._error_value_spin.setToolTip(
                 "Percent of |y| (Percent mode) or the constant σ (Absolute mode)."
             )
@@ -806,7 +800,8 @@ class ModelFitDialog(QDialog):
                 "Unchecked = the x-axis is treated as exact (ordinary least "
                 "squares)."
             )
-            self._x_error_check.setChecked(bool(getattr(self._fit, "use_x_errors", False)))
+            self._x_error_check.setChecked(self._fit.use_x_errors)
+            self._x_error_check.toggled.connect(self._request_preview_update)
             xerr_row.addWidget(self._x_error_check)
             xerr_row.addStretch()
             left_layout.addLayout(xerr_row)
@@ -1079,6 +1074,7 @@ class ModelFitDialog(QDialog):
         preview = getattr(self, "_preview", None)
         if preview is not None:
             preview.set_show_residuals(bool(checked))
+            self._request_preview_update()
 
     # -- live preview (work item 1.3) -----------------------------------------
     #
@@ -1196,75 +1192,59 @@ class ModelFitDialog(QDialog):
             preview.set_state("empty")
             return
 
-        # Snapshot each range as plain data: a fresh model, a copy of its params,
-        # bounds, and windows. Nothing here is read again off-thread.
-        range_snapshots: list[dict[str, object]] = []
-        for idx, fit_range in enumerate(self._fit.ranges):
-            model_snapshot = ParameterCompositeModel(
-                component_names=list(fit_range.model.component_names),
-                operators=list(fit_range.model.operators),
-            )
-            params_snapshot = ParameterSet(
-                [
-                    Parameter(
-                        name=p.name,
-                        value=float(p.value),
-                        min=float(p.min),
-                        max=float(p.max),
-                        fixed=bool(p.fixed),
-                    )
-                    for p in fit_range.parameters
-                ]
-            )
-            range_snapshots.append(
-                {
-                    "idx": idx,
-                    "model": model_snapshot,
-                    "params": params_snapshot,
-                    "x_min": fit_range.x_min,
-                    "x_max": fit_range.x_max,
-                    "windows": list(fit_range.windows) if fit_range.windows else None,
-                    "fitted": self._range_is_fitted(idx),
-                }
-            )
-
-        primary_x = np.asarray(primary.x, dtype=float).copy()
         active_idx = self._active_range_idx
+        show_residuals = self._show_residuals_check.isChecked()
+        range_snapshots = []
+        for idx, fit_range in enumerate(self._fit.ranges):
+            result = self._result_for_range(idx)
+            fitted = result is not None and result.success
+            mode, value, use_x = self._error_mode(), self._error_value(), self._use_x_errors()
+            parameters = fit_range.parameters
+            show = show_residuals
+            if fitted:
+                mode, value = ErrorMode(result.error_mode), result.error_value
+                use_x = bool(result.uses_effective_variance)
+                if isinstance(result, CrossGroupFitResult):
+                    gid = primary.group_id
+                    parameters = ParameterSet(
+                        [
+                            *result.fixed_parameters,
+                            *result.global_parameters,
+                            *result.local_parameters.get(gid, ()),
+                        ]
+                    )
+                    show &= result.per_group_n_points.get(gid, 0) > 0
+                    if mode.uses_column:
+                        show &= gid in result.column_error_sources
+                elif mode.uses_column:
+                    show &= result.column_error_source is not None
+                if mode in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE):
+                    show &= value is not None
+            range_snapshots.append(
+                (
+                    (
+                        idx,
+                        ParameterCompositeModel.from_dict(fit_range.model.to_dict()),
+                        ParameterSet(replace(p) for p in parameters),
+                        fit_range.x_min,
+                        fit_range.x_max,
+                        list(fit_range.windows) if fit_range.windows else None,
+                        fitted,
+                    ),
+                    dict(
+                        primary=primary if idx == active_idx else None,
+                        mode=mode,
+                        error_value=value,
+                        use_x_errors=use_x,
+                        show_residuals=show,
+                    ),
+                )
+            )
         self._preview_generation += 1
         gen = self._preview_generation
 
         def _worker(_worker: object) -> object:
-            # OFF-THREAD: touches only the plain snapshots captured above.
-            out_ranges: list[PreviewRange] = []
-            for snap in range_snapshots:
-                idx = int(snap["idx"])
-                curve_x, curve_y = sample_parameter_model(
-                    snap["model"],
-                    snap["params"],
-                    snap["x_min"],
-                    snap["x_max"],
-                    snap["windows"],
-                )
-                # The in-mask is computed over the PRIMARY series' x for the
-                # active range only; other ranges leave it empty (canvas draws
-                # their span/curve without per-point greying).
-                if idx == active_idx:
-                    in_mask = windows_mask(primary_x, snap["windows"], snap["x_min"], snap["x_max"])
-                else:
-                    in_mask = np.array([], dtype=bool)
-                out_ranges.append(
-                    PreviewRange(
-                        idx=idx,
-                        x_min=snap["x_min"],
-                        x_max=snap["x_max"],
-                        windows=snap["windows"],
-                        in_mask=in_mask,
-                        curve_x=curve_x,
-                        curve_y=curve_y,
-                        fitted=bool(snap["fitted"]),
-                    )
-                )
-            return (gen, out_ranges)
+            return gen, [sample_preview_range(*args, **kwargs) for args, kwargs in range_snapshots]
 
         self._preview_active = True
         preview.set_state("loading")
@@ -2134,7 +2114,7 @@ class ModelFitDialog(QDialog):
         )
         x_vals = np.asarray(self._x, dtype=float).copy()
         y_vals = np.asarray(self._y, dtype=float).copy()
-        y_errs, yerr_estimated = self._yerr, self._yerr_estimated
+        y_errs = self._yerr
         width_context = self._width_context
         x_min = fit_range.x_min
         x_max = fit_range.x_max
@@ -2154,7 +2134,6 @@ class ModelFitDialog(QDialog):
                 x=x_vals,
                 y=y_vals,
                 yerr=y_errs,
-                yerr_estimated=yerr_estimated,
                 width_context=width_context,
                 model=model_snapshot,
                 parameters=params_snapshot,
@@ -2532,17 +2511,15 @@ class ModelFitDialog(QDialog):
             self._suggest_goal_edit.clear()
 
     def _effective_y_err_for_active_fit(self) -> np.ndarray:
-        """The per-point sigma the active range's fit was actually weighted with.
-
-        Reuses the SAME error-mode resolution the fit itself uses
-        (``apply_error_mode``) so the suggestion's noise model matches the fit
-        that produced its covariance exactly. Falls back to the raw ``yerr``
-        column when the mode yields ``None`` (unit weights with no column).
-        """
-        resolved = apply_error_mode(self._y, self._yerr, self._error_mode(), self._error_value())
-        if resolved is None:
-            return np.ones_like(self._y)
-        return resolved
+        """Align the selected fit weights to the original x coordinates."""
+        fit_range = self._fit.ranges[self._active_range_idx]
+        selection = windows_mask(self._x, fit_range.windows, fit_range.x_min, fit_range.x_max)
+        weights = resolve_trend_weights(
+            self._x, self._y, self._yerr, selection, self._error_mode(), self._error_value()
+        )
+        result = np.full_like(self._y, np.nan)
+        result[weights.mask] = weights.sigma
+        return result
 
     def _clear_suggestion(self) -> None:
         """Drop any stale suggestion overlay + result line (spec item 7).
@@ -3041,7 +3018,7 @@ class ModelFitDialog(QDialog):
         )
         x_vals = np.asarray(self._x, dtype=float).copy()
         y_vals = np.asarray(self._y, dtype=float).copy()
-        y_errs, yerr_estimated = self._yerr, self._yerr_estimated
+        y_errs = self._yerr
         width_context = self._width_context
         x_min = fit_range.x_min
         x_max = fit_range.x_max
@@ -3055,7 +3032,6 @@ class ModelFitDialog(QDialog):
                 x=x_vals,
                 y=y_vals,
                 yerr=y_errs,
-                yerr_estimated=yerr_estimated,
                 width_context=width_context,
                 model=model_snapshot,
                 parameters=params_snapshot,
@@ -3256,7 +3232,7 @@ class ModelFitDialog(QDialog):
                 fixed = inner.isChecked()
         return {"fixed": fixed}
 
-    def _result_for_range(self, idx: int) -> object | None:
+    def _result_for_range(self, idx: int) -> ParameterModelFitResult | CrossGroupFitResult | None:
         """The fitted result to display for range *idx*, or None if not run.
 
         Base reads the per-range ``fit_range.result``. Subclasses that cache
@@ -3380,8 +3356,16 @@ class ModelFitDialog(QDialog):
         """
         if idx is None or idx < 0 or idx >= len(self._fit.ranges):
             return
+        changed = idx != self._active_range_idx
         self._active_range_idx = idx
         fit_range = self._fit.ranges[idx]
+        result = self._result_for_range(idx)
+        if changed and result is not None and self._error_mode_combo is not None:
+            mode_idx = self._error_mode_combo.findData(result.error_mode)
+            if mode_idx >= 0:
+                self._error_mode_combo.setCurrentIndex(mode_idx)
+            if result.error_value is not None:
+                self._error_value_spin.setValue(result.error_value)
 
         # Move the active highlight + the Run Fit action to the selected card,
         # and repoint the details-pane fit-region editor at it.
@@ -3394,7 +3378,6 @@ class ModelFitDialog(QDialog):
         self._set_formula_display(fit_range)
         self._range_hint_label.setText(self._range_hint_text(idx))
 
-        result = self._result_for_range(idx)
         self._chi2_label.setText(self._chi2_status_text(result))
         self._quality_label.setText(self._quality_status_text(fit_range, result))
         self._apply_result_box_style(result)

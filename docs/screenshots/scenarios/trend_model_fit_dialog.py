@@ -35,10 +35,12 @@ class TrendModelFitDialogScenario(Scenario):
     size = (1180, 720)
     requires_fit = True
     include_y_errors = True
+    stabilise_errors = False
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         import numpy as np
 
+        from asymmetry.core.fitting.trend_result import ErrorMode
         from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
         # Synthetic ν(T) from the EuO order parameter, one point per scan run
@@ -50,6 +52,8 @@ class TrendModelFitDialogScenario(Scenario):
         rng = np.random.default_rng(31)
         nu = nu_0_mhz * order + rng.normal(0.0, 0.25, temperature.shape)
         nu_err = np.full_like(temperature, 0.4) if self.include_y_errors else None
+        if self.stabilise_errors:
+            nu_err[0] = 0.08
 
         dialog = ModelFitDialog(
             parameter_name="frequency",
@@ -60,6 +64,10 @@ class TrendModelFitDialogScenario(Scenario):
         )
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        if self.stabilise_errors:
+            picker = dialog._error_mode_combo
+            picker.setCurrentIndex(picker.findData(ErrorMode.COLUMN_STABILIZED.value))
+            dialog._show_residuals_check.setChecked(True)
         dialog.show()
         _pump_events(200)
 
@@ -87,6 +95,8 @@ class TrendModelFitDialogScenario(Scenario):
         result = dialog._fit.ranges[0].result
         if result is None or not result.success:
             raise RuntimeError("EuO order-parameter fit did not converge for the screenshot")
+        if self.stabilise_errors and not result.column_error_floor_applied:
+            raise RuntimeError("The stabilised trend screenshot requires an active error floor")
         if (
             not self.include_y_errors
             and "No χ² quality verdict" not in dialog._quality_label.text()
@@ -133,6 +143,15 @@ class TrendModelFitUnitWeightsScenario(TrendModelFitDialogScenario):
 
 
 register(TrendModelFitUnitWeightsScenario())
+
+
+class TrendModelFitStabilisedScenario(TrendModelFitDialogScenario):
+    name = "trend_model_fit_stabilised"
+    description = "Trend fit with the column error floor and weighted residuals"
+    stabilise_errors = True
+
+
+register(TrendModelFitStabilisedScenario())
 
 
 class ZeroResidualDegreesFitScenario(Scenario):

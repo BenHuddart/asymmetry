@@ -212,6 +212,7 @@ class CrossGroupFitDialog(ModelFitDialog):
             series.append(
                 PreviewSeries(
                     label=group.group_name,
+                    group_id=group.group_id,
                     x=np.asarray(group.x, dtype=float),
                     y=np.asarray(group.y, dtype=float),
                     yerr=group.yerr,
@@ -678,7 +679,7 @@ class CrossGroupFitDialog(ModelFitDialog):
     def _range_hint_text(self, idx: int) -> str:
         return f"Editing parameters for Range {idx + 1} (Cross-group mode: Global/Local/Fixed)."
 
-    def _result_for_range(self, idx: int) -> object | None:
+    def _result_for_range(self, idx: int) -> CrossGroupFitResult | None:
         return self._range_results.get(idx)
 
     def _chi2_status_text(self, result: object | None) -> str:

@@ -17,6 +17,7 @@ from pathlib import Path
 from asymmetry.core.project.fit_statistic_migration import (
     migrate_fit_objectives,
     migrate_fit_statistic_applicability,
+    migrate_trend_column_floor,
 )
 from asymmetry.core.project.instrument_migration import (
     LegacyProfileFingerprint,
@@ -26,7 +27,7 @@ from asymmetry.core.project.instrument_migration import (
 from asymmetry.core.project.json_values import encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 42
+CURRENT_SCHEMA_VERSION: int = 43
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -126,16 +127,12 @@ def migrate_to_current(data: dict) -> dict:
 
         migrated = migrate_timing_displays(migrated)
         version = 31
-    from asymmetry.core.project.reference_restore import (
-        migrate_reference_declarations,
-        migrate_reference_scale_declarations,
-        migrate_reference_timing_declarations,
-    )
+    from asymmetry.core.project import reference_restore
 
     for prior, convert in (
-        (31, migrate_reference_declarations),
-        (32, migrate_reference_timing_declarations),
-        (33, migrate_reference_scale_declarations),
+        (31, reference_restore.migrate_reference_declarations),
+        (32, reference_restore.migrate_reference_timing_declarations),
+        (33, reference_restore.migrate_reference_scale_declarations),
     ):
         if version == prior:
             version += 1
@@ -154,15 +151,11 @@ def migrate_to_current(data: dict) -> dict:
 
         migrated = migrate_scan_observations(migrated) | {"schema_version": 38}
         version = 38
-    if version == 38:
+    if version >= 38:
         from asymmetry.core.project.analysis_migration import migrate_analysis_state
 
-        migrated = migrate_analysis_state(migrated) | {"schema_version": 39}
-        version = 39
-    elif version >= 39:
-        from asymmetry.core.project.analysis_migration import migrate_analysis_state
-
-        migrated = migrate_analysis_state(migrated, legacy=False)
+        migrated = migrate_analysis_state(migrated, legacy=version == 38)
+        version = max(version, 39)
     if version == 39:
         from asymmetry.core.project.scan_migration import migrate_scan_fit_history
 
@@ -171,9 +164,14 @@ def migrate_to_current(data: dict) -> dict:
     if version == 40:
         migrated = migrate_instrument_identities(migrated) | {"schema_version": 41}
         version = 41
-    if version == 41:
-        migrate_fit_statistic_applicability(migrated)
-        migrated["schema_version"] = 42
+    for prior, convert in (
+        (41, migrate_fit_statistic_applicability),
+        (42, migrate_trend_column_floor),
+    ):
+        if version == prior:
+            convert(migrated)
+            version += 1
+    migrated["schema_version"] = version
     return migrated
 
 

@@ -108,7 +108,6 @@ from asymmetry.core.fitting.sc.trend_width import (
     TrendWidthContext,
     derived_width_source,
 )
-from asymmetry.core.fitting.trend_result import estimate_missing_trend_errors
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
@@ -2223,6 +2222,11 @@ class FitParametersPanel(QWidget):
             parameters=param_result,
             uncertainties=uncertainties,
             message=fit_result.message,
+            error_mode=fit_result.error_mode,
+            error_value=fit_result.error_value,
+            column_error_source=fit_result.column_error_sources.get(group_id),
+            column_error_floor_applied=fit_result.column_error_floor_applied,
+            uses_effective_variance=fit_result.uses_effective_variance,
         )
 
         x_min_value: float | None = float(fit_x_min) if np.isfinite(fit_x_min) else None
@@ -4321,15 +4325,12 @@ class FitParametersPanel(QWidget):
         )
         y_vals, y_err = self._series_y_arrays(rows, param_name)
 
-        y_err, estimated = estimate_missing_trend_errors(y_vals, y_err)
-
         dialog = ModelFitDialog(
             parameter_name=param_name,
             x_key=x_key,
             x_values=x_vals,
             y_values=y_vals,
             y_errors=y_err,
-            y_errors_estimated=estimated,
             existing_fit=self._model_fits.get(param_name),
             parent=self,
             x_errors=x_err,
@@ -4426,7 +4427,6 @@ class FitParametersPanel(QWidget):
             y_vals, y_err = self._series_y_arrays(rows, param_name)
             if np.count_nonzero(np.isfinite(y_vals)) < 2:
                 continue
-            y_err, estimated = estimate_missing_trend_errors(y_vals, y_err)
             if group.group_id in overrides:
                 gv_value = float(overrides[group.group_id])
             else:
@@ -4442,7 +4442,6 @@ class FitParametersPanel(QWidget):
                     x=x_vals,
                     y=y_vals,
                     yerr=y_err,
-                    yerr_estimated=estimated,
                     group_variable_value=gv_value,
                     # Per-point x-uncertainty for the effective-variance option —
                     # only present (non-None) when the abscissa is a fitted param.

@@ -21,7 +21,7 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.trend_result import ColumnErrorSource
 from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, load_project, save_project
 from asymmetry.gui.mainwindow import MainWindow
-from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupDialogOutput
+from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupDialogOutput, CrossGroupFitDialog
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from docs.screenshots.scenarios._base import auto_dismiss_modals
@@ -29,6 +29,81 @@ from tests._qt_helpers import wait_for
 from tests.gui.test_model_fit_dialog import _make_dialog, _wait_for_fit
 
 pytestmark = pytest.mark.gui
+
+
+@pytest.mark.parametrize("cross_group", [False, True])
+def test_stabilised_column_selector_and_residuals(qapp, cross_group, tmp_path):
+    x = np.arange(4.0)
+    y = np.array([1.0, 3.0, 3.0, 100.0])
+    sigma = np.array([0.1, 1.0, 1.0, np.nan])
+    model = ParameterCompositeModel(["Constant"])
+    common = {"parameter_name": "Lambda", "x_key": "field"}
+    if cross_group:
+        groups = [
+            ParameterGroupData(name, name, x, y + 10 * index, sigma, 0.0)
+            for index, name in enumerate(("a", "b"))
+        ]
+        config = {
+            "model": model.to_dict(),
+            "parameter_rows": [{"name": "c", "type": "Local", "initial": 0.0}],
+        }
+        dialog = CrossGroupFitDialog(**common, groups=groups, existing_config=config)
+    else:
+        fit = ParameterModelFit(
+            **common,
+            ranges=[ModelFitRange(0.0, 3.0, model, ParameterSet([Parameter("c", 0.0)]))],
+        )
+        data = {"x_values": x, "y_values": y, "y_errors": sigma}
+        dialog = ModelFitDialog(**common, **data, existing_fit=fit)
+    picker = dialog._error_mode_combo
+    assert dialog._error_mode() is ErrorMode.COLUMN
+    picker.setCurrentText("Column (stabilised errors)")
+    dialog._show_residuals_check.setChecked(True)
+    dialog._run_fit(0)
+    _wait_for_fit(dialog)
+    result = dialog._result_for_range(0)
+    assert result.success
+    assert result.column_error_floor_applied
+    assert "floor changes the weights" in dialog._quality_label.text()
+
+    def plotted():
+        axes = dialog._preview._figure.get_axes()
+        return (
+            [line for line in axes[-1].get_lines() if line.get_marker() == "o"]
+            if len(axes) == 2
+            else []
+        )
+
+    expected = (y[:3] - 5 / 3) / np.array([0.5, 1.0, 1.0])
+    wait_for(lambda: plotted() and np.allclose(plotted()[0].get_ydata(), expected), qapp)
+    line = plotted()[0]
+    np.testing.assert_array_equal(line.get_xdata(), x[:3])
+    np.testing.assert_allclose(line.get_ydata(), expected, atol=1e-4)
+    chi_squared = result.per_group_chi_squared["a"] if cross_group else result.chi_squared
+    assert np.sum(line.get_ydata() ** 2) == pytest.approx(chi_squared)
+
+    project = tmp_path / "weights.asymproj"
+    if cross_group:
+        config = dialog._collect_config()
+        reopened = CrossGroupFitDialog(**common, groups=groups, existing_config=config)
+    else:
+        panel = FitParametersPanel()
+        panel._model_fits["Lambda"] = dialog.get_model_fit()
+        save_project(
+            {
+                "schema_version": CURRENT_SCHEMA_VERSION,
+                "datasets": [],
+                "fit_parameters_state": panel.get_state(),
+            },
+            project,
+        )
+        panel.restore_state(load_project(project)["fit_parameters_state"])
+        reopened = ModelFitDialog(**common, **data, existing_fit=panel._model_fits["Lambda"])
+        assert reopened._result_for_range(0).column_error_floor_applied
+        panel.close()
+    assert reopened._error_mode_combo.currentText() == "Column (stabilised errors)"
+    reopened.close()
+    dialog.close()
 
 
 def test_quality_verdict_shown_for_column_mode_fit(qapp: QApplication) -> None:

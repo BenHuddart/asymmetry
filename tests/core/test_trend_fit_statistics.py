@@ -139,3 +139,135 @@ def test_cross_group_keeps_weight_sources_of_retained_observations():
     recovered = CrossGroupFitResult.from_dict(full.to_dict())
     assert recovered.column_error_sources == full.column_error_sources
     assert recovered.quality_reason == full.quality_reason
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected", "standard_error", "effective_sigma"),
+    [
+        (ErrorMode.COLUMN, 106 / 102, 1 / np.sqrt(102), [0.1, 1.0, 1.0]),
+        (ErrorMode.COLUMN_STABILIZED, 5 / 3, 1 / np.sqrt(6), [0.5, 1.0, 1.0]),
+    ],
+)
+@pytest.mark.parametrize("with_invalid_points", [False, True])
+def test_column_fit_policy_on_selected_points(
+    mode, expected, standard_error, effective_sigma, with_invalid_points
+) -> None:
+    x = np.array([0.0, 1.0, 2.0])
+    y = np.array([1.0, 3.0, 3.0])
+    sigma = np.array([0.1, 1.0, 1.0])
+    windows = None
+    if with_invalid_points:
+        x = np.r_[x, 0.25, 1.25, 1.75, 2.1, 3.0, 4.0, 5.0]
+        y = np.r_[y, np.full(7, 100.0)]
+        sigma = np.r_[sigma, 0.0, -0.2, np.inf, np.nan, 10.0, 10.0, 10.0]
+        windows = [(0.0, 0.5), (0.75, 2.25)]
+    result = fit_parameter_model(
+        x,
+        y,
+        sigma,
+        ParameterCompositeModel(["Constant"]),
+        ParameterSet([Parameter("c", 0.0)]),
+        windows=windows,
+        error_mode=mode,
+    )
+
+    assert result.success
+    assert result.n_points == 3
+    assert result.parameters["c"].value == pytest.approx(expected, abs=1e-4)
+    assert result.uncertainties["c"] == pytest.approx(standard_error, abs=1e-4)
+    assert result.chi_squared == pytest.approx(
+        np.sum(((y[:3] - expected) / effective_sigma) ** 2), abs=1e-4
+    )
+    restored = ParameterModelFitResult.from_dict(result.to_dict())
+    assert restored.error_mode == mode.value
+    assert restored.column_error_floor_applied is (mode is ErrorMode.COLUMN_STABILIZED)
+    assert (restored.quality_reason is None) is (mode is ErrorMode.COLUMN)
+
+
+def test_inactive_column_error_floor_keeps_quality_verdict() -> None:
+    x = np.arange(3.0)
+    result = fit_parameter_model(
+        x,
+        x,
+        np.ones_like(x),
+        ParameterCompositeModel(["Constant"]),
+        ParameterSet([Parameter("c", 0.0)]),
+        error_mode=ErrorMode.COLUMN_STABILIZED,
+    )
+
+    assert result.success
+    assert result.column_error_floor_applied is False
+    assert result.assess_quality() is not None
+
+
+def test_column_fit_recommends_alternative_when_all_errors_are_invalid() -> None:
+    x = np.arange(3.0)
+    result = fit_parameter_model(
+        x,
+        x,
+        np.array([0.0, -1.0, np.nan]),
+        ParameterCompositeModel(["Constant"]),
+        ParameterSet([Parameter("c", 0.0)]),
+    )
+
+    assert not result.success
+    assert "Choose None (unit weights) or Estimate from scatter" in result.message
+
+
+@pytest.mark.slow
+def test_fit_parameter_model_error_floor_blocks_high_field_collapse() -> None:
+    x = np.array(
+        [25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 20000.0, 35000.0]
+    )
+    y = np.array(
+        [
+            0.604866,
+            0.504736,
+            0.337137,
+            0.203568,
+            0.174864,
+            0.159764,
+            0.140585,
+            0.139061,
+            0.0664971,
+            0.00056813,
+            0.0,
+        ]
+    )
+    yerr = np.array(
+        [
+            0.0331,
+            0.0386,
+            0.0239,
+            0.0131,
+            0.0111,
+            0.0102,
+            0.00929,
+            0.0093,
+            0.00486,
+            0.000115,
+            1.39e-11,
+        ]
+    )
+    model = ParameterCompositeModel(["DiffusionLF_2D", "BallisticLF_2D"], operators=["+"])
+
+    params = ParameterSet(
+        [
+            Parameter("A_1", value=1.0, min=0.0, max=500.0),
+            Parameter("D_2D", value=1.0, min=0.0, max=1.0e6),
+            Parameter("D_perp", value=0.0, min=0.0, max=0.0, fixed=True),
+            Parameter("A_2", value=1.0, min=0.0, max=500.0),
+            Parameter("D_hop", value=1.0, min=0.0, max=1.0e6),
+        ]
+    )
+
+    result = fit_parameter_model(x, y, yerr, model, params, error_mode=ErrorMode.COLUMN_STABILIZED)
+
+    assert result.success
+    assert result.column_error_floor_applied
+    fitted = {parameter.name: parameter.value for parameter in result.parameters}
+    assert result.reduced_chi_squared < 5.0
+    assert fitted["A_1"] > 20.0
+    assert 100.0 <= fitted["D_2D"] <= 1000.0
+    assert fitted["A_2"] > 100.0
+    assert fitted["D_hop"] > 1.0e4

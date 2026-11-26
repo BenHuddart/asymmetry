@@ -51,10 +51,15 @@ from asymmetry.core.fitting.sc.trend_width import TrendWidthContext
 from asymmetry.core.fitting.trend_result import (
     ColumnErrorSource,
     column_error_source,
+    effective_variance_residual,
+    no_trend_points_message,
+    resolve_trend_weights,
     trend_weighting_reason,
+    trend_x_derivative_step,
 )
 from asymmetry.core.fitting.trend_result import ErrorMode as ErrorMode
 from asymmetry.core.fitting.trend_result import ParameterModelFitResult as ParameterModelFitResult
+from asymmetry.core.fitting.trend_result import apply_error_mode as apply_error_mode
 from asymmetry.core.utils.constants import (
     BOLTZMANN_CONSTANT_MEV_PER_K,
     ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G,
@@ -2848,41 +2853,6 @@ def suggest_model_seeds(
     return seeds
 
 
-def apply_error_mode(
-    y: NDArray,
-    yerr: NDArray | None,
-    mode: ErrorMode | str = ErrorMode.COLUMN,
-    value: float | None = None,
-) -> NDArray[np.float64] | None:
-    """Return the σ array a fit should weight with under ``mode``.
-
-    ``value`` is the percentage for ``PERCENT`` and the constant σ for
-    ``ABSOLUTE``. A missing, non-finite, or non-positive value falls back to
-    σ = 1 for ``ABSOLUTE`` (matching WiMDA) and to 1 % for ``PERCENT`` (so a
-    zero percentage cannot zero out every error and mask the whole fit).
-    Returns ``None`` for ``COLUMN`` with no error column, which callers treat
-    as unit weights. Percent-mode points with y = 0 get σ = 0 and are
-    excluded by the standard validity mask — they carry no error information.
-    """
-    mode = ErrorMode(mode)
-    yy = np.asarray(y, dtype=float)
-    if mode is ErrorMode.COLUMN:
-        return None if yerr is None else np.asarray(yerr, dtype=float)
-    if mode is ErrorMode.PERCENT:
-        pct = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
-        if pct <= 0.0:
-            pct = 1.0
-        return (pct / 100.0) * np.abs(yy)
-    if mode is ErrorMode.ABSOLUTE:
-        const = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
-        if const <= 0.0:
-            const = 1.0
-        return np.full_like(yy, const)
-    # NONE and SCATTER both weight uniformly; SCATTER additionally rescales
-    # the resulting parameter errors after the fit.
-    return np.ones_like(yy)
-
-
 @dataclass
 class ModelFitRange:
     """A model and fit results over a specific x-range.
@@ -3265,6 +3235,8 @@ class CrossGroupFitResult:
     input_width_contexts: dict[str, dict] = field(default_factory=dict)
     computation_revision: str | None = None
     column_error_sources: dict[str, ColumnErrorSource] = field(default_factory=dict)
+    column_error_floor_applied: bool | None = None
+    error_value: float | None = None
 
     def __post_init__(self) -> None:
         dof = self.dof
@@ -3285,7 +3257,10 @@ class CrossGroupFitResult:
     def quality_reason(self) -> str | None:
         """Why the joint result lacks a χ² reference law, when applicable."""
         reason = trend_weighting_reason(
-            self.error_mode, tuple(self.column_error_sources.values()), self.uses_effective_variance
+            self.error_mode,
+            tuple(self.column_error_sources.values()),
+            self.uses_effective_variance,
+            self.column_error_floor_applied,
         )
         return quality_inapplicability_reason(self.dof, reason)
 
@@ -3303,6 +3278,8 @@ class CrossGroupFitResult:
             "chi_squared": float(self.chi_squared),
             "reduced_chi_squared": recorded_statistic(self.reduced_chi_squared),
             "column_error_sources": dict(self.column_error_sources),
+            "column_error_floor_applied": self.column_error_floor_applied,
+            "error_value": self.error_value,
             "global_parameters": _parameter_set_to_dicts(self.global_parameters),
             "local_parameters": {
                 gid: _parameter_set_to_dicts(pset) for gid, pset in self.local_parameters.items()
@@ -3418,6 +3395,8 @@ class CrossGroupFitResult:
             input_width_contexts=dict(data.get("input_width_contexts", {})),
             success=success,
             computation_revision=data.get("computation_revision"),
+            column_error_floor_applied=data.get("column_error_floor_applied"),
+            error_value=data.get("error_value"),
             column_error_sources={
                 str(group): ColumnErrorSource(source)
                 for group, source in dict(data.get("column_error_sources", {})).items()
@@ -3454,25 +3433,10 @@ _TRANSPORT_RATE_SEED_GRID = (
     1.0e5,
 )
 _DYNAMIC_TRANSPORT_RATE_SEED_COUNT = 6
-_PARAMETER_MODEL_ERROR_FLOOR_FRACTION = 0.5
 
 
 def _parameter_values_by_name(parameters: ParameterSet) -> dict[str, float]:
     return {parameter.name: float(parameter.value) for parameter in parameters}
-
-
-def stabilized_point_errors(errors: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Apply the column-error floor used by parameter-model least squares."""
-    positive_errors = np.asarray(errors, dtype=float)
-    positive_errors = positive_errors[np.isfinite(positive_errors) & (positive_errors > 0.0)]
-    if positive_errors.size == 0:
-        return np.asarray(errors, dtype=float)
-
-    median_positive_error = float(np.median(positive_errors))
-    floor = _PARAMETER_MODEL_ERROR_FLOOR_FRACTION * median_positive_error
-    if floor <= 0.0:
-        return np.asarray(errors, dtype=float)
-    return np.maximum(np.asarray(errors, dtype=float), floor)
 
 
 def _is_additive_parameter_model(model: ParameterCompositeModel) -> bool:
@@ -3643,33 +3607,6 @@ def _transport_seed_initial_values(
     return best_seed
 
 
-def _effective_variance_residual(
-    predict: Callable[[NDArray[np.float64]], NDArray[np.float64]],
-    x: NDArray[np.float64],
-    y: NDArray[np.float64],
-    sigma_y2: NDArray[np.float64],
-    xerr2: NDArray[np.float64],
-    x_step: NDArray[np.float64],
-) -> NDArray[np.float64]:
-    """Orear/York effective-variance residual when both x and y are uncertain.
-
-    ``σ²_eff = σ_y² + (∂f/∂x)²·σ_x²``, with the local slope evaluated by a
-    central finite difference ``(f(x+h) − f(x−h)) / 2h`` (no analytic
-    derivative needed). A model undefined just outside the data range yields a
-    non-finite probe; the slope falls back to zero there rather than poisoning
-    the whole cost (``σ_y² > 0`` is guaranteed by the caller's validity mask, so
-    the denominator stays positive). Shared by the single-series and
-    cross-group fits so the two paths cannot drift numerically.
-    """
-    pred = np.asarray(predict(x), dtype=float)
-    slope = (
-        np.asarray(predict(x + x_step), dtype=float) - np.asarray(predict(x - x_step), dtype=float)
-    ) / (2.0 * x_step)
-    slope = np.where(np.isfinite(slope), slope, 0.0)
-    sigma2 = sigma_y2 + (slope**2) * xerr2
-    return (y - pred) / np.sqrt(sigma2)
-
-
 def _run_parameter_model_minuit(
     x_fit: NDArray[np.float64],
     y_fit: NDArray[np.float64],
@@ -3707,12 +3644,12 @@ def _run_parameter_model_minuit(
     if xerr_fit is None:
         cost = LeastSquares(x_fit, y_fit, e_fit, model_wrapper)
     else:
-        x_step = np.maximum(np.abs(x_fit), 1.0) * 1e-6
+        x_step = trend_x_derivative_step(x_fit)
         e2 = e_fit**2
         xerr2 = np.asarray(xerr_fit, dtype=float) ** 2
 
         def cost(*args: float) -> float:
-            resid = _effective_variance_residual(
+            resid = effective_variance_residual(
                 lambda x_local: model_wrapper(x_local, *args),
                 x_fit,
                 y_fit,
@@ -3865,9 +3802,6 @@ def fit_parameter_model(
     error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
     yy = np.asarray(y, dtype=float)
-    ee = apply_error_mode(yy, yerr, error_mode, error_value)
-    if ee is None:
-        ee = np.ones_like(xx)
     if error_mode in (ErrorMode.NONE, ErrorMode.SCATTER):
         xe = None
     else:
@@ -3883,13 +3817,12 @@ def fit_parameter_model(
             computation_revision=computation.COMPUTATION_REVISION,
         )
 
-    mask = np.isfinite(xx) & np.isfinite(yy) & np.isfinite(ee) & (ee > 0)
-    mask &= window_selection
-
-    if not np.any(mask):
+    weights = resolve_trend_weights(xx, yy, yerr, window_selection, error_mode, error_value)
+    mask = weights.mask
+    if not weights.sigma.size:
         return ParameterModelFitResult(
             success=False,
-            message="No valid points in selected range",
+            message=no_trend_points_message(xx, yy, window_selection, error_mode),
             error_mode=error_mode.value,
             computation_revision=computation.COMPUTATION_REVISION,
         )
@@ -3899,9 +3832,7 @@ def fit_parameter_model(
         selected_width.validate(model)
     x_fit = xx[mask]
     y_fit = yy[mask]
-    e_fit = ee[mask]
-    if error_mode is ErrorMode.COLUMN:
-        e_fit = stabilized_point_errors(e_fit)
+    e_fit = weights.sigma
 
     xerr_fit: NDArray[np.float64] | None = None
     if xe is not None:
@@ -3982,7 +3913,9 @@ def fit_parameter_model(
         )
 
     best_result.error_mode = error_mode.value
-    if error_mode is ErrorMode.COLUMN:
+    best_result.error_value = error_value
+    if error_mode.uses_column:
+        best_result.column_error_floor_applied = weights.floor_applied
         best_result.column_error_source = column_error_source(yerr, yerr_estimated, mask)
     best_result.uses_effective_variance = xerr_fit is not None
     best_result.n_starts_tried = len(initial_candidates)
@@ -4154,14 +4087,13 @@ def global_fit_parameter_model(
         ]
     ] = []
     total_points = 0
+    empty_group_messages = []
     input_width_contexts = {}
     column_error_sources = {}
+    column_error_floor_applied = False
     for group in groups:
         x = np.asarray(group.x, dtype=float)
         y = np.asarray(group.y, dtype=float)
-        sigma = apply_error_mode(y, group.yerr, error_mode, error_value)
-        if sigma is None:
-            sigma = np.ones_like(x)
         try:
             window_sel = windows_mask(x, windows)
         except ValueError as exc:
@@ -4173,8 +4105,23 @@ def global_fit_parameter_model(
                 error_mode=error_mode.value,
                 computation_revision=computation.COMPUTATION_REVISION,
             )
-        mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0) & window_sel
-        if error_mode is ErrorMode.COLUMN and np.any(mask):
+        weights = resolve_trend_weights(x, y, group.yerr, window_sel, error_mode, error_value)
+        mask = weights.mask
+        if not weights.sigma.size:
+            reason = no_trend_points_message(x, y, window_sel, error_mode)
+            message = f"{group.group_name}: {reason}"
+            if local_names:
+                return CrossGroupFitResult(
+                    success=False,
+                    chi_squared=0.0,
+                    reduced_chi_squared=float("nan"),
+                    message=message,
+                    error_mode=error_mode.value,
+                    computation_revision=computation.COMPUTATION_REVISION,
+                )
+            empty_group_messages.append(message)
+        column_error_floor_applied |= weights.floor_applied
+        if error_mode.uses_column and weights.sigma.size:
             column_error_sources[group.group_id] = column_error_source(
                 group.yerr, group.yerr_estimated, mask
             )
@@ -4194,9 +4141,19 @@ def global_fit_parameter_model(
                     xe_masked = np.where(np.isfinite(xe_masked) & (xe_masked > 0.0), xe_masked, 0.0)
                     if np.any(xe_masked > 0.0):
                         xe2 = xe_masked**2
-                        xstep = np.maximum(np.abs(x_masked), 1.0) * 1e-6
-        group_fit_arrays.append((x_masked, y[mask], sigma[mask], xe2, xstep))
+                        xstep = trend_x_derivative_step(x_masked)
+        group_fit_arrays.append((x_masked, y[mask], weights.sigma, xe2, xstep))
         total_points += int(np.count_nonzero(mask))
+
+    if not total_points:
+        return CrossGroupFitResult(
+            success=False,
+            chi_squared=0.0,
+            reduced_chi_squared=float("nan"),
+            message="\n".join(empty_group_messages),
+            error_mode=error_mode.value,
+            computation_revision=computation.COMPUTATION_REVISION,
+        )
 
     def cost_function(*args: float) -> float:
         arg_map = dict(zip(fit_param_names, args, strict=False))
@@ -4209,7 +4166,7 @@ def global_fit_parameter_model(
                 pred = np.asarray(model.function(xx, **kwargs), dtype=float)
                 resid = (yy - pred) / ee
             else:
-                resid = _effective_variance_residual(
+                resid = effective_variance_residual(
                     partial(model.function, **kwargs), xx, yy, ee**2, xe2, xstep
                 )
             total += float(np.sum(resid**2))
@@ -4246,7 +4203,7 @@ def global_fit_parameter_model(
             pred = np.asarray(model.function(xx, **kwargs), dtype=float)
             resid = (yy - pred) / ee
         else:
-            resid = _effective_variance_residual(
+            resid = effective_variance_residual(
                 partial(model.function, **kwargs), xx, yy, ee**2, xe2, xstep
             )
         per_group_chi_squared[group.group_id] = float(np.sum(resid**2))
@@ -4352,6 +4309,8 @@ def global_fit_parameter_model(
         global_correlations=global_correlations,
         input_width_contexts=input_width_contexts,
         column_error_sources=column_error_sources,
+        column_error_floor_applied=column_error_floor_applied if error_mode.uses_column else None,
+        error_value=error_value,
         computation_revision=computation.COMPUTATION_REVISION,
     )
 

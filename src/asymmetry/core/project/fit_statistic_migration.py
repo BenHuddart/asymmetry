@@ -1,6 +1,7 @@
 """Preserve recorded objectives and recover supported historical fit statistics."""
 
 from asymmetry.core.fitting.fit_quality import infer_historical_dof, quality_inapplicability_reason
+from asymmetry.core.fitting.trend_result import ErrorMode
 
 
 def migrate_fit_objectives(data: dict) -> dict:
@@ -82,5 +83,44 @@ def migrate_fit_statistic_applicability(data: dict) -> None:
             and result.get("reduced_chi_squared") is None
         ):
             form.pop("result_html", None)
+
+    walk(data)
+
+
+def migrate_trend_column_floor(data: dict) -> None:
+    """Identify the floor used by known single-series and scan executions."""
+
+    def mark(result):
+        if (
+            isinstance(result, dict)
+            and result.get("error_mode", ErrorMode.COLUMN.value) == ErrorMode.COLUMN
+        ):
+            result["error_mode"] = ErrorMode.COLUMN_STABILIZED.value
+
+    def walk(value):
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+        if not isinstance(value, dict):
+            return
+        for item in value.values():
+            walk(item)
+        model_fits = value.get("model_fits")
+        if isinstance(model_fits, dict):
+            for fit in model_fits.values():
+                if not isinstance(fit, dict) or not isinstance(fit.get("ranges"), list):
+                    continue
+                for entry in fit["ranges"]:
+                    result = entry.get("result") if isinstance(entry, dict) else None
+                    if isinstance(result, dict) and (
+                        result.get("covariance") is not None
+                        or (type(result.get("n_points")) is int and result["n_points"] > 0)
+                    ):
+                        mark(result)
+        history = value.get("fit_history")
+        if isinstance(history, dict) and isinstance(history.get("records"), list):
+            for record in history["records"]:
+                if isinstance(record, dict) and record.get("kind") in ("baseline", "peaks", "rf"):
+                    mark(record.get("result"))
 
     walk(data)
