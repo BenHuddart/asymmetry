@@ -337,9 +337,12 @@ the file-derived timing.
 The 476 bins at 12.5 ns spacing give a 5.95 µs rectangular record and an
 unpadded Fourier spacing of about 0.168 MHz. Eightfold zero padding samples
 the spectrum every 0.021 MHz. For an isolated undamped line, this record gives
-an amplitude half-height width of about 0.20 MHz. The half-height spans on
-the padded grid are about 0.19 MHz at the warm setpoint and 0.34 MHz at the
-cold one. The warm width is consistent with the finite-record response.
+an amplitude half-height width of about 0.203 MHz. In the plotted band, the
+distance between the outermost padded frequency bins at or above half the peak
+magnitude is 0.189 MHz at the warm setpoint and 0.336 MHz at the cold one.
+The cold span includes a low-frequency shoulder separated from the central
+peak by a dip below half height near 5.26 MHz. The warm span is consistent
+with the finite-record response.
 
 The example uses a setpoint rule to select the models. For the seven runs
 with nominal setpoints up to and including 16 K, the published transition
