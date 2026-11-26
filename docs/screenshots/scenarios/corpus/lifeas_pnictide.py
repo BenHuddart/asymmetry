@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .._base import CaptureContext
 
 EXAMPLE = "Superconductivity/LiFeAs"
+# Sample 1 scan, ordered by its nominal temperature setpoints in kelvin.
 _SCAN_S1 = (
     (3366, 1.5),
     (3367, 4.0),
@@ -94,7 +95,7 @@ def vortex_field_width_mt(
 @dataclass(frozen=True)
 class _ScanFit:
     run_number: int
-    temperature: float
+    setpoint_k: float
     result: FitResult
 
 
@@ -137,12 +138,12 @@ def _fit_sample_scan() -> list[_ScanFit]:
     return [
         _ScanFit(
             run_number,
-            temperature,
+            setpoint_k,
             _fit_lifeas_dataset(
                 reduce_lifeas_run(_load_lifeas_run(run_number)), normal=run_number == _S1_NORMAL
             ),
         )
-        for run_number, temperature in _SCAN_S1
+        for run_number, setpoint_k in _SCAN_S1
     ]
 
 
@@ -168,13 +169,13 @@ class LifeasPairSelectScenario(CorpusScenario):
             ax.set_ylabel("Asymmetry (%)")
             ax.grid(alpha=0.2)
         bottom.set(xlabel="Time (µs)", xlim=window)
-        figure.suptitle("LiFeAs Sample 1 at 1.5 K and 40 mT")
+        figure.suptitle(f"LiFeAs Sample 1 at 40 mT, {_SCAN_S1[0][1]:g} K setpoint")
         return _save_figure(figure, ctx, self.name)
 
 
 class LifeasTfFitScenario(CorpusScenario):
     name = "corpus_lifeas_tf_fit"
-    description = "Normalised residuals for the 1.5 K and 18 K fits to LiFeAs Sample 1."
+    description = "Normalised residuals for the endpoint fits of the LiFeAs setpoint scan."
     example = EXAMPLE
     requires_fit = True
 
@@ -183,7 +184,7 @@ class LifeasTfFitScenario(CorpusScenario):
 
         figure = Figure(figsize=(8.6, 5.4), dpi=132, layout="constrained")
         axes = figure.subplots(2, 1, sharex=True, sharey=True)
-        for ax, (run_number, temp), model in zip(
+        for ax, (run_number, setpoint_k), model in zip(
             axes, (_SCAN_S1[0], _SCAN_S1[-1]), ("two Gaussians", "one Gaussian"), strict=True
         ):
             normal = run_number == _S1_NORMAL
@@ -195,7 +196,7 @@ class LifeasTfFitScenario(CorpusScenario):
             else:
                 status = "Fit failed" if not fit.success else "Residuals unavailable"
             ax.axhline(0, color="0.4", lw=0.8)
-            ax.set_title(f"Run {run_number}, {temp:g} K ({model})", loc="left")
+            ax.set_title(f"Run {run_number}, {setpoint_k:g} K setpoint ({model})", loc="left")
             ax.set_title(status, loc="right")
             ax.set_ylabel("Normalised residual")
             ax.grid(alpha=0.2)
@@ -220,7 +221,7 @@ class LifeasFitQualityScenario(CorpusScenario):
         markers = {
             "Positive quadrature excess": ("o", "C0"),
             "No positive excess": ("v", "C1"),
-            "Normal reference": ("s", "0.35"),
+            "Candidate reference": ("s", "0.35"),
             "Reference unavailable": ("D", "C3"),
         }
         plotted = set()
@@ -229,7 +230,7 @@ class LifeasFitQualityScenario(CorpusScenario):
             if not fit.success or not isfinite(fit.reduced_chi_squared):
                 status = "Fit failed" if not fit.success else "No reduced χ²"
                 ax.text(
-                    entry.temperature,
+                    entry.setpoint_k,
                     0.02,
                     status,
                     ha="center",
@@ -239,7 +240,7 @@ class LifeasFitQualityScenario(CorpusScenario):
                 )
                 continue
             if entry.run_number == _S1_NORMAL:
-                label = "Normal reference"
+                label = "Candidate reference"
             elif not reference.success:
                 label = "Reference unavailable"
             elif (
@@ -256,7 +257,7 @@ class LifeasFitQualityScenario(CorpusScenario):
                 label = "Positive quadrature excess"
             marker, colour = markers[label]
             ax.scatter(
-                entry.temperature,
+                entry.setpoint_k,
                 fit.reduced_chi_squared,
                 marker=marker,
                 color=colour,
@@ -266,9 +267,9 @@ class LifeasFitQualityScenario(CorpusScenario):
         ax.axhline(1, color="0.5", lw=0.8, ls="--")
         ax.set(
             title="LiFeAs Sample 1 at 40 mT",
-            xlabel="Temperature (K)",
+            xlabel="Nominal temperature setpoint (K)",
             ylabel=r"Reduced $\chi^2$",
-            xticks=[entry.temperature for entry in scan],
+            xticks=[entry.setpoint_k for entry in scan],
             ylim=(0, None),
         )
         ax.legend()
@@ -278,7 +279,7 @@ class LifeasFitQualityScenario(CorpusScenario):
 
 class LifeasVortexLineshapeScenario(CorpusScenario):
     name = "corpus_lifeas_vortex_lineshape"
-    description = "Peak-normalised FFT magnitudes of the 1.5 K and 18 K LiFeAs traces."
+    description = "Peak-normalised FFT magnitudes at the endpoint setpoints of the LiFeAs scan."
     example = EXAMPLE
 
     def capture(self, ctx: CaptureContext):
@@ -288,7 +289,7 @@ class LifeasVortexLineshapeScenario(CorpusScenario):
 
         figure = Figure(figsize=(8.6, 4.0), dpi=132, layout="constrained")
         ax = figure.subplots()
-        for (run_number, temperature), colour in zip(
+        for (run_number, setpoint_k), colour in zip(
             (_SCAN_S1[-1], _SCAN_S1[0]), ("C1", "C0"), strict=True
         ):
             dataset = reduce_lifeas_run(_load_lifeas_run(run_number))
@@ -298,7 +299,7 @@ class LifeasVortexLineshapeScenario(CorpusScenario):
                 frequency[band],
                 magnitude[band] / np.max(magnitude[band]),
                 color=colour,
-                label=f"{temperature:g} K (run {run_number})",
+                label=f"{setpoint_k:g} K setpoint (run {run_number})",
             )
         ax.set(
             title="Transverse spectra of LiFeAs Sample 1 at 40 mT",

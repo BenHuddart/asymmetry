@@ -20,7 +20,7 @@ penetration-depth estimate. The Rigi school example **A high-Tc cuprate**
 uses a bismuth-strontium-calcium-copper-oxide (BiSCCO) sample measured on
 ISIS MuSR at 400 G and 200 G over 10–125 K.
 
-The LiFeAs example compares the spectra above and below the transition and
+The LiFeAs example compares the spectra at cold and warm setpoints and
 checks the residuals of the linewidth fits. The Re₆Zr example shows a fitted
 transverse-field Gaussian linewidth alongside a separate zero-field
 time-reversal-symmetry-breaking signal.
@@ -293,18 +293,20 @@ nuclear-dipolar background :math:`\sigma_{bg}`, and subtract
 Cross-reference — LiFeAs at 40 mT
 --------------------------------
 
-The LiFeAs Sample 1 temperature scan uses PSI GPS runs 3366–3373 (1.5–18 K).
-These spin-rotated (TF WED) runs show transverse precession near 5.4 MHz in
-``Up/Down``. The file's default ``Back/Forw`` pair largely cancels this
-oscillation because the two beam-axis detectors see it in phase.
+The LiFeAs Sample 1 scan uses PSI GPS runs 3366–3373, with nominal
+setpoints from 1.5 to 18 K. The setpoints label the runs and figures. The
+headers also contain unlabelled sensor readings. In these spin-rotated
+(TF WED) runs, transverse precession near 5.4 MHz is prominent in
+``Up/Down`` and weak in the file's default ``Back/Forw`` pair.
 
 .. figure:: /_generated/corpus_screenshots/corpus_lifeas_pair_select.png
    :alt: Run 3366 has a pronounced damped oscillation in Up/Down and a much
          weaker one in the beam-axis pair on the same asymmetry scale.
    :width: 100%
 
-   Detector-pair comparison on run 3366 at 1.5 K. Both traces use the same
-   counts-first reduction and show the 0.05–2.5 µs interval.
+   Detector-pair comparison on run 3366 at a nominal setpoint of 1.5 K.
+   Both traces use the same counts-first reduction and show the 0.05–2.5 µs
+   interval.
 
 For each pair, align the detector histograms using each detector's file time
 zero and intersect their aligned file good-bin ranges. In this scan ``Up`` and
@@ -323,41 +325,53 @@ the file-derived timing.
        --tmin 0.05 --tmax 6 --deadtime off --background none path/to/LiFeAs/data
 
 .. figure:: /_generated/corpus_screenshots/corpus_lifeas_vortex_lineshape.png
-   :alt: The 1.5 K transverse FFT has a broader line near the 40 mT Larmor
-         frequency than the 18 K FFT.
+   :alt: The transverse FFT at the 1.5 K setpoint has a broader line near
+         the 40 mT Larmor frequency than the FFT at the 18 K setpoint.
    :width: 100%
 
-   The magnitude spectra at 1.5 K (run 3366) and 18 K (run 3373) show
-   broadening on cooling, consistent with dephasing in the vortex lattice.
-   Each untapered FFT is normalised to its own peak in the plotted band.
+   The magnitude spectra at the 1.5 K (run 3366) and 18 K (run 3373)
+   setpoints show broadening on cooling, consistent with dephasing in the
+   vortex lattice. Each untapered FFT is normalised to its own peak in the
+   plotted band.
 
-Fit the seven runs at or below the published transition temperature of
-16 K with two ``Oscillatory * Gaussian`` terms and a ``Constant`` offset. The
-second damped oscillation models the weakly relaxing contribution of muons
-stopping in the silver support. Fit the two frequencies and phases
-independently, seeding the sample width above the silver width. Fit one
-``Oscillatory * Gaussian`` term and a ``Constant`` to the 18 K normal-state
-run to test it as the nuclear reference.
+The 476 bins at 12.5 ns spacing give a 5.95 µs rectangular record and an
+unpadded Fourier spacing of about 0.168 MHz. Eightfold zero padding samples
+the spectrum every 0.021 MHz. For an isolated undamped line, this record gives
+an amplitude half-height width of about 0.20 MHz. The half-height spans on
+the padded grid are about 0.19 MHz at the warm setpoint and 0.34 MHz at the
+cold one. The warm width is consistent with the finite-record response.
+
+The example uses a setpoint rule to select the models. For the seven runs
+with nominal setpoints up to and including 16 K, the published transition
+temperature, fit two ``Oscillatory * Gaussian`` terms and a ``Constant``
+offset. The second damped oscillation models the weakly relaxing contribution
+of muons stopping in the silver support. Fit the two frequencies and phases
+independently, seeding the sample width above the silver width. For the run at
+the 18 K setpoint, fit one ``Oscillatory * Gaussian`` term and a ``Constant``.
+This gives a candidate reference width that includes any signal from the
+silver support.
 
 For an adequate pair of fits, the vortex contribution adds in quadrature to
 the nuclear width. In Asymmetry's :ref:`Gaussian width convention
-<sc-width-convention>`, the fitted sample width :math:`\sigma_G` and the
-normal-state width :math:`\sigma_{G,n}` give the candidate field width
+<sc-width-convention>`, the fitted sample width :math:`\sigma_G` and an
+independently determined nuclear width :math:`\sigma_{G,n}` give the vortex
+field width
 
 .. math::
 
    B_\mathrm{rms} = \frac{\sqrt{2}\sqrt{\sigma_G^2-\sigma_{G,n}^2}}{\gamma_\mu},
    \qquad \sigma_G > \sigma_{G,n}.
 
-A failed fit makes this comparison unavailable. A sample width at or below
-the reference leaves the excess unresolved. An uncertainty in a candidate
-:math:`B_\mathrm{rms}` includes both widths' uncertainties. Reusing the same
-normal-state fit at each temperature correlates the resulting field widths,
+The example uses the candidate reference width to check for a positive
+quadrature excess. A failed fit makes this comparison unavailable. A sample
+width at or below the reference leaves the excess unresolved. A quantitative
+uncertainty in :math:`B_\mathrm{rms}` would include both widths' uncertainties.
+Reusing the same reference across runs correlates the resulting field widths,
 so a quantitative trend fit would need to account for that covariance.
 
 .. figure:: /_generated/corpus_screenshots/corpus_lifeas_tf_fit.png
-   :alt: Normalised residuals for the fits to the 1.5 K and 18 K runs show
-         structure across several precession cycles.
+   :alt: Normalised residuals for the fits at the 1.5 K and 18 K setpoints
+         show structure across several precession cycles.
    :width: 100%
 
    Residuals divided by the propagated counting errors for runs 3366 and
@@ -366,24 +380,23 @@ so a quantitative trend fit would need to account for that covariance.
    both runs.
 
 .. figure:: /_generated/corpus_screenshots/corpus_lifeas_fit_quality.png
-   :alt: Reduced chi-squared for the eight fits in the LiFeAs temperature
-         scan. The normal reference is marked separately.
+   :alt: Reduced chi-squared versus nominal setpoint for the LiFeAs scan.
+         The candidate reference and the failed fit are labelled.
    :width: 100%
 
-   Fit diagnostics for all eight runs. Run 3372 at 16 K fails to converge.
-   The six converged two-Gaussian fits give positive quadrature excesses
-   relative to the same normal reference. The dashed line marks reduced
-   :math:`\chi^2=1`.
+   Fit diagnostics for all eight runs. Run 3372 at the 16 K setpoint fails
+   to converge. The six converged two-Gaussian fits give positive quadrature
+   excesses relative to the same candidate reference. The dashed line marks
+   reduced :math:`\chi^2=1`.
 
 Shortening the window to 0.10–5 µs leaves structure in both endpoint
-residuals. Subtracting the estimated pre-time-zero count backgrounds over the
-original window lowers reduced :math:`\chi^2` to 1.52 and 1.40, respectively,
-with residual correlations still present. A shared count-background estimate
-also adds covariance between bins in this sensitivity check. The plotted
-residuals use counting errors conditional on the chosen reduction. The fits
-report no accurate parameter covariance. Exclude all runs from quantitative
-vortex-width inference under this model, including the 18 K fit as a nuclear
-reference. The spectra support a qualitative comparison of broadening.
+residuals. Applying the automatic pre-time-zero count background subtraction
+(``--background range``) with the original fit window lowers reduced
+:math:`\chi^2` to 1.52 and 1.40, respectively, with residual correlations still
+present. A shared count-background estimate also adds covariance between bins
+in this sensitivity check. The plotted residuals use counting errors
+conditional on the chosen reduction. The structured residuals and the mixed
+candidate reference limit this example to qualitative broadening.
 
 Pratt *et al.* report
 :math:`\lambda_{ab}=195(2)\;\mathrm{nm}` from a fit to the field dependence of
