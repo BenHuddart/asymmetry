@@ -1,6 +1,6 @@
 """Cancellable worker preparation for a synchronous scientific input boundary."""
 
-from PySide6.QtCore import QEventLoop, Qt
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QProgressDialog
 
 from asymmetry.gui.tasks import TaskRunner
@@ -12,15 +12,15 @@ class ScientificInputDialog(QProgressDialog):
     def __init__(self, parent, label, error_context):
         super().__init__(label, "Cancel", 0, 0, parent)
         self.setWindowModality(Qt.WindowModality.WindowModal)
-        self.setMinimumDuration(0)
         self._error_context = error_context
         self._loop = QEventLoop(self)
         self._tasks = TaskRunner(self)
         self._outcome = None
 
-    def run(self, task, *, is_current=None):
-        """Return the worker result, or None after cooperative cancellation."""
-        self.show()
+    def run(self, task, *, is_current=None, show_after_ms=0):
+        """Wait for the worker and show progress only after the requested delay."""
+        if not show_after_ms:
+            self.show()
         self._worker = self._tasks.start(
             task,
             on_finished=self._on_finished,
@@ -30,7 +30,20 @@ class ScientificInputDialog(QProgressDialog):
         self.canceled.connect(self._on_cancel)
         self.rejected.connect(self._on_cancel)
         try:
-            self._loop.exec()
+            wait_with_input = True
+            if show_after_ms:
+                show_timer = QTimer()
+                show_timer.setSingleShot(True)
+                show_timer.setTimerType(Qt.TimerType.PreciseTimer)
+                show_timer.timeout.connect(self._show_delayed_progress)
+                show_timer.start(show_after_ms)
+                # Keep input out of the caller's transaction until the modal is visible.
+                wait_with_input = (
+                    self._loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents) == 1
+                )
+                show_timer.stop()
+            if wait_with_input:
+                self._loop.exec()
         finally:
             self.canceled.disconnect(self._on_cancel)
             self.rejected.disconnect(self._on_cancel)
@@ -44,6 +57,14 @@ class ScientificInputDialog(QProgressDialog):
         if not success:
             raise ValueError(f"{self._error_context} failed: {result}")
         return result
+
+    def _show_delayed_progress(self):
+        if not self._loop.isRunning():
+            return
+        self.show()
+        # Completion can arrive in the same dispatch as the timer or while showing the dialog.
+        if self._loop.isRunning():
+            self._loop.exit(1)
 
     def _on_cancel(self):
         self._worker.cancel()

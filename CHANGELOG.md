@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Show the histogram snapshot dialog during grouping only when capture takes
+  about 400 ms or longer.
+
 - Fit the public ISIS ARGUS copper run 76935 in the Quickstart, then reopen
   the saved project and export its fit report.
 - Require acquired-data corpus figures for GitHub Pages and retain labelled

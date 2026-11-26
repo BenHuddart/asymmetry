@@ -41,6 +41,7 @@ class GroupingWindowProfileEditorScenario(Scenario):
             profile_fingerprint_for_run,
             profile_from_payload,
         )
+        from asymmetry.gui.mainwindow import MainWindow
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset_a = make_ybco_knight_grouped()
@@ -97,8 +98,20 @@ class GroupingWindowProfileEditorScenario(Scenario):
         if not pix.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
 
-        dialog.close()
+        dialog._on_apply()
+        payload = dialog.get_grouping_result()
+        if dialog.result() != dialog.DialogCode.Accepted or payload is None:
+            raise RuntimeError("The grouping draft must be ready to apply")
         dialog.deleteLater()
+
+        window = MainWindow()
+        try:
+            applied, _ = window._apply_grouping_settings_to_dataset(dataset_a, payload)
+            observation = dataset_a.histogram_observation
+            if not applied or observation is None or observation.binning.mode != "variable":
+                raise RuntimeError("Apply must capture the variable-binned histogram observation")
+        finally:
+            window.close()
         _pump_events(40)
         return out_path
 
