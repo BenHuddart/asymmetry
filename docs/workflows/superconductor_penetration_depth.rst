@@ -69,9 +69,12 @@ density.
 
 .. dropdown:: Derivation — the London-limit σ ↔ λ relation and its conventions
 
-   For an ideal triangular flux-line lattice deep in the mixed state
-   (:math:`H_{c1} \ll B \ll H_{c2}`, :math:`\lambda \gg \xi`) the second
-   moment of :math:`p(B)` reduces to the Brandt form
+   For an ideal triangular vortex lattice at large Ginzburg–Landau
+   parameter :math:`\kappa=\lambda/\xi`, Brandt's London approximation
+   applies in the regime :math:`0.13/\kappa^2 \ll b \ll 1`, where
+   :math:`b=\langle B\rangle/B_{c2}` is the mean induction relative to
+   the upper critical induction. In this approximation the second-moment
+   relaxation rate is
 
    .. math::
 
@@ -80,8 +83,11 @@ density.
    with :math:`\Phi_0` the flux quantum; the width in this equation is
    :math:`\sigma_2`. Brandt's field variance is
    :math:`\langle\Delta B^2\rangle=0.00371\Phi_0^2/\lambda_L^4`
-   (Phys. Rev. B **68**, 054506 (2003), Eq. (11)). The rounded square root
-   gives the coefficient 0.0609.
+   (Brandt, Phys. Rev. B **68**,
+   `054506 (2003), Eq. (11) <https://arxiv.org/pdf/cond-mat/0304237#page=5>`__).
+   The rounded square root gives the coefficient 0.0609. Brandt's numerical
+   comparison finds good agreement near the maximum of the field variance
+   for :math:`\kappa\gtrsim70`.
 
    :func:`asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm` takes
    ``width=GaussianWidth.GAUSSIAN_COMPONENT`` for the fitted
@@ -123,11 +129,11 @@ Step 1 — Fit a transverse-field run for σ
    and a Gaussian width of about 1.16 μs⁻¹. The plot zoom shows how the
    oscillation damps within about 2 μs.
 
-Use the file's MuSR detector grouping. The time-domain fits use forward/backward
-asymmetry from file groups 1 and 2 with :math:`\alpha=1`, the imported
-time-zero and good-bin settings, and no extra bunching, dead-time, or
-background correction. The trend fits use the full available time
-range after reduction, approximately 0.09–31.8 μs depending on the run.
+Use the file's MuSR detector grouping. The time-domain fits use
+forward/backward asymmetry from file groups 1 and 2 with :math:`\alpha=1`.
+In **Grouping**, retain the imported **t0 Bin**, **t_good Offset**, and
+**Last Good Bin** settings for each run. Use no extra bunching, dead-time
+correction, or background correction.
 
 In the **Fit** dock, build ``Oscillatory * Gaussian + Constant`` (see
 :doc:`/reference/composite_models`). The oscillation has a free amplitude,
@@ -172,14 +178,21 @@ Step 3 — Trend the fitted widths with temperature
 -------------------------------------------------
 
 Make a data group for each field with the run selections above. Use the
-**Batch** tab to fit each group separately. Keep the oscillation,
-Gaussian width, and offset parameters **Local**. Start the amplitude near
-8%, phase at zero, and offset near the asymmetry median. Start frequency
-near 5.3 MHz at 400 G or 2.7 MHz at 200 G. The figure fits start with
-``sigma`` near 1.15 μs⁻¹ at 400 G or 0.90 μs⁻¹ at 200 G and seed
-subsequent runs from the preceding lower-temperature width. Click
-**Run series** and check convergence and residuals for each run. See
-:ref:`global-fitting` for the series controls.
+**Batch** tab to fit each group separately. Set **Fit range** to
+0–32 μs to cover the available good-bin range after reduction
+(approximately 0.09–31.8 μs depending on the run). Keep the oscillation,
+Gaussian width, and offset parameters **Local**. Turn on **Bounds** to
+set the limits. Start the amplitude at 8% with bounds 0–60%, phase at
+zero, and offset near the asymmetry median. At 400 G,
+start frequency at 5.3 MHz with bounds 4.8–6.0 MHz and ``sigma`` at
+1.15 μs⁻¹. At 200 G, use 2.7 MHz with bounds 2.3–3.2 MHz and
+0.90 μs⁻¹. Use 0–3 μs⁻¹ for the width bounds in both series.
+
+Under **Seeding**, choose **Chain from previous run** to initialise
+successive fits in temperature order. The figure fits warm-start the
+width from the preceding fit and initialise the other parameters afresh
+for each run. Click **Run series** and check convergence and residuals
+for each run. See :ref:`global-fitting` for the series controls.
 
 Open **View → Show Fit Parameters**, select the 400 G series, choose
 ``𝑇 (K)`` on the **x** rail, and check ``σ (µs⁻¹)`` on the **y** rail.
@@ -244,9 +257,9 @@ sample, the conversion above gives
 precessing signal and the fitted Gaussian approximates the second moment
 of the asymmetric line. Brandt's relation uses the conversion
 :math:`\sigma_2=\sqrt{2}\sigma_G`. The two-field comparison alone leaves the
-lattice structure, anisotropy, and any additional precessing components
-unresolved. Bernhard *et al.* discuss the conditions for relating this
-linewidth to penetration depth in separately measured cuprate samples.
+vortex structure, reduced-field regime, and any additional precessing
+components unresolved. Bernhard *et al.* discuss the conditions for
+relating this linewidth to penetration depth in separately measured cuprates.
 
 Fitting a gap model
 -------------------
