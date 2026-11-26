@@ -104,8 +104,9 @@ from a clean checkout to verify links intended for publication.
 
 Local image dimensions are read from the built assets and written into HTML so
 browsers can reserve the correct aspect ratio before loading them. Percentage
-widths remain responsive. The sidebar logo loads eagerly; content figures load
-lazily. Tables wrap explanatory text within the theme's scrolling containers.
+widths remain responsive. The sidebar logo loads eagerly and content figures
+load lazily. Prose and headings use local fonts. API signatures wrap in the
+reading column, and wide equations and tables scroll within their containers.
 Review narrow viewports and enlarged text whenever a table or figure changes.
 
 ### Browser checks and search relevance
@@ -121,10 +122,12 @@ node tools/docs_browser.mjs --base-url http://127.0.0.1:8000/ --check --output b
 
 Use the published site URL to measure hosted behaviour. ``--chrome chromium``
 selects another browser executable; ``--page reference/fourier_analysis.html``
-limits a run to a page and may be repeated. The default is three cold/warm pairs
-per page in a fresh browser profile, at 1440 × 1000 and 390 × 844 CSS pixels. Cold clears the HTTP cache;
-warm immediately repeats the URL with caching enabled. CPU and network are
-unthrottled, so record the machine and connection separately when comparing runs.
+limits a run to a page and may be repeated. The default pages include the API
+index, fit models, and superconductivity models. The default is three cold/warm
+pairs per page in a fresh browser profile, at 1440 × 1000 and 390 × 844 CSS pixels.
+Cold clears the HTTP cache, and warm immediately repeats the URL with caching
+enabled. CPU and network are unthrottled, so record the machine and connection
+separately when comparing runs.
 
 Check that the gap and relaxation equations typeset and the two-gap explanation
 follows its equation in a separate paragraph:
@@ -136,18 +139,22 @@ node tools/docs_browser.mjs --base-url http://127.0.0.1:8000/ --check --trials 1
 
 The browser report identifies affected API anchors under ``apiMathFailures``.
 
-The JSON report separates HTML transfer and encoded body size, DOM readiness, paint, initiated requests,
-startup layout shifts, font/mathematics readiness, and first/finished search
-results. Layout-shift and paint observations end 250 ms after content readiness;
-they do not describe later scrolling or interaction. A null load time means the
-browser's load event has not completed. A command deadline is a measurement
-failure, not evidence of a site-rendering delay; partial reports are retained and
-marked incomplete. Hosted transfer and local rendering measurements are not
-interchangeable. Compare repeated medians under matching conditions, without
-promising a universal loading time.
+The JSON report records the source revision, HTML transfer and encoded body size,
+DOM readiness, paint, initiated requests, the largest reported resource transfers,
+document width, usable viewport width, startup layout shifts, font and
+mathematics readiness, and first/finished search results. Report median cold and
+warm content-ready times per viewport and compare cold transfer by adding HTML
+and resource transfer bytes. Resource Timing can omit the size of cross-origin
+responses. Layout-shift and paint observations end 250 ms after content readiness
+and describe startup.
+A null load time means the browser's load event has yet to complete. A command
+deadline marks the retained partial report incomplete. Compare hosted runs under
+matching conditions and use local runs to check rendering before deployment.
 
-``--check`` rejects page overflow, visible math-role syntax, MathJax errors,
-incomplete font/mathematics preparation, and misplaced practical search results.
+``--check`` rejects horizontal page overflow against the viewport width available
+after any vertical scrollbar. It also rejects visible math-role syntax, MathJax
+errors, incomplete font or mathematics preparation, and misplaced practical
+search results.
 ``--expect-revision <commit>`` also checks the published source identity. Ordinary
 main index entries in the owning reference pages make ``deadtime``, ``grouping``,
 and ``alpha calibration`` searches lead to guidance. Exact dotted API queries

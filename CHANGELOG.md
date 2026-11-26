@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add machine-readable citation metadata for researchers citing Asymmetry.
 
+- Download fewer assets on the documentation site and wrap long API signatures
+  on narrow screens.
+
 - Restore typeset equations and the accompanying explanation in the fit-model
   and superconductivity Python API reference.
 
