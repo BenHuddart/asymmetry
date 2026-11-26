@@ -7,7 +7,7 @@ form the forward and backward signals, how they are balanced, and which
 corrections apply before fitting. The live preview shows the effect of your
 choices on the selected run.
 
-For a first analysis with generated counts, start with the
+For a first analysis of one ISIS run, start with the
 :doc:`/getting_started/quickstart`. The
 :doc:`interactive reduction guide </explanation/reduction_pipeline>` explains
 the operation order; :doc:`detector_grouping` describes the profile settings,

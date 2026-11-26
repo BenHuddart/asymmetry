@@ -105,9 +105,8 @@ for platform requirements. The desktop installers bundle their HDF4 runtime.
 
 ## Quick start
 
-For a complete GUI analysis with no measurement files, follow the
-[synthetic first-analysis walkthrough](https://benhuddart.github.io/asymmetry/getting_started/quickstart.html).
-It generates detector counts, fits a relaxation, and saves a reopenable project and report.
+The [Quickstart](https://benhuddart.github.io/asymmetry/getting_started/quickstart.html)
+shows how to fit one public ISIS copper run, reopen the saved project, and export the fit report.
 
 ### Fit synthetic data in Python
 

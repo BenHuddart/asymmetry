@@ -358,7 +358,6 @@ def _import_scenarios() -> None:
         project_source_decision,
         psi_instrument_layouts,
         pull_diagnostic,
-        quickstart_first_fit,
         redfield_component_info,
         rf_resonance_component_info,
         rotating_frame_projection,
