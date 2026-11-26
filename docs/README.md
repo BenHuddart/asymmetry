@@ -141,17 +141,20 @@ The browser report identifies affected API anchors under ``apiMathFailures``.
 
 The JSON report records the source revision, HTML transfer and encoded body size,
 DOM readiness, paint, initiated requests, the largest reported resource transfers,
-document width, startup layout shifts, font and mathematics readiness, and
-first/finished search results. Report the median cold and warm content-ready
-times per viewport and compare cold transfer by adding HTML and resource transfer
-bytes. Resource Timing can omit the size of cross-origin responses. Layout-shift
-and paint observations end 250 ms after content readiness and describe startup.
+document width, usable viewport width, startup layout shifts, font and
+mathematics readiness, and first/finished search results. Report median cold and
+warm content-ready times per viewport and compare cold transfer by adding HTML
+and resource transfer bytes. Resource Timing can omit the size of cross-origin
+responses. Layout-shift and paint observations end 250 ms after content readiness
+and describe startup.
 A null load time means the browser's load event has yet to complete. A command
 deadline marks the retained partial report incomplete. Compare hosted runs under
 matching conditions and use local runs to check rendering before deployment.
 
-``--check`` rejects page overflow, visible math-role syntax, MathJax errors,
-incomplete font/mathematics preparation, and misplaced practical search results.
+``--check`` rejects horizontal page overflow against the viewport width available
+after any vertical scrollbar. It also rejects visible math-role syntax, MathJax
+errors, incomplete font or mathematics preparation, and misplaced practical
+search results.
 ``--expect-revision <commit>`` also checks the published source identity. Ordinary
 main index entries in the owning reference pages make ``deadtime``, ``grouping``,
 and ``alpha calibration`` searches lead to guidance. Exact dotted API queries

@@ -176,7 +176,7 @@ for (const page of pages) {
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const nav = performance.getEntriesByType('navigation')[0];
           const resources = performance.getEntriesByType('resource');
-          const documentWidth = document.documentElement.scrollWidth;
+          const {clientWidth, scrollWidth: documentWidth} = document.documentElement;
           const article = document.querySelector('[itemprop="articleBody"]');
           const apiMathFailures = ${JSON.stringify(apiMath)}.flatMap(({anchor, precedingInlineMath, followingParagraph}) => {
             const entry = document.getElementById(anchor)?.nextElementSibling;
@@ -215,7 +215,7 @@ for (const page of pages) {
             loadMs: nav.loadEventEnd || null,
             fcpMs: performance.getEntriesByName('first-contentful-paint')[0]?.startTime || null,
             lcpMs: docsMetrics.lcp, contentReadyMs, observationEndMs: performance.now(), cls,
-            fontsReady, mathReady, documentWidth, overflow: documentWidth > ${viewport.width},
+            fontsReady, mathReady, clientWidth, documentWidth, overflow: documentWidth > clientWidth,
             literalMath: article?.textContent.includes(':math:') || false,
             mathErrors: document.querySelectorAll('mjx-merror').length,
             ...(${apiMath.length} ? {apiMathFailures} : {}),
