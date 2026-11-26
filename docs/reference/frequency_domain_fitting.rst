@@ -125,10 +125,12 @@ In coupled fits, a unit-weight member also makes parameter uncertainties
 unavailable for fitted parameters connected to it through shared free
 parameters. Those shared estimates are exploratory because amplitude units
 affect a unit-weight member's contribution to the objective. Independent
-diagonally weighted members retain their conditional errors. The saved project and **Export fit report…** retain the weight policy
-for every single fit and spectral series member. **Spectral weighting unknown**
-identifies historical fits whose original weights cannot be recovered. Their
-stored values are retained.
+diagonally weighted members retain their conditional errors. The saved project
+and **Export fit report…** retain the weight policy for every single fit and
+spectral series member. **Spectral weighting unknown** identifies historical
+fits whose original weights cannot be recovered. Their stored values are
+retained. Recompute and refit a historical spectrum before its parameters
+can supply a trend comparison that requires current results.
 
 Compared with other programs
 ----------------------------

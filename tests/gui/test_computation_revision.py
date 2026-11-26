@@ -147,8 +147,13 @@ def test_real_wizard_restore_preserves_execution_and_blocks_historical_apply(qap
     window.close()
 
 
-@pytest.mark.parametrize("revision", [None, "historical"])
-def test_study_status_checks_unchanged_source_result_revisions(qapp, monkeypatch, revision):
+@pytest.mark.parametrize(
+    ("revision", "representation"),
+    [(None, "time_fb_asymmetry"), ("historical", "time_fb_asymmetry"), ("17", "freq_fft")],
+)
+def test_study_status_checks_unchanged_source_result_revisions(
+    qapp, monkeypatch, revision, representation
+):
     from asymmetry.core import computation
     from asymmetry.core.representation.global_fit_study import GlobalFitStudy
     from asymmetry.core.representation.series import FitSeries
@@ -157,7 +162,7 @@ def test_study_status_checks_unchanged_source_result_revisions(qapp, monkeypatch
     window = MainWindow()
     source = FitSeries(
         "owned",
-        "time_fb_asymmetry",
+        representation,
         results_by_run={
             7: {"computation_revision": computation.COMPUTATION_REVISION, "parameters": {"m": 1.0}}
         },
