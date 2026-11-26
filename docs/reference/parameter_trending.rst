@@ -822,6 +822,10 @@ Supplied x errors can still contribute through effective variance. Parameter
 uncertainties in that case are conditional on the assumed y scale. Select
 ``error_mode="column_stabilized"`` to apply the half-median floor from a script.
 
+Saved fits retain their parameters and uncertainties. A fit marked historical
+because of its computation revision must be fitted again before it can supply a
+new derived trend or a comparison that requires current results.
+
 .. image:: /_generated/screenshots/trend_model_fit_stabilised.png
    :alt: EuO trend fit with Column (stabilised errors) selected, weighted residuals and an explanation of the active column error floor
    :width: 100%
