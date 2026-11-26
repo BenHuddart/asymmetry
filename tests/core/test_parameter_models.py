@@ -652,6 +652,22 @@ def test_fit_constant_recovers_value() -> None:
     np.testing.assert_allclose(fitted_c, 4.2, atol=0.1)
 
 
+def test_column_fit_uses_supplied_errors() -> None:
+    x = np.array([0.0, 1.0, 2.0])
+    y = np.array([1.0, 3.0, 3.0])
+    sigma = np.array([0.1, 1.0, 1.0])
+    expected = 106 / 102
+
+    result = fit_parameter_model(
+        x, y, sigma, ParameterCompositeModel(["Constant"]), ParameterSet([Parameter("c", 0.0)])
+    )
+
+    assert result.success
+    assert result.parameters["c"].value == pytest.approx(expected, abs=1e-4)
+    assert result.uncertainties["c"] == pytest.approx(1 / np.sqrt(102), abs=1e-4)
+    assert result.chi_squared == pytest.approx(np.sum(((y - expected) / sigma) ** 2), abs=1e-4)
+
+
 @pytest.mark.slow
 def test_fit_parameter_model_transport_seed_recovers_diffusive_component() -> None:
     x = np.array([20.0, 50.0, 100.0, 200.0, 400.0, 1000.0, 3000.0, 5000.0, 10000.0])
@@ -714,64 +730,6 @@ def test_fit_parameter_model_transport_seed_recovers_high_dhop_basin() -> None:
     assert result.success
     fitted = {parameter.name: parameter.value for parameter in result.parameters}
     assert result.reduced_chi_squared < 10.0
-    assert fitted["A_1"] > 20.0
-    assert 100.0 <= fitted["D_2D"] <= 1000.0
-    assert fitted["A_2"] > 100.0
-    assert fitted["D_hop"] > 1.0e4
-
-
-@pytest.mark.slow
-def test_fit_parameter_model_error_floor_blocks_high_field_collapse() -> None:
-    x = np.array(
-        [25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 20000.0, 35000.0]
-    )
-    y = np.array(
-        [
-            0.604866,
-            0.504736,
-            0.337137,
-            0.203568,
-            0.174864,
-            0.159764,
-            0.140585,
-            0.139061,
-            0.0664971,
-            0.00056813,
-            0.0,
-        ]
-    )
-    yerr = np.array(
-        [
-            0.0331,
-            0.0386,
-            0.0239,
-            0.0131,
-            0.0111,
-            0.0102,
-            0.00929,
-            0.0093,
-            0.00486,
-            0.000115,
-            1.39e-11,
-        ]
-    )
-    model = ParameterCompositeModel(["DiffusionLF_2D", "BallisticLF_2D"], operators=["+"])
-
-    params = ParameterSet(
-        [
-            Parameter("A_1", value=1.0, min=0.0, max=500.0),
-            Parameter("D_2D", value=1.0, min=0.0, max=1.0e6),
-            Parameter("D_perp", value=0.0, min=0.0, max=0.0, fixed=True),
-            Parameter("A_2", value=1.0, min=0.0, max=500.0),
-            Parameter("D_hop", value=1.0, min=0.0, max=1.0e6),
-        ]
-    )
-
-    result = fit_parameter_model(x, y, yerr, model, params)
-
-    assert result.success
-    fitted = {parameter.name: parameter.value for parameter in result.parameters}
-    assert result.reduced_chi_squared < 5.0
     assert fitted["A_1"] > 20.0
     assert 100.0 <= fitted["D_2D"] <= 1000.0
     assert fitted["A_2"] > 100.0

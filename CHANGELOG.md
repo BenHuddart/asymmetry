@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Show how to fit the three-field Al-LLZ measurements and check the sensitivity
   of the activation energy to the temperature interval and plateau estimate.
 
+- Use supplied errors consistently in trend and field-scan fits, and offer an
+  explicit half-median error floor for single-series and cross-group trends.
 - Explain when trend weights or insufficient residual degrees of freedom make
   a χ² quality verdict unavailable, while retaining fitted values and the raw objective.
 - Preserve fixed parameters and count the fitted shared parameters in each

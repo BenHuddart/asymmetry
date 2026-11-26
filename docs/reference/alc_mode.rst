@@ -432,10 +432,10 @@ linearised model, used by ``peaks.reduced_chi_squared``.
    Rank-deficient peak Jacobians, missing fit covariances, or non-positive-
    semidefinite propagated covariances raise an explicit error.
 
-   Parameter-model fits apply a floor of half the median positive point error
-   when constructing weights. Propagation uses those same weights, with the
-   stated source errors in :math:`\Sigma`. When the floor is active, the
-   conditional Minuit covariance is an approximation to sampling uncertainty.
+   Field-scan fits use the supplied finite positive uncertainties. Each
+   baseline, peak and RF fit uses the same weights for parameter estimation and
+   its residual statistic. Covariance propagation uses the fitted weights and
+   the stated source errors in :math:`\Sigma`.
 
    The expected residual statistic is
    :math:`\operatorname{tr}(WM\Sigma M^T)` with :math:`M=(I-JL)R`.

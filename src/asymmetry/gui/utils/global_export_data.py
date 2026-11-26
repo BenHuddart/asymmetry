@@ -283,6 +283,8 @@ class GlobalExportData:
             if result.dof is not None:
                 lines.append(f"! residual_degrees_of_freedom: {result.dof}")
             lines.append(f"! error_mode: {result.error_mode}")
+            if result.column_error_floor_applied is not None:
+                lines.append(f"! column_error_floor_applied: {result.column_error_floor_applied}")
             lines.append(f"! uses_effective_variance: {result.uses_effective_variance}")
             for group, source in sorted(result.column_error_sources.items()):
                 lines.append(f"! column_error_source[{group}]: {source.value}")

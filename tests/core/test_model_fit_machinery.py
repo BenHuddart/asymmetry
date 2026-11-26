@@ -70,8 +70,8 @@ def test_percent_mode_masks_zero_y_points() -> None:
     np.testing.assert_allclose(fitted["b"], 0.0, atol=1e-6)
 
 
-def test_error_floor_applies_only_in_column_mode() -> None:
-    # One absurdly small propagated error would dominate an unfloored fit.
+def test_error_floor_applies_only_in_stabilised_column_mode() -> None:
+    # One much smaller propagated error dominates the stated-error fit.
     x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     y = np.array([1.0, 1.2, 0.8, 1.1, 5.0])  # last point is an outlier
     yerr = np.array([0.1, 0.1, 0.1, 0.1, 1e-12])
@@ -81,8 +81,14 @@ def test_error_floor_applies_only_in_column_mode() -> None:
     column = fit_parameter_model(x, y, yerr, model, params, error_mode="column")
     assert column.success
     c_column = next(p.value for p in column.parameters if p.name == "c")
-    # Floored (sigma >= 0.05): the outlier no longer dominates entirely.
-    assert c_column < 4.0
+    np.testing.assert_allclose(c_column, np.average(y, weights=1 / yerr**2), rtol=1e-6)
+
+    stabilised = fit_parameter_model(x, y, yerr, model, params, error_mode="column_stabilized")
+    assert stabilised.success
+    c_stabilised = next(p.value for p in stabilised.parameters if p.name == "c")
+    floored_errors = np.array([0.1, 0.1, 0.1, 0.1, 0.05])
+    expected = np.average(y, weights=1 / floored_errors**2)
+    np.testing.assert_allclose(c_stabilised, expected, rtol=1e-6)
 
     # Absolute mode with a tiny constant is honoured verbatim (no floor): the
     # weighting is uniform, so the fit is the plain mean including the outlier.

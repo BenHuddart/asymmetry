@@ -43,11 +43,11 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterModelFitResult,
     fit_parameter_model,
-    stabilized_point_errors,
     suggest_model_seeds,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.scan_observations import scan_fit_input, scan_fit_selection
+from asymmetry.core.fitting.trend_result import ErrorMode, selected_point_errors
 from asymmetry.core.transform import FieldScan
 
 __all__ = [
@@ -289,7 +289,7 @@ class ScanBaselineResult:
             self.model, self.fit.parameters, self.scan.x, names, covariance, cancel_check
         )
         mask = self.selection
-        weights = stabilized_point_errors(self.scan.error[mask]) ** -2
+        weights = selected_point_errors(self.scan.error[mask], ErrorMode(self.fit.error_mode)) ** -2
         operator = np.eye(self.scan.x.size)
         operator[:, mask] -= design @ covariance @ (design[mask].T * weights)
         if cancel_check is not None:
@@ -377,7 +377,7 @@ def fit_scan_peaks(
     )
     names, conditional = _fit_covariance(fit)
     jacobian = _model_jacobian(composite, fit.parameters, scan.x, names, conditional, cancel_check)
-    errors = stabilized_point_errors(scan.error)
+    errors = selected_point_errors(scan.error, ErrorMode(fit.error_mode))
     weighted = jacobian / errors[:, None]
     # Column scaling keeps polynomial/peak parameters with different units
     # numerically comparable when solving the normal equations.

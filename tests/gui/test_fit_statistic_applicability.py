@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFileDialog
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
@@ -16,19 +16,301 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
     ParameterModelFit,
+    fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.trend_result import ColumnErrorSource
 from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, load_project, save_project
+from asymmetry.core.representation.global_fit_study import GlobalFitStudy
 from asymmetry.gui.mainwindow import MainWindow
-from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupDialogOutput
-from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupDialogOutput, CrossGroupFitDialog
+from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow, _GroupFitData
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from docs.screenshots.scenarios._base import auto_dismiss_modals
 from tests._qt_helpers import wait_for
 from tests.gui.test_model_fit_dialog import _make_dialog, _wait_for_fit
 
 pytestmark = pytest.mark.gui
+
+
+def test_use_cross_group_fit_projects_its_disjoint_windows_and_group_statistic(qapp, monkeypatch):
+    x = np.array([0.0, 0.5, 1.0, 2.0, 3.0])
+    y = np.array([1.0, 100.0, 3.0, 3.0, 100.0])
+    sigma = np.array([0.1, 10.0, 1.0, 1.0, np.nan])
+    windows = [(0.0, 0.25), (0.75, 3.0)]
+    panel = FitParametersPanel()
+    groups = []
+    for index, gid in enumerate(("a", "b")):
+        rows = [
+            _FitRow(
+                run_number=i + 1,
+                run_label=str(i + 1),
+                field=xi,
+                temperature=float(index),
+                values={"Lambda": yi + index},
+                errors={"Lambda": ei},
+            )
+            for i, (xi, yi, ei) in enumerate(zip(x, y, sigma, strict=True))
+        ]
+        group = _GroupFitData(gid, gid, rows, None, ["Lambda"], "field", {}, [])
+        groups.append(group)
+    panel._group_fit_results = {group.group_id: group for group in groups}
+
+    def use_fit(dialog):
+        dialog._apply_existing_config(
+            {
+                "model": ParameterCompositeModel(["Constant"]).to_dict(),
+                "parameter_rows": [{"name": "c", "type": "Global", "initial": 0.0}],
+                "error_mode": ErrorMode.COLUMN_STABILIZED.value,
+                "windows": [list(window) for window in windows],
+            }
+        )
+        dialog._run_fit(0)
+        _wait_for_fit(dialog)
+        assert dialog._result.success
+        dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok).click()
+        return dialog.result()
+
+    monkeypatch.setattr(CrossGroupFitDialog, "exec", use_fit)
+    payload = panel._run_cross_group_model_fit("Lambda", groups, x_key_override="field")
+    joint = payload["fit_result"]
+    contributions = []
+    for group in groups:
+        gid = group.group_id
+        fit = panel._group_fit_results[gid].model_fits["Lambda"]
+        projected = fit.ranges[0]
+        assert projected.windows == windows
+        assert projected.result.n_points == 3
+        assert projected.result.parameters["c"].value == joint.global_parameters["c"].value
+        assert projected.result.dof is None
+        assert np.isnan(projected.result.reduced_chi_squared)
+        assert projected.result.chi_squared == pytest.approx(joint.per_group_chi_squared[gid])
+        contributions.append(projected.result.chi_squared)
+    assert sum(contributions) == pytest.approx(joint.chi_squared)
+
+    dialog = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=sigma,
+        existing_fit=panel._group_fit_results["a"].model_fits["Lambda"],
+    )
+    dialog._show_residuals_check.setChecked(True)
+    wait_for(
+        lambda: dialog._preview._ranges[0].residuals is not None,
+        qapp,
+    )
+    xs, values = dialog._preview._ranges[0].residuals
+    np.testing.assert_array_equal(xs, x[[0, 2, 3]])
+    assert sum(values**2) == pytest.approx(contributions[0])
+    dialog.close()
+    panel.close()
+
+
+@pytest.mark.parametrize("mode, value", [(ErrorMode.ABSOLUTE, 0.42), (ErrorMode.PERCENT, 21.0)])
+def test_trend_member_refit_reuses_the_recorded_error_setting(qapp, mode, value):
+    panel = FitParametersPanel()
+    x = np.arange(3.0)
+    y = np.array([1.0, 3.0, 4.0])
+    sigma = np.full_like(x, value) if mode is ErrorMode.ABSOLUTE else y * value / 100
+    model = ParameterCompositeModel(["Constant"])
+    parameters = ParameterSet([Parameter("c", 0.0)])
+    initial = fit_parameter_model(x, y, None, model, parameters, error_mode=mode, error_value=value)
+    panel._model_fits["Lambda"] = ParameterModelFit(
+        "Lambda", "field", [ModelFitRange(0.0, 2.0, model, parameters, initial)]
+    )
+    panel._rows = [
+        _FitRow(i + 1, str(i + 1), xi, 0.0, {"Lambda": yi}, {})
+        for i, (xi, yi) in enumerate(zip(x, y, strict=True))
+    ]
+    panel.refit_active_model_fits()
+    wait_for(lambda: not panel._refit_in_progress, qapp)
+    refit = panel._model_fits["Lambda"].ranges[0].result
+    assert refit is not initial
+    assert refit.error_value == value
+    assert refit.uncertainties["c"] == pytest.approx(1 / np.sqrt(np.sum(sigma**-2)))
+    panel.close()
+
+
+def test_global_window_local_trend_drops_missing_column_errors(qapp, monkeypatch):
+    x = np.arange(4.0)
+    y = [1.0, 3.0, 3.0, 100.0]
+    errors = [0.1, 1.0, 1.0, np.nan]
+    model = ParameterCompositeModel(["Constant"])
+    groups = [
+        ParameterGroupData(str(i), str(i), x, x, np.ones_like(x), xi) for i, xi in enumerate(x)
+    ]
+    result = run_cross_group_fit_from_config(
+        groups, {"model": model.to_dict(), "parameter_rows": [{"name": "c", "type": "Local"}]}
+    ).result
+    for group, yi, error in zip(groups, y, errors, strict=True):
+        result.local_parameters[group.group_id]["c"].value = yi
+        result.local_uncertainties[group.group_id]["c"] = error
+    window = GlobalParameterFitWindow()
+    window.set_results(
+        parameter_name="Lambda", x_key="field", groups=groups, model=model, result=result
+    )
+    window._local_model_fits["c"] = ParameterModelFit(
+        "c", "temperature", [ModelFitRange(0.0, 3.0, model, ParameterSet([Parameter("c", 0.0)]))]
+    )
+
+    def fit_local(dialog):
+        dialog._run_fit(0)
+        _wait_for_fit(dialog)
+        result = dialog.get_model_fit().ranges[0].result
+        assert result.success
+        assert result.n_points == 3
+        assert result.parameters["c"].value == pytest.approx(106 / 102, abs=1e-4)
+        assert result.column_error_source is ColumnErrorSource.SUPPLIED
+        assert result.assess_quality() is not None
+        dialog.close()
+        return dialog.result()
+
+    monkeypatch.setattr(ModelFitDialog, "exec", fit_local)
+    window._open_local_model_fit_dialog("c")
+    window.close()
+
+
+@pytest.mark.parametrize("cross_group", [False, True])
+def test_stabilised_column_selector_and_residuals(qapp, cross_group, tmp_path):
+    x = np.arange(4.0)
+    y = np.array([1.0, 3.0, 3.0, 100.0])
+    sigma = np.array([0.1, 1.0, 1.0, np.nan])
+    model = ParameterCompositeModel(["Constant"])
+    common = {"parameter_name": "Lambda", "x_key": "field"}
+    if cross_group:
+        groups = [
+            ParameterGroupData(name, name, x, y + 10 * index, sigma, 0.0)
+            for index, name in enumerate(("a", "b"))
+        ]
+        config = {
+            "model": model.to_dict(),
+            "parameter_rows": [{"name": "c", "type": "Local", "initial": 0.0}],
+        }
+        dialog = CrossGroupFitDialog(**common, groups=groups, existing_config=config)
+    else:
+        fit = ParameterModelFit(
+            **common,
+            ranges=[ModelFitRange(0.0, 3.0, model, ParameterSet([Parameter("c", 0.0)]))],
+        )
+        data = {"x_values": x, "y_values": y, "y_errors": sigma}
+        dialog = ModelFitDialog(**common, **data, existing_fit=fit)
+    picker = dialog._error_mode_combo
+    assert dialog._error_mode() is ErrorMode.COLUMN
+    picker.setCurrentText("Column (stabilised errors)")
+    dialog._show_residuals_check.setChecked(True)
+    dialog._run_fit(0)
+    _wait_for_fit(dialog)
+    result = dialog._result_for_range(0)
+    assert result.success
+    assert result.column_error_floor_applied
+    assert "floor changes the weights" in dialog._quality_label.text()
+
+    def plotted():
+        axes = dialog._preview._figure.get_axes()
+        return (
+            [line for line in axes[-1].get_lines() if line.get_marker() == "o"]
+            if len(axes) == 2
+            else []
+        )
+
+    expected = (y[:3] - 5 / 3) / np.array([0.5, 1.0, 1.0])
+    wait_for(lambda: plotted() and np.allclose(plotted()[0].get_ydata(), expected), qapp)
+    line = plotted()[0]
+    np.testing.assert_array_equal(line.get_xdata(), x[:3])
+    np.testing.assert_allclose(line.get_ydata(), expected, atol=1e-4)
+    chi_squared = result.per_group_chi_squared["a"] if cross_group else result.chi_squared
+    assert np.sum(line.get_ydata() ** 2) == pytest.approx(chi_squared)
+
+    project = tmp_path / "weights.asymproj"
+    if cross_group:
+        config = dialog._collect_config()
+        reopened = CrossGroupFitDialog(**common, groups=groups, existing_config=config)
+    else:
+        panel = FitParametersPanel()
+        panel._model_fits["Lambda"] = dialog.get_model_fit()
+        save_project(
+            {
+                "schema_version": CURRENT_SCHEMA_VERSION,
+                "datasets": [],
+                "fit_parameters_state": panel.get_state(),
+            },
+            project,
+        )
+        panel.restore_state(load_project(project)["fit_parameters_state"])
+        reopened = ModelFitDialog(**common, **data, existing_fit=panel._model_fits["Lambda"])
+        assert reopened._result_for_range(0).column_error_floor_applied
+        panel.close()
+    assert reopened._error_mode_combo.currentText() == "Column (stabilised errors)"
+    reopened.close()
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("mode", "value"),
+    [(ErrorMode.COLUMN_STABILIZED, None), (ErrorMode.ABSOLUTE, 0.42), (ErrorMode.PERCENT, 17.0)],
+)
+def test_results_residuals_use_the_captured_objective(qapp, mode, value) -> None:
+    x = np.array([0.0, 0.5, 1.0, 2.0, 3.0])
+    y = np.array([1.0, 100.0, 3.0, 3.0, 100.0])
+    sigma = np.array([0.1, 10.0, 1.0, 1.0, 10.0])
+    xerr = np.array([0.4, 0.1, 0.3, 0.2, 0.5])
+    groups = [
+        ParameterGroupData(str(i), str(i), x, y, sigma, float(i), xerr=xerr) for i in range(2)
+    ]
+    model = ParameterCompositeModel(["Linear"])
+    config = {
+        "model": model.to_dict(),
+        "windows": [[0.0, 0.25], [0.75, 2.25]],
+        "use_x_errors": True,
+        "error_mode": mode.value,
+        "error_value": value,
+    }
+    fit = run_cross_group_fit_from_config(groups, config).result
+    assert fit.success
+    assert fit.uses_effective_variance
+    study = GlobalFitStudy(
+        "study",
+        "trend",
+        "Lambda",
+        "field",
+        "Field",
+        "temperature",
+        "Temperature",
+        "",
+        "",
+        groups=groups,
+        model=model,
+        result=fit,
+        config=config,
+    )
+    window = GlobalParameterFitWindow()
+    window.set_study(GlobalFitStudy.from_dict(study.to_dict()), stale=False)
+    wait_for(lambda: not window._fit_curve_compute_active, qapp)
+    window._fit_residuals_check.setChecked(True)
+
+    mask = [0, 2, 3]
+    if mode is ErrorMode.COLUMN_STABILIZED:
+        effective = np.array([0.5, 1.0, 1.0])
+    elif mode is ErrorMode.ABSOLUTE:
+        effective = np.full(3, value)
+    else:
+        effective = y[mask] * value / 100
+    slope = fit.global_parameters["m"].value
+    intercept = fit.global_parameters["b"].value
+    expected = (y[mask] - intercept - slope * x[mask]) / np.sqrt(
+        effective**2 + (slope * xerr[mask]) ** 2
+    )
+    for group, axis in zip(groups, window._left_figure.axes, strict=True):
+        line = axis.containers[0].markerline
+        np.testing.assert_array_equal(line.get_xdata(), x[mask])
+        np.testing.assert_allclose(line.get_ydata(), expected)
+        assert sum(line.get_ydata() ** 2) == pytest.approx(
+            fit.per_group_chi_squared[group.group_id]
+        )
+    window.close()
 
 
 def test_quality_verdict_shown_for_column_mode_fit(qapp: QApplication) -> None:

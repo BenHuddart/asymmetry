@@ -5,11 +5,116 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from asymmetry.core.fitting.cross_group import project_cross_group_fit
 from asymmetry.core.fitting.parameter_models import (
+    CrossGroupFitResult,
+    ErrorMode,
     ParameterCompositeModel,
     ParameterGroupData,
     global_fit_parameter_model,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+
+def test_cross_group_projection_defaults_shape_factor_a_to_fixed() -> None:
+    model = ParameterCompositeModel(["SC_PWaveAxial"])
+    fit_result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        global_parameters=ParameterSet([Parameter("sigma_0", value=1.0)]),
+        local_parameters={"g1": ParameterSet([Parameter("Tc", value=20.0)])},
+        fixed_parameters=ParameterSet(
+            [
+                Parameter("gap_ratio", value=2.0, fixed=True),
+                Parameter("sigma_bg", value=0.0, fixed=True),
+            ]
+        ),
+    )
+
+    fit = project_cross_group_fit(
+        parameter_name="Lambda",
+        x_key="temperature",
+        group_id="g1",
+        model=model,
+        fit_result=fit_result,
+        fit_x_min=1.0,
+        fit_x_max=30.0,
+    )
+
+    shape_factor = fit.ranges[0].parameters["shape_factor_a"]
+    assert shape_factor.value == 0.0
+    assert shape_factor.fixed is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected", "standard_error", "effective_sigma"),
+    [
+        (ErrorMode.COLUMN, 106 / 102, 1 / np.sqrt(102), [0.1, 1.0, 1.0]),
+        (ErrorMode.COLUMN_STABILIZED, 5 / 3, 1 / np.sqrt(6), [0.5, 1.0, 1.0]),
+    ],
+)
+@pytest.mark.parametrize("with_invalid_points", [False, True])
+def test_cross_group_column_fit_uses_supplied_errors(
+    mode, expected, standard_error, effective_sigma, with_invalid_points
+) -> None:
+    x = np.array([0.0, 1.0, 2.0])
+    y = np.array([1.0, 3.0, 3.0])
+    sigma = np.array([0.1, 1.0, 1.0])
+    windows = None
+    if with_invalid_points:
+        x = np.r_[x, 0.25, 1.25, 1.75, 2.1, 3.0, 4.0, 5.0]
+        y = np.r_[y, np.full(7, 100.0)]
+        sigma = np.r_[sigma, 0.0, -0.2, np.inf, np.nan, 10.0, 10.0, 10.0]
+        windows = [(0.0, 0.5), (0.75, 2.25)]
+    scales = {"a": 1.0, "b": 20.0} if with_invalid_points else {"a": 1.0, "b": 1.0}
+    groups = [
+        ParameterGroupData(gid, gid, x, y, sigma * scale, 0.0) for gid, scale in scales.items()
+    ]
+    result = global_fit_parameter_model(
+        groups,
+        ParameterCompositeModel(["Constant"]),
+        [],
+        ["c"],
+        {},
+        initial_params={"c": 0.0},
+        error_mode=mode,
+        windows=windows,
+    )
+
+    assert result.success
+    chi_squared = np.sum(((y[:3] - expected) / effective_sigma) ** 2)
+    total = 0.0
+    for gid, scale in scales.items():
+        parameter = result.local_parameters[gid]["c"]
+        assert parameter.value == pytest.approx(expected, abs=1e-4)
+        assert result.local_uncertainties[gid]["c"] == pytest.approx(
+            standard_error * scale, abs=1e-4
+        )
+        assert result.per_group_n_points[gid] == 3
+        group_chi_squared = chi_squared / scale**2
+        assert result.per_group_chi_squared[gid] == pytest.approx(group_chi_squared, abs=1e-4)
+        total += group_chi_squared
+    assert result.chi_squared == pytest.approx(total, abs=1e-4)
+    restored = CrossGroupFitResult.from_dict(result.to_dict())
+    assert restored.error_mode == mode.value
+    assert restored.column_error_floor_applied is (mode is ErrorMode.COLUMN_STABILIZED)
+    assert (restored.quality_reason is None) is (mode is ErrorMode.COLUMN)
+
+
+def test_cross_group_column_fit_reports_group_with_no_valid_errors() -> None:
+    x = np.arange(3.0)
+    groups = [
+        ParameterGroupData("a", "First", x, x, np.ones_like(x), 0.0),
+        ParameterGroupData("b", "Second", x, x, np.zeros_like(x), 0.0),
+    ]
+    result = global_fit_parameter_model(
+        groups, ParameterCompositeModel(["Constant"]), [], ["c"], {}
+    )
+
+    assert not result.success
+    assert "Second: No finite positive column errors" in result.message
+    assert "Choose None (unit weights) or Estimate from scatter" in result.message
 
 
 def test_global_fit_parameter_model_recovers_shared_slope() -> None:

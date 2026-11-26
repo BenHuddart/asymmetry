@@ -667,7 +667,9 @@ def test_residual_axis_toggles(qapp: QApplication) -> None:
     canvas = TrendPreviewCanvas()
     mask = np.array([True, True, True, True, True])
     canvas.set_series([_series()])
-    canvas.set_ranges([_range(fitted=False, mask=mask)])
+    fit_range = _range(fitted=False, mask=mask)
+    fit_range.residuals = (_series().x, np.zeros(5))
+    canvas.set_ranges([fit_range])
     canvas.set_active_range(0)
     canvas.set_state("ready")
 

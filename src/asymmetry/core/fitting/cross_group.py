@@ -3,21 +3,26 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
 
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ErrorMode,
+    ModelFitRange,
     ParameterCompositeModel,
     ParameterGroupData,
+    ParameterModelFit,
+    ParameterModelFitResult,
     global_fit_parameter_model,
     parse_fit_windows,
     validate_fit_windows,
     windows_mask,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
 class CrossGroupFitInputError(ValueError):
@@ -250,3 +255,92 @@ def run_cross_group_fit_from_config(
 ) -> CrossGroupFitRun:
     """Prepare and run a recorded configuration without a graphical front end."""
     return run_cross_group_fit(prepare_cross_group_fit(groups, config))
+
+
+def project_cross_group_fit(
+    *,
+    parameter_name: str,
+    x_key: str,
+    group_id: str,
+    model: ParameterCompositeModel,
+    fit_result: CrossGroupFitResult,
+    fit_x_min: float,
+    fit_x_max: float,
+    windows: list[tuple[float, float]] | None = None,
+    use_x_errors: bool = False,
+) -> ParameterModelFit:
+    """Project one fitted group with its own selected support and residual statistic."""
+    fit_params = ParameterSet()
+    uncertainties: dict[str, float] = {}
+
+    global_params = fit_result.global_parameters
+    local_params = fit_result.local_parameters.get(group_id, ParameterSet())
+    fixed_params = fit_result.fixed_parameters
+
+    for pname in model.param_names:
+        if pname in local_params:
+            src = local_params[pname]
+            err = fit_result.local_uncertainties.get(group_id, {}).get(pname)
+        elif pname in global_params:
+            src = global_params[pname]
+            err = fit_result.global_uncertainties.get(pname)
+        elif pname in fixed_params:
+            src = fixed_params[pname]
+            err = None
+        else:
+            src = Parameter(
+                name=pname,
+                value=float(model.param_defaults.get(pname, 0.0)),
+                fixed=(pname == "shape_factor_a"),
+            )
+            err = None
+
+        fit_params.add(replace(src))
+        if isinstance(err, (int, float)) and np.isfinite(float(err)):
+            uncertainties[pname] = float(err)
+
+    chi_squared = fit_result.per_group_chi_squared.get(group_id, float("nan"))
+    n_points = fit_result.per_group_n_points.get(group_id, 0)
+    shares_joint_parameters = bool(global_params.free_parameters)
+    floored_groups = fit_result.column_error_floored_groups
+    result = ParameterModelFitResult(
+        success=fit_result.success,
+        computation_revision=fit_result.computation_revision,
+        input_width_context=fit_result.input_width_contexts.get(group_id),
+        chi_squared=chi_squared,
+        parameters=ParameterSet(replace(p) for p in fit_params),
+        n_points=n_points,
+        shares_joint_parameters=shares_joint_parameters,
+        uncertainties=uncertainties,
+        message=fit_result.message,
+        error_mode=fit_result.error_mode,
+        error_value=fit_result.error_value,
+        column_error_source=fit_result.column_error_sources.get(group_id),
+        column_error_floor_applied=None if floored_groups is None else group_id in floored_groups,
+        uses_effective_variance=fit_result.uses_effective_variance,
+    )
+
+    result.reduced_chi_squared = reduced_statistic(chi_squared, result.dof)
+
+    x_min_value: float | None = float(fit_x_min) if np.isfinite(fit_x_min) else None
+    x_max_value: float | None = float(fit_x_max) if np.isfinite(fit_x_max) else None
+
+    model_snapshot = ParameterCompositeModel(
+        component_names=list(model.component_names),
+        operators=list(model.operators),
+    )
+    fit_range = ModelFitRange(
+        x_min=x_min_value,
+        x_max=x_max_value,
+        model=model_snapshot,
+        parameters=fit_params,
+        result=result,
+        windows=windows,
+    )
+    return ParameterModelFit(
+        parameter_name=parameter_name,
+        x_key=x_key,
+        ranges=[fit_range],
+        active=True,
+        use_x_errors=use_x_errors,
+    )

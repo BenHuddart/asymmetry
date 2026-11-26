@@ -502,6 +502,24 @@ def test_a_fit_trend_is_stale_once_the_trend_fit_it_read_is_replaced_or_removed(
         workdir.read_series("d")
 
 
+def test_a_derived_series_cannot_reuse_a_trend_from_the_old_column_floor(tmp_path: Path):
+    workdir = WorkDir(tmp_path)
+    fit_key = "Lambda:Linear"
+    _derived(workdir, fit_key)
+    member = workdir.read_series("m")
+    recorded_fit = {"m": 1.0, "computation_revision": "16"}
+    member["trend_fits"][fit_key] = recorded_fit
+    workdir.write_series("m", member)
+
+    derived = workdir.read_series("d", require_current=False)
+    derived["members"][0]["digest"] = series_digest(member, fit_key)
+    workdir.write_series("d", derived)
+
+    with pytest.raises(KeyError, match="Series 'd' is stale"):
+        workdir.read_series("d")
+    assert workdir.read_series("m")["trend_fits"][fit_key] == recorded_fit
+
+
 def _restamp(path: Path, schema: int) -> None:
     """Rewrite a stored JSON document as if an older asymmetry had written it."""
     data = json.loads(path.read_text(encoding="utf-8"))

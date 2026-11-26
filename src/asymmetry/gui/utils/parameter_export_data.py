@@ -330,6 +330,8 @@ class ParameterExportData:
                 f.write(f"! effective_y_error_mode: {result.effective_error_mode or 'unknown'}\n")
                 if result.column_error_source is not None:
                     f.write(f"! column_error_source: {result.column_error_source.value}\n")
+                if result.column_error_floor_applied is not None:
+                    f.write(f"! column_error_floor_applied: {result.column_error_floor_applied}\n")
                 if result.uses_effective_variance is not None:
                     f.write(f"! uses_effective_variance: {result.uses_effective_variance}\n")
                 if result.quality_reason:
