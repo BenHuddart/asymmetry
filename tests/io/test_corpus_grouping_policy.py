@@ -8,6 +8,7 @@ import pytest
 
 from asymmetry.core.data.acquisition import ContentIdentity, SourceBinding
 from asymmetry.core.io import load
+from asymmetry.core.io.nexus_grouping import NexusGroupingWarning
 from tests.corpus import authored_grouping_copy
 from tests.io.test_nexus_grouping_declarations import grouping_file
 
@@ -75,20 +76,33 @@ def test_authored_copy_keeps_invalid_original_and_all_other_acquisition_fields(t
 
 
 @pytest.mark.parametrize(
-    "relative",
+    ("relative", "recover_emu"),
     [
-        "Semiconductors/Shallow donor state in cadmium sulphide/Data/EMU00020711.nxs",
-        "Chemistry/Muonium reaction with maleic acid/Data/emu00078251.nxs",
-        "Chemistry/Muon spectroscopy of benzene/data/RF resonance/56426.nxs",
+        ("Semiconductors/Shallow donor state in cadmium sulphide/Data/EMU00020711.nxs", True),
+        ("Chemistry/Muonium reaction with maleic acid/Data/emu00078251.nxs", True),
+        ("Chemistry/Muon spectroscopy of benzene/data/RF resonance/56426.nxs", False),
     ],
 )
-def test_original_corpus_all_zero_declaration_still_rejects_default_load(relative):
+def test_original_corpus_all_zero_declared_grouping_policy(relative, recover_emu):
     from tests.corpus import corpus_path
 
     path = corpus_path(relative)
     if path is None:
         pytest.skip("WiMDA corpus not configured (set ASYMMETRY_CORPUS_ROOT)")
     original_bytes = path.read_bytes()
-    with pytest.raises(ValueError, match="no positive"):
-        load(path)
+    if recover_emu:
+        with pytest.warns(NexusGroupingWarning, match="standard EMU forward/backward grouping"):
+            dataset = load(path)
+        grouping = dataset.run.grouping
+        assert grouping["groups"] == {1: list(range(1, 49)), 2: list(range(49, 97))}
+        assert (grouping["forward_group"], grouping["backward_group"]) == (1, 2)
+        assert grouping["grouping_preset"] == "Longitudinal"
+        assert grouping["nexus_grouping_declaration"]["values"] == [0] * 96
+        provenance = grouping["grouping_provenance"]
+        assert provenance["profile_key"] == "isis.emu"
+        assert provenance["fallback_reason"] == "nexus_v1_all_zero"
+        assert dataset.effective_recipe.to_dict()["grouping_provenance"] == provenance
+    else:
+        with pytest.raises(ValueError, match="no positive"):
+            load(path)
     assert path.read_bytes() == original_bytes

@@ -154,7 +154,9 @@ def test_near_bound_global_covariance_matches_analytic_marginals(stationary_expo
             columns = _member_columns(index)
             assert member.covariance_parameters == ["background", "amplitude", "rate"]
             fitted = [member.parameters[name].value for name in member.covariance_parameters]
-            np.testing.assert_allclose(fitted, values[columns], atol=1e-10, rtol=0)
+            # The absolute tolerance controls the rate near zero. The relative
+            # term allows optimizer roundoff for the order-one estimates.
+            np.testing.assert_allclose(fitted, values[columns], atol=1e-10, rtol=2e-10)
             assert member.covariance_accurate
             block = expected[np.ix_(columns, columns)]
             scale = np.sqrt(np.outer(np.diag(block), np.diag(block)))
