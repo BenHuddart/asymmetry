@@ -58,8 +58,9 @@ def test_loader_keeps_raw_histograms_when_default_pair_is_unavailable(tmp_path, 
         path = tmp_path / "shared.nxs"
         _write_v2_file(path)
         loader = NexusLoader()
+        # A NeXus table stores one group ID per detector, so overlapping groups need a stub.
         monkeypatch.setattr(
-            "asymmetry.core.io.nexus.nexus_grouping",
+            "asymmetry.core.io.nexus_grouping.nexus_grouping",
             lambda *a: GroupingSelection({1: [1], 2: [1]}, (1, 2)),
         )
     loaded = loader.load(str(path))
