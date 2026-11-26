@@ -18,11 +18,9 @@ Five scenarios, matched to the ground truth (``GROUND_TRUTH.md``):
   (100 G) longitudinal-field spectra overlaid; the LF trace stays polarised
   while the ZF trace relaxes (paper Fig. 3, GT §4a.5).
 * ``corpus_trsb_tf_vortex_fit`` — a 400 G (40 mT) transverse-field mixed-state
-  run: the Gaussian-damped precession fitted with Oscillatory × Gaussian
-  (superfluid density, paper Eq. 1). Fitted σ_sc ≈ 0.45 µs⁻¹ at 0.01 K
-  (GT §7c: 0.4463(68)).
-* ``corpus_trsb_sigma_sc_t`` — the TF superfluid-density trend σ_sc(T) falling
-  from ≈ 0.45 to ≈ 0.17 µs⁻¹ through T_c (GT §7c / Target 2).
+  run fitted with Oscillatory × Gaussian + Constant.
+* ``corpus_trsb_sigma_sc_t`` — the fitted TF Gaussian linewidth σ_G(T) in µs⁻¹
+  against temperature.
 
 ``requires_fit = True`` on every scenario that runs a real iminuit fit at
 capture time (iminuit/numba trips on numpy ≥ 2.3 in dev environments; CI pins
@@ -44,8 +42,7 @@ _DATA = "Superconductivity/TRSB/data/MUSR000%d.nxs"
 # ZF Gaussian Kubo–Toyabe × exponential + constant background (paper Eqs. 2–3):
 #   G(t) = A₀·G^KT(t;Δ)·exp(−Λt) + A_bg.
 _ZF_MODEL = (["StaticGKT_ZF", "Exponential", "Constant"], ["*", "+"])
-# TF mixed-state precession (paper Eq. 1, single Gaussian-relaxed component):
-#   G(t) = A·exp(−σ²t²/2)·cos(2πνt+φ) + A_bg.
+# The TF fit uses A·exp(−(σ_G t)²)·cos(2πνt+φ) + A_bg.
 _TF_MODEL = (["Oscillatory", "Gaussian", "Constant"], ["*", "+"])
 
 # Contiguous ZF temperature scan (GT §3a); the TRSB σ(T) headline series.
@@ -58,23 +55,13 @@ _LF_BASE_RUN = 38263  # F = 100 G = 10 mT
 _TF_BASE_RUN = 38180  # F = 400 G = 40 mT, T = 0.01 K
 
 
-def _fit_series(runs, components, operators, seeds, bounds):
-    """Fit *components* to each run; return (T, value, error) arrays for σ.
-
-    The relaxation rate is the model's Gaussian width (``Delta`` for the ZF KT
-    model, ``sigma`` for the TF model). Runs are fitted over their full time
-    range through the same core :class:`FitEngine` the GUI drives, so the
-    resulting trend points are genuine fits, not analytic stand-ins.
-    """
-    from asymmetry.core.fitting.composite import CompositeModel
+def _fit_runs(runs, model, seeds, bounds):
+    """Yield the dataset and its full-range fit for each run."""
     from asymmetry.core.fitting.engine import FitEngine
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-    model = CompositeModel(components, operators=operators)
-    rate_name = "Delta" if "Delta" in model.param_names else "sigma"
     engine = FitEngine()
 
-    temps, vals, errs = [], [], []
     for run in runs:
         dataset = load_corpus_datasets([_DATA % run])[0]
         params = ParameterSet(
@@ -88,34 +75,16 @@ def _fit_series(runs, components, operators, seeds, bounds):
                 for name in model.param_names
             ]
         )
-        result = engine.fit(dataset, model.function, params)
-        by_name = {p.name: p.value for p in result.parameters}
-        unc = result.uncertainties or {}
-        temps.append(float(dataset.temperature))
-        vals.append(abs(float(by_name[rate_name])))  # |σ| — Gaussian sign is a fit artefact
-        errs.append(float(unc.get(rate_name, np.nan)))
-    return np.array(temps), np.array(vals), np.array(errs)
+        yield dataset, engine.fit(dataset, model.function, params)
 
 
-def _load_trend_panel(temps, sigma, sigma_err, title):
-    """Build a FitParametersPanel showing σ(T) trend points (no model overlay)."""
+def _load_trend_panel(rows, title):
+    """Build a Fit Parameters panel from the fitted trend rows."""
     from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
-    order = np.argsort(temps)
-    row_dicts = [
-        {
-            "run_number": int(1000 + i),
-            "run_label": f"{temps[j]:.2f} K",
-            "field": 0.0,
-            "temperature": float(temps[j]),
-            "values": {"sigma": float(sigma[j])},
-            "errors": {"sigma": float(sigma_err[j])},
-        }
-        for i, j in enumerate(order)
-    ]
     panel = FitParametersPanel()
     panel.load_representation_series(
-        [("trsb-sigma-t", title, row_dicts)],
+        [("trsb-sigma-t", title, rows)],
         select_id="trsb-sigma-t",
     )
     _process_events_for(milliseconds=80)
@@ -240,9 +209,12 @@ class TrsbSigmaTStepScenario(CorpusScenario):
     requires_fit = True
 
     def build(self) -> QWidget:
-        temps, sigma, sigma_err = _fit_series(
+        from asymmetry.core.fitting.composite import CompositeModel
+
+        components, operators = _ZF_MODEL
+        fits = _fit_runs(
             _ZF_RUNS,
-            *_ZF_MODEL,
+            CompositeModel(components, operators=operators),
             seeds={"A_1": 19.0, "Delta": 0.26, "Lambda": 0.01, "A_bg": 14.5},
             bounds={
                 "A_1": (0.0, 40.0),
@@ -251,8 +223,26 @@ class TrsbSigmaTStepScenario(CorpusScenario):
                 "A_bg": (0.0, 30.0),
             },
         )
-        self._temps, self._sigma, self._sigma_err = temps, sigma, sigma_err
-        return _load_trend_panel(temps, sigma, sigma_err, "σ(T) — Re₆Zr ZF (TRSB)")
+        points = [
+            (
+                float(dataset.temperature),
+                abs(float(result.parameters["Delta"].value)),
+                float(result.uncertainties.get("Delta", np.nan)),
+            )
+            for dataset, result in fits
+        ]
+        rows = [
+            {
+                "run_number": 1000 + i,
+                "run_label": f"{temperature:.2f} K",
+                "field": 0.0,
+                "temperature": temperature,
+                "values": {"sigma": width},
+                "errors": {"sigma": error},
+            }
+            for i, (temperature, width, error) in enumerate(sorted(points, key=lambda p: p[0]))
+        ]
+        return _load_trend_panel(rows, "σ(T) — Re₆Zr ZF (TRSB)")
 
     def settle(self, widget: QWidget) -> None:
         _frame_trend_y(widget, 0.250, 0.270, tc_line=6.75)
@@ -300,13 +290,13 @@ class TrsbLfDecouplingScenario(CorpusScenario):
 
 
 # --------------------------------------------------------------------------- #
-#  4. TF vortex-state fit — Gaussian-damped precession (superfluid density).
+#  4. TF mixed-state fit — Gaussian-damped precession.
 # --------------------------------------------------------------------------- #
 class TrsbTfVortexFitScenario(CorpusScenario):
     name = "corpus_trsb_tf_vortex_fit"
     description = (
-        "Converged Oscillatory × Gaussian fit on the Re₆Zr 400 G (40 mT) TF "
-        "mixed-state run 38180 (0.01 K): σ_sc ≈ 0.45 µs⁻¹."
+        "Oscillatory × Gaussian + Constant fit on the Re₆Zr 400 G (40 mT) TF "
+        "mixed-state run 38180 (0.01 K), showing the fitted Gaussian linewidth σ_G."
     )
     example = EXAMPLE
     size = (1500, 920)
@@ -347,22 +337,25 @@ class TrsbTfVortexFitScenario(CorpusScenario):
 
 
 # --------------------------------------------------------------------------- #
-#  5. TF σ_sc(T) trend — superfluid density melting through T_c.
+#  5. TF fitted Gaussian linewidth through T_c.
 # --------------------------------------------------------------------------- #
 class TrsbSigmaScTScenario(CorpusScenario):
     name = "corpus_trsb_sigma_sc_t"
-    description = (
-        "TF depolarisation rate σ_sc(T) for Re₆Zr, falling from ≈0.45 µs⁻¹ at "
-        "base T toward ≈0.17 µs⁻¹ through T_c (superfluid density)."
-    )
+    description = "Fitted Re₆Zr TF Gaussian linewidth σ_G(T) in µs⁻¹ at 40 mT."
     example = EXAMPLE
     size = (1240, 760)
     requires_fit = True
 
     def build(self) -> QWidget:
-        temps, sigma, sigma_err = _fit_series(
+        from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.core.fitting.sc.trend_width import model_width_sources
+
+        components, operators = _TF_MODEL
+        model = CompositeModel(components, operators=operators)
+        parameter_sources = model_width_sources(model)
+        fits = _fit_runs(
             _TF_RUNS,
-            *_TF_MODEL,
+            model,
             seeds={
                 "A_1": 8.0,
                 "frequency": 5.36,
@@ -378,11 +371,45 @@ class TrsbSigmaScTScenario(CorpusScenario):
                 "A_bg": (-5.0, 5.0),
             },
         )
-        self._temps, self._sigma, self._sigma_err = temps, sigma, sigma_err
-        return _load_trend_panel(temps, sigma, sigma_err, "σ_sc(T) — Re₆Zr TF 40 mT")
+        rows = []
+        for dataset, result in fits:
+            if not result.success or "sigma" not in result.parameters:
+                continue
+            temperature = dataset.temperature
+            width = result.parameters["sigma"].value
+            error = result.uncertainties.get("sigma", np.nan)
+            if (
+                temperature is None
+                or not np.isfinite([temperature, width, error]).all()
+                or error <= 0
+            ):
+                continue
+            rows.append(
+                {
+                    "run_number": dataset.run_number,
+                    "run_label": dataset.run_label,
+                    "field": dataset.field,
+                    "temperature": temperature,
+                    "values": {"sigma": width},
+                    "errors": {"sigma": error},
+                    "parameter_sources": parameter_sources,
+                }
+            )
+        if len({row["values"]["sigma"] for row in rows}) < 2:
+            raise RuntimeError("The Re₆Zr TF trend requires distinct successful linewidth fits.")
+        rows.sort(key=lambda row: row["temperature"])
+        panel = _load_trend_panel(rows, "σ_G(T) — Re₆Zr TF 40 mT")
+        panel._x_combo.setCurrentText("𝑇 (K)")
+        panel._overlay_button.setChecked(True)
+        return panel
 
     def settle(self, widget: QWidget) -> None:
         _frame_trend_y(widget, 0.10, 0.50, tc_line=6.75)
+        ax = widget._figure.axes[0]
+        ax.set_title("Fitted TF Gaussian linewidth")
+        ax.set_ylabel(r"$\sigma_G$ (µs⁻¹)")
+        ax.legend(ax.containers, ["Per-run fit ± 1σ"], loc="best", fontsize="small")
+        widget._canvas.draw()
 
 
 register(TrsbZfKtFitScenario())

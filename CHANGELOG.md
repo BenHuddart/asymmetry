@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Label the Re₆Zr transverse-field trend as the fitted Gaussian linewidth
+  and explain how its fit and width convention compare with the published analysis.
+
 - Use one silicon rate calibration for the carrier-lifetime figures and show
   how rate errors and shared calibration uncertainty affect the result.
 
