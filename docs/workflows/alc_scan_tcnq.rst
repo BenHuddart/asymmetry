@@ -403,6 +403,13 @@ Build a separate **Integral scan** for each low-field block (runs
 field :math:`B`. As the field decouples the muon and electron spins, more of
 the muon polarisation is recovered.
 
+Click **Data table…** to inspect the run number, field, integral asymmetry,
+and counting error in **ALC scan data**. The table displays rounded values.
+The Python example below uses the full-precision values from the same
+count-integral reduction, with the default detector groups and each run's
+full good-bin interval. Point ``data`` at the HiFi NeXus files in the
+`ISIS data record <https://doi.org/10.5286/ISIS.E.86390140>`__.
+
 The figure script averages the integral asymmetry over 0–3 G for the low-field
 reference :math:`A_\mathrm{low}` and over 1000–2500 G for the high-field
 reference :math:`A_\mathrm{high}`, using each scan's own measurements. The
@@ -416,12 +423,54 @@ the normalised recovery
 
 To find :math:`B_{1/2}`, the script interpolates linearly in field between
 the two adjacent measurements that bracket :math:`R(B)=0.5` on the rise
-(54–100 G at 40 K and 180–300 G at 410 K). Choosing individual measurements
-within the high-field interval instead of averaging them changes the estimate
-across a span of about 5 G at 40 K and 25 G at 410 K. For fixed reference
-intervals, adding independent Gaussian perturbations with the per-point
-counting errors and recomputing both references gives a counting-only central
-68 % interval with a half-width of about 1 G and 2 G, respectively.
+(54–100 G at 40 K and 180–300 G at 410 K). With the low-field mean fixed,
+using the 1000, 1800, and 2500 G measurements in turn as the high-field
+reference gives a span of about 4 G at 40 K and 25 G at 410 K. For the
+counting-only check, the script draws 10,000 replicas per temperature with a
+NumPy random generator seeded with 777. Each replica adds independent Gaussian
+noise with the per-point counting errors as standard deviations and recomputes
+both reference means. The central 68 % interval has a half-width of about
+1 G at 40 K and 2 G at 410 K.
+
+.. code-block:: python
+
+   from pathlib import Path
+
+   import numpy as np
+   from asymmetry.core.io import load
+   from asymmetry.core.transform.integral import build_field_scan
+
+
+   def half_recovery_field(field, asymmetry):
+       low = np.flatnonzero((0 <= field) & (field <= 3))
+       high = np.flatnonzero((1000 <= field) & (field <= 2500))
+       low_mean = asymmetry[low].mean()
+       high_mean = asymmetry[high].mean()
+       recovery = (asymmetry - low_mean) / (high_mean - low_mean)
+       rise = recovery[low[-1] : high[0] + 1]
+       crossings = np.flatnonzero((rise[:-1] <= 0.5) & (rise[1:] > 0.5))
+       if crossings.size != 1:
+           raise ValueError("Half recovery requires one rising bracket between the references")
+       left = low[-1] + crossings[0]
+       pair = slice(left, left + 2)
+       return np.interp(0.5, recovery[pair], field[pair])
+
+
+   data = Path("data")
+   rng = np.random.default_rng(777)
+   for temperature, first, last in [(40, 118242, 118259), (410, 118204, 118221)]:
+       runs = [
+           load(str(data / f"HIFI00{run}.nxs")).run for run in range(first, last + 1)
+       ]
+       scan = build_field_scan(runs, method="integral", order_key="field")
+       if scan.n_points != len(runs):
+           raise ValueError(f"Excluded runs: {scan.excluded}")
+       midpoint = half_recovery_field(scan.x, scan.value)
+       replicas = rng.normal(scan.value, scan.error, size=(10_000, scan.x.size))
+       fields = [half_recovery_field(scan.x, replica) for replica in replicas]
+       low, high = np.percentile(fields, [16, 84])
+       print(f"{temperature} K: about {round(midpoint, -1):.0f} G")
+       print(f"Counting-only interval: {low:.1f}–{high:.1f} G")
 
 .. figure:: /_generated/corpus_screenshots/corpus_corannulene_repolarisation.png
    :width: 90%

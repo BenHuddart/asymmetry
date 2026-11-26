@@ -480,7 +480,7 @@ class CorannuleneTemperatureScenario(CorpusScenario):
 # ══════════════════════════════════════════════════════════════════════════
 def _normalised_recovery(field: np.ndarray, asymmetry: np.ndarray) -> tuple[np.ndarray, float]:
     """Scale the field-ordered scan between its empirical references and locate half recovery."""
-    low = np.flatnonzero(field <= 3.0)
+    low = np.flatnonzero((0.0 <= field) & (field <= 3.0))
     high = np.flatnonzero((1_000.0 <= field) & (field <= 2_500.0))
     if low.size == 0 or high.size == 0:
         raise ValueError("Half recovery requires observations in both reference intervals")
