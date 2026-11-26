@@ -5199,10 +5199,7 @@ class PlotPanel(QWidget):
             if self._fit_x_min is None or self._fit_x_max is None:
                 seed = self._raw_fit_seed_range(list(datasets))
                 if seed is None:
-                    seed = (
-                        float(self._last_plot_time.min()),
-                        float(self._last_plot_time.max()),
-                    )
+                    seed = float(self._last_plot_time.min()), float(self._last_plot_time.max())
                 self._fit_x_min, self._fit_x_max = seed
         else:
             self._last_plot_time = None
@@ -5210,8 +5207,8 @@ class PlotPanel(QWidget):
             self._last_plot_error = None
             self._last_low_count_mask = None
             self._clear_waterfall_render_record()
-            self._fit_x_min = None
-            self._fit_x_max = None
+            if self._is_frequency_plot_panel():
+                self._fit_x_min = self._fit_x_max = None
 
         resolved.update(self._resolve_y(y_axis_id, self._display_y_bounds))
         self._apply_limits(resolved)

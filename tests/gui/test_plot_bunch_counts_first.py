@@ -389,6 +389,53 @@ def test_fit_availability_tracks_bunching_and_run_selection(mainwindow, recall):
     assert mainwindow._fit_panel.single_dataset().n_points == 9
 
 
+@pytest.mark.parametrize("recall", [False, True], ids=["direct", "saved-view"])
+def test_fit_window_survives_an_empty_bunched_overlay(mainwindow, recall):
+    browser = mainwindow._data_browser
+    runs = [4242, 4243]
+    for run in runs:
+        browser.add_dataset(
+            _histogram_run_dataset(np.full(16, 200.0), np.full(16, 150.0), run_number=run)
+        )
+    browser.select_runs({runs[0]})
+    plot = mainwindow._plot_panel
+    plot.set_overlay_enabled(True, emit_signal=True)
+    browser.select_runs(set(runs))
+    bunch = mainwindow._view_bunch_spin
+    view_one, view_two, _ = mainwindow._view_mode_buttons
+    if recall:
+        view_two.click()
+        bunch.setValue(32)
+        view_one.click()
+
+    fit_window = (0.10, 0.80)
+    plot.set_fit_range(*fit_window)
+    panel = mainwindow._fit_panel
+    single = panel._single_tab._fit_btn
+    batch = panel._global_tab._fit_btn
+    assert single.isEnabled() and batch.isEnabled()
+    assert panel.single_dataset().n_points == 9
+
+    if recall:
+        view_two.click()
+    else:
+        bunch.setValue(32)
+    assert bunch.value() == 32
+    assert not single.isEnabled() and not batch.isEnabled()
+    assert mainwindow.statusBar().currentMessage() == "No complete bins at Bunch 32. Reduce Bunch."
+    assert plot.get_fit_range() == fit_window
+
+    if recall:
+        view_one.click()
+    else:
+        bunch.setValue(1)
+    assert bunch.value() == 1
+    assert plot.get_fit_range() == fit_window
+    assert single.isEnabled() and batch.isEnabled()
+    assert panel.single_dataset().n_points == 9
+    assert {ds.run_number for ds in panel.batch_datasets()} == set(runs)
+
+
 def test_fit_availability_tracks_the_window_independently_of_bunching(mainwindow):
     dataset = _histogram_run_dataset(np.full(64, 200.0), np.full(64, 150.0))
     mainwindow._data_browser.add_dataset(dataset)
