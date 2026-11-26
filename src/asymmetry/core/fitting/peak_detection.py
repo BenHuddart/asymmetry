@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.ndimage import median_filter
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.spectral_window import _centered_signal, effective_analysis_window
@@ -424,10 +423,10 @@ def _running_median(values: NDArray[np.float64], window: int) -> NDArray[np.floa
     window = min(window, n if n % 2 == 1 else n - 1)
     if window <= 1:
         return arr.copy()
-    # scipy's rank filter, not a sliding_window_view + np.median(axis=1): the
-    # windowed matrix materialises n×window floats (27 GB for a 256k-bin
-    # padded spectrum — froze an 8 GB machine) and is ~1000× slower for the
-    # same result.
+    # The rank filter avoids a windowed matrix of n×window floats
+    # (27 GB for a 256k-bin padded spectrum).
+    from scipy.ndimage import median_filter
+
     return median_filter(arr, size=window, mode="reflect")
 
 

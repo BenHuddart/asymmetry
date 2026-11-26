@@ -39,7 +39,6 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.integrate import IntegrationWarning, quad
 from scipy.special import j0
 
 from asymmetry.core.utils.constants import ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G
@@ -97,6 +96,8 @@ def _select_finite_frequency_u_max(kappa: float, n: int) -> float:
 
 @lru_cache(maxsize=256)
 def _spectral_density_zero_frequency(d_hop: float, n: int) -> float:
+    from scipy.integrate import quad
+
     def s_scaled_scalar(u: float) -> float:
         return float(j0(u) ** (2 * n))
 
@@ -149,6 +150,8 @@ def spectral_density(omega: float, D_hop: float, n: int = 1) -> float:
     function returns +inf. For D_hop = 0 and omega > 0, the transform tends to
     zero in the distributional sense, which is the value returned here.
     """
+    from scipy.integrate import IntegrationWarning, quad
+
     _validate_dimension(n)
     _validate_non_negative("D_hop", D_hop)
 

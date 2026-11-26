@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import CubicSpline, PPoly
 from scipy.linalg import solve_triangular, toeplitz
+
+if TYPE_CHECKING:
+    from scipy.interpolate import CubicSpline
 
 _BLOCK_SIZE = 512
 _GAUSS_RULES = {order: np.polynomial.legendre.leggauss(order) for order in (8, 32)}
@@ -62,6 +66,8 @@ def _collision_kernel_intervals(
     exponential even when its decay is much faster than the dynamic time grid.
     Beyond 40 lifetimes its omitted normalised mass is below 5e-18.
     """
+    from scipy.interpolate import PPoly
+
     z = nu * h
     x, weights = _GAUSS_RULES[8 if z <= 1.0 else 32]
     limit = min(z, 40.0)
@@ -112,6 +118,8 @@ def strong_collision_polarisation(
         raise ValueError(
             "Strong-collision product integration requires at least four static samples"
         )
+    from scipy.interpolate import CubicSpline
+
     n = gs.size
     boundary = (
         "not-a-knot" if initial_derivative is None else ((1, initial_derivative), "not-a-knot")

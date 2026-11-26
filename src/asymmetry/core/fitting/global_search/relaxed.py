@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
-from scipy.optimize import minimize
 
 from asymmetry.core.fitting.global_search.types import (
     ModelStructure,
@@ -41,6 +40,8 @@ class SciPyRelaxedOptimizer:
         self._maxiter = int(max(maxiter, 50))
 
     def solve(self, problem: RelaxedFitProblem) -> RelaxedFitResult:
+        from scipy.optimize import minimize
+
         structure = problem.structure
         run_numbers = tuple(sorted(int(run_number) for run_number in problem.initial_params_by_run))
         active_names = tuple(

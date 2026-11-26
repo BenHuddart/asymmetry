@@ -49,7 +49,6 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import minimize_scalar
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
@@ -212,6 +211,8 @@ def _monotonic_detrend_rows(
     That is the same two-dimensional model space (the shift is absorbed by
     ``A``) but keeps ``e^{-lambda tau}`` in ``(0, 1]`` for conditioning.
     """
+    from scipy.optimize import minimize_scalar
+
     tau = t - t[0]
     weight_sum = float(np.sum(weights))
     row_means = (rows @ weights) / weight_sum

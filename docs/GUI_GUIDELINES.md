@@ -216,6 +216,15 @@ Distilled from the 2026-07 responsiveness programme (PRs #214–#226). Every
 pattern below points at its canonical implementation — copy those, don't
 re-derive.
 
+**Keep startup small.** Show the splash before importing plotting, fitting,
+and optional analysis tools. Measure time to the on-screen splash and usable
+project window in fresh processes on a native backend, and check first-use
+latency for any work moved out of startup.
+Startup imports widget definitions and prepares the plot fonts in a
+`TaskRunner` before any figure exists. Keep widget construction, Qt font
+registration, and user plugin execution on the GUI thread. Startup imports
+must avoid creating widgets, figures, and other thread-affine Qt objects.
+
 **Know the cost model.** Everything wrapped in `perf_timer`
 (`core/utils/perf.py`) — loading, `resolve_effective_grouping`,
 `apply_grouping_aligned`, deadtime preparation, `reduce_grouped_asymmetry`,

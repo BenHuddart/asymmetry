@@ -28,7 +28,6 @@ from typing import NamedTuple
 import numpy as np
 from numpy.typing import NDArray
 from scipy.fft import irfft2
-from scipy.signal import zoom_fft
 
 from asymmetry.core.fitting.sc.models import (
     _POWDER_LAMBDA_FACTOR,
@@ -212,6 +211,8 @@ def _czt_inner_sum(
     step = (float(t[-1]) - start) / (t.size - 1)
     if step == 0 or not np.all(np.abs(np.diff(t) - step) <= _UNIFORM_T_RTOL * abs(step)):
         return None
+    from scipy.signal import zoom_fft
+
     phase = _TWO_PI_GAMMA * delta
     return np.asarray(
         zoom_fft(

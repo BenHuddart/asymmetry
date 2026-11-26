@@ -28,7 +28,6 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import linear_sum_assignment
 
 from asymmetry.core.fitting.model_comparison import information_weights
 from asymmetry.core.fitting.parameter_models import (
@@ -906,17 +905,16 @@ def set_matching_divergence(
 
         [f_i^A(x) − f_j^B(x)]² / (2 σ_i²(x))
 
-    (``sigma[i]`` is series ``i`` of hypothesis A's per-candidate noise). Because a
-    new run's components are *unlabelled*, two assignment hypotheses are only
-    distinguishable through the sets of values they predict — this is that
-    set-level discrepancy. It is zero where the hypotheses predict the same value
-    set (e.g. at a crossing where the labellings coincide) and peaks where they
-    imply genuinely different curve sets. For ``N = 1`` it reduces exactly to the
+    Here ``sigma[i]`` is the per-candidate noise for series ``i`` of hypothesis A.
+    The components are unlabelled, so the divergence is zero where the predicted
+    value sets coincide, for example at a crossing. For ``N = 1`` it reduces to the
     labelled discrimination integrand of :func:`suggest_discriminating_point`.
 
     Returns ``U(x)`` over ``x_candidates``. Non-finite predictions or zero sigmas
     are treated as a large finite cost so the matching stays well-posed.
     """
+    from scipy.optimize import linear_sum_assignment
+
     x = np.asarray(x_candidates, dtype=float)
     n = len(hypothesis_a)
     if n != len(hypothesis_b):

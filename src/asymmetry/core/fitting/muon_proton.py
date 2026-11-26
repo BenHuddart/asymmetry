@@ -15,7 +15,6 @@ from math import hypot
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import brentq
 
 from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.utils.constants import (
@@ -175,6 +174,8 @@ def _lowest_ascending_root(
     the practical consequence is a locally flat gradient, hence the recommendation
     to start near the expected couplings.
     """
+    from scipy.optimize import brentq
+
     shifted = transition - target
     for i in range(shifted.shape[0] - 1):
         if shifted[i] < 0.0 <= shifted[i + 1]:

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep the splash responsive while analysis dependencies load in the
+  background.
+- Show the splash earlier and open the first project window faster by loading
+  specialised analysis libraries when their tools are used.
+- Load fitting API exports on access and defer specialised optimisation and
+  integration solvers until an analysis calls them.
+
 - Keep File → Recent Projects updating across open tabs after saving or
   opening a project.
 

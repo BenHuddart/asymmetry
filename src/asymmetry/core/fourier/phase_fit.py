@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import minimize_scalar, nnls
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -249,6 +248,8 @@ def _phase_search(
     density: int,
     callback: CancelCallback,
 ) -> _PhaseSolution:
+    from scipy.optimize import minimize_scalar, nnls
+
     _check_cancel(callback)
     positive, negative, centers, bins = _sampled_response(
         acquisition, transforms, band, density, callback

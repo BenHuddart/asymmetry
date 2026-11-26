@@ -13,7 +13,8 @@ The lifecycle rules encoded here are load-bearing, especially on Windows:
 - Cancellation is cooperative only (a polled flag) — never
   ``QThread.terminate()``.
 - Results cross back to the GUI thread as plain Python objects via queued
-  signal connections. Workers must never touch ``QWidget`` or matplotlib.
+  signal connections. Workers must never touch ``QWidget`` or live matplotlib
+  figures. Startup prepares plotting dependencies before any figure exists.
 - On window close, :meth:`TaskRunner.shutdown` cancels, quits and waits;
   a timed-out wait degrades to a leaked (unparented) thread instead of the
   qFatal that destroying a running parented ``QThread`` triggers.

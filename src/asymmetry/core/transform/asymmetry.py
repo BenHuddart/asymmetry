@@ -25,7 +25,6 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import minimize_scalar
 
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
 from asymmetry.core.transform.fb_counts import (
@@ -628,6 +627,8 @@ def _single_alpha_estimate(
     cancel_check: Callable[[], None] | None = None,
 ) -> float | None:
     """One point estimate on method-specific prepared counts."""
+    from scipy.optimize import minimize_scalar
+
     if f.size == 0:
         return None
     if method == "ratio":

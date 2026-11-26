@@ -38,6 +38,10 @@ Or from Python:
    from asymmetry.gui.app import main
    main()
 
+The splash screen displays **Loading analysis tools...** while Asymmetry
+loads the analysis tools in the background. Click the splash to dismiss it
+while loading continues. It also closes when the first project window opens.
+
 Main window layout
 ------------------
 
@@ -983,6 +987,9 @@ The fitting panel provides an interactive interface for fitting models to your d
 It is located in the right dock area next to the plot panel, with a **Single**
 tab for one dataset and a **Batch** tab for several — both built from the same
 model row, Parameters rail, run row and Results card described below.
+
+The project window opens with its fitting controls and registered user
+functions ready. Specialised solvers load when an analysis first needs them.
 
 The fit function is shown as :math:`A(t)` and is built from components using
 the **Edit…** button beside it. A **Wizard…** button opens the

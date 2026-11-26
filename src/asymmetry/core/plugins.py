@@ -38,8 +38,6 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from asymmetry.core.fitting import user_functions as _facade
-
 #: Default plugin directory, scanned by :func:`load_user_functions`.
 USER_FUNCTIONS_DIR = Path.home() / ".asymmetry" / "user_functions"
 
@@ -136,15 +134,17 @@ def _import_plugin_file(path: Path) -> None:
 
 def _load_one(source: UserFunctionSource, action) -> None:
     """Run one plugin *action* with the facade collector attached to *source*."""
+    from asymmetry.core.fitting import user_functions as facade
+
     collector: list[tuple[str, str]] = []
-    _facade._active_collector = collector
+    facade._active_collector = collector
     try:
         action()
     except Exception as exc:
         source.error = _format_error(exc)
         source.detail = traceback.format_exc()
     finally:
-        _facade._active_collector = None
+        facade._active_collector = None
         source.registered = list(collector)
 
 
