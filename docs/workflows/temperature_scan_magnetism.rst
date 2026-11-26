@@ -88,15 +88,18 @@ inclusive, zero-based acquisition bins lie before time zero. Click
 **Apply** and use the same reduction for both views. Absolute asymmetry
 amplitudes require detector balance calibration.
 
-#. Under **Saved views:** click **1**, set **Bunch:** to **4**, and enter
-   0 and 0.30 μs in **X min/max**. Press **Enter** after editing each
-   limit. The native 1.25 ns bins give 5 ns between points, resolving
+#. Under **Saved views:** click **1** and set **Bunch:** to **4**.
+   Start from the full trace. If the x-axis limits are held, click
+   **Auto X** first. Beside **X:** enter **0.30** in the right field
+   and press **Enter**, then enter **0** in the left field and press
+   **Enter**. The native 1.25 ns bins give 5 ns between points, resolving
    the roughly 33 ns period of the 30 MHz spontaneous precession.
-#. Click **2** and set **X min/max** to 1 and 6 μs. At **Bunch:** **4**,
-   the late trace shows much weaker oscillation as the muon ensemble
-   loses phase coherence. Now set **Bunch:** to **32**. The 40 ns bins
-   show the slowly varying asymmetry and average over more than a
-   precession period.
+#. Click **2** and set **Bunch:** to **4**. Beside **X:** enter **6**
+   in the right field and press **Enter**, then enter **1** in the
+   left field and press **Enter**. The late trace shows much weaker
+   oscillation as the muon ensemble loses phase coherence. Now set
+   **Bunch:** to **32**. The 40 ns bins show the slowly varying
+   asymmetry and average over more than a precession period.
 #. Click **1** again to recover the early oscillation and its 5 ns
    spacing. The x-axis limits frame the plot, while the fit window
    selects the times used for a fit. :ref:`Display bunching

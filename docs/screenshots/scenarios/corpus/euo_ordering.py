@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
 
 from examples.euo_order_parameter import EUO_RUNS
@@ -92,7 +93,7 @@ class EuoLoadBrowseScenario(CorpusScenario):
     name = "corpus_euo_load_browse"
     description = "Recalled 5 ns view of PSI GPS EuO run 2960 beside the logged temperature scan."
     example = EXAMPLE
-    size = (1400, 860)
+    size = (1650, 860)
 
     def build(self) -> QWidget:
         from asymmetry.gui.mainwindow import MainWindow
@@ -151,9 +152,9 @@ class EuoLoadBrowseScenario(CorpusScenario):
         fit_range = panel.get_fit_range()
 
         def set_x_range(low, high):
-            panel._x_min.setValue(low)
-            panel._x_max.setValue(high)
-            panel._x_max.editingFinished.emit()
+            for field, value in ((panel._x_max, high), (panel._x_min, low)):
+                field.setText(str(value))
+                QTest.keyClick(field, Qt.Key.Key_Return)
 
         def visible_points(bounds, spacing):
             np.testing.assert_allclose(panel.get_view_limits()[:2], bounds, rtol=0, atol=1e-12)
@@ -168,6 +169,8 @@ class EuoLoadBrowseScenario(CorpusScenario):
         late = (1.0, 6.0)
         fine.click()
         bunch.setValue(4)
+        if not panel._auto_x_btn.isChecked():
+            panel._auto_x_btn.click()
         set_x_range(*early)
         if not panel._auto_y_btn.isChecked():
             panel._auto_y_btn.click()
@@ -175,7 +178,7 @@ class EuoLoadBrowseScenario(CorpusScenario):
         fine_limits = panel.get_view_limits()
 
         coarse.click()
-        assert bunch.value() == 4
+        bunch.setValue(4)
         set_x_range(*late)
         late_time, late_signal = visible_points(late, 0.005)
         # Equal 0.30 µs windows at the same 5 ns spacing isolate contrast from bin averaging.
