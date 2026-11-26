@@ -19,9 +19,15 @@ permissions:
 
 jobs:
   full-suite:
-    name: Full test suite (${{ inputs.tier || 'full' }} tier)
+    name: Full test suite (${{ inputs.tier || 'full' }} tier, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: >-
+          ${{ fromJSON((inputs.tier == 'fast' || inputs.tier == 'standard')
+          && '["1/1"]' || '["1/6","2/6","3/6","4/6","5/6","6/6"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -50,7 +56,11 @@ jobs:
       - name: Run full test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tools/harness.py test --tier=${{ inputs.tier || 'full' }} -- -vv --max-worker-restart=0 -o faulthandler_timeout=600
+          TEST_TIER: ${{ inputs.tier || 'full' }}
+          TEST_SHARD: ${{ matrix.shard }}
+        run: >-
+          python tools/harness.py test --tier="$TEST_TIER" --shard="$TEST_SHARD" --
+          -vv --durations=20 --max-worker-restart=0 -o faulthandler_timeout=600
 
       - name: Report memory counters
         if: always()
