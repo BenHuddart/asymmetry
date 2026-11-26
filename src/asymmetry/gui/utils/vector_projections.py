@@ -57,9 +57,16 @@ def fit_projection_dataset(dataset, projection, cache, reference_resolver, paren
         )[projection]
 
     key = (observation.identity, projection, computation.COMPUTATION_REVISION)
-    curve = cache.get_or_compute(dataset.run, "lab_fit_projection", key, prepare, _projection_bytes)
-    _refresh_projection_metadata(dataset, curve)
-    return curve
+    return cache.get_or_compute(dataset.run, "lab_fit_projection", key, prepare, _projection_bytes)
+
+
+def bind_projection_conditions(curve, live):
+    """Hand out the prepared projection with the live run's condition metadata."""
+    return replace(
+        curve,
+        run=replace(curve.run, metadata=dict(live.run.metadata)),
+        metadata=_projection_metadata(live, curve),
+    )
 
 
 def _projection_bytes(curve):
@@ -70,6 +77,11 @@ def _projection_bytes(curve):
         histograms.extend(observation.reference.histograms)
     buffers = [curve.time, curve.asymmetry, curve.error, curve.ratio_validity.reasons]
     buffers.extend(array for hist in histograms for array in (hist.counts, hist.count_variance))
+    buffers.extend(
+        hist.counting_observation.variance
+        for hist in histograms
+        if hist.counting_observation is not None
+    )
     if curve.counting_noise is not None:
         for term in curve.counting_noise.terms:
             buffers.extend(
@@ -84,10 +96,14 @@ def _projection_bytes(curve):
     return sum(array.nbytes for array in {id(a): a for a in buffers if a is not None}.values())
 
 
-def _refresh_projection_metadata(dataset, curve):
-    """Refresh condition labels without changing the retained projection reduction."""
-    labels = {key: curve.metadata[key] for key in ("projection", "period_index")}
-    curve.metadata = (
+def _projection_metadata(dataset, curve):
+    """Keep the projection, numerical metadata and selected window with the curve."""
+    labels = {
+        key: curve.metadata[key]
+        for key in ("projection", "period_index", "fit_range")
+        if key in curve.metadata
+    }
+    return (
         asymmetry_reduction_metadata(dataset.run.metadata | dataset.metadata, curve.metadata)
         | labels
     )
@@ -118,7 +134,7 @@ def _prepare_vector(dataset, reference_resolver, parent, operation):
         context="Vector projection",
     )
     for curve in result.values():
-        _refresh_projection_metadata(dataset, curve)
+        curve.metadata = _projection_metadata(dataset, curve)
     return result
 
 

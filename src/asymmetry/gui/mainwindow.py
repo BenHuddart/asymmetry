@@ -1866,6 +1866,7 @@ class MainWindow(QMainWindow):
         if hasattr(self._data_browser, "datasets_changed"):
             self._data_browser.datasets_changed.connect(self._mark_dirty)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
+        self._data_browser.run_conditions_changed.connect(self._refresh_fb_batch_inputs)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
             self._frequency_plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
@@ -11085,35 +11086,41 @@ class MainWindow(QMainWindow):
         self, sources, fit_range, projection, unavailable: dict[int, str] | None
     ) -> list[MuonDataset]:
         """Collect fit crops and disable empty F–B members in editable pools."""
-        from asymmetry.gui.utils.vector_projections import fit_projection_dataset
+        from asymmetry.gui.utils.vector_projections import (
+            bind_projection_conditions,
+            fit_projection_dataset,
+        )
 
         datasets = []
         lab_projection = projection is not None and projection not in ROTATED_PROJECTIONS
         for source in sources:
             if source.metadata.get("correction_error") is not None:
                 continue
+            projected = source
             if unavailable is not None and lab_projection:
                 pairs, current = self._vector_axis_state_for_dataset(source)
                 if current is not None and current != projection:
                     if projection not in pairs:
                         unavailable[int(source.run_number)] = f"No {projection} projection."
                         continue
-                    source = fit_projection_dataset(
+                    projected = fit_projection_dataset(
                         source,
                         projection,
                         self._reduction_cache,
                         self._resolve_background_reference,
                         self,
                     )
-            crop = self._get_fit_dataset(source, fit_range, projection=projection)
+            crop = self._get_fit_dataset(projected, fit_range, projection=projection)
             if crop is None:
                 continue
             if unavailable is not None and not crop.n_points:
                 unavailable[int(source.run_number)] = _empty_time_fit_reason(
-                    source, self._plot_panel.get_bunch_factor()
+                    projected, self._plot_panel.get_bunch_factor()
                 )
             else:
-                datasets.append(crop)
+                datasets.append(
+                    crop if projected is source else bind_projection_conditions(crop, source)
+                )
         return datasets
 
     @staticmethod
@@ -15124,33 +15131,10 @@ class MainWindow(QMainWindow):
         *,
         projection: str | None = None,
     ):
-        """Return analysis dataset restricted to a fit range.
+        """Memoise the current reduction, projection and requested window per source.
 
-        *fit_range* is an explicit ``(t_min, t_max)`` window that overrides the
-        plot's own range in both the crop and the memo key — what a batch run
-        passes so its members are cropped to the series' recipe window (D8)
-        rather than to whatever the plot happens to be showing. The single-fit
-        path passes nothing and keeps the plot-owned, project-wide range.
-
-        A rotated *projection* (P′_x, P′_y) crops the run's rotated curve in its
-        current frame — exactly the curve the plot draws — and is ``None`` for a
-        run without one (D7). Any other projection crops *dataset* itself, which
-        is already reduced onto the axis it shows.
-
-        Memoised per source dataset: one run switch asks for the crop several
-        times (the selection update, the dataset-selected handler, the grouped
-        surfaces), and every fresh crop is a new object that defeats the
-        identity-keyed memos downstream (``GlobalFitTab._grouped_mode_context``
-        rebuilds its grouped count domains — O(bins) — for each new object).
-        The key embeds everything the crop reads: the identity of the three
-        data arrays and the run (grouping edits, projection changes and
-        re-reductions all *reassign* those attributes; nothing mutates them in
-        place), the bunch factor and the fit range. The entry rides a
-        ``weakref.finalize`` on the source so a recycled ``id`` can never
-        alias, and the cached crop's metadata is refreshed from the source on
-        every hit (metadata is edited in place, e.g. field overrides) — with
-        the crop's own ``fit_range`` stamp (see ``PlotPanel.get_fit_dataset``)
-        re-applied afterwards, since the source dataset never carries it.
+        Array identities change on reduction. A weak finalizer bounds memo lifetime
+        to the source, and refreshed labels retain the crop's requested coordinates.
         """
         if dataset is None or dataset.metadata.get("correction_error") is not None:
             return None

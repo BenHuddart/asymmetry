@@ -661,14 +661,16 @@ def test_group_draft_uses_its_own_window_before_launch(mainwindow):
 
 
 @pytest.mark.parametrize(
-    "window,indices",
+    "window,indices,summary",
     [
-        ({"min": 0.10, "max": None}, np.arange(7, 16)),
-        ({"min": None, "max": 0.10}, np.arange(7)),
+        ({"min": 0.10, "max": None}, np.arange(7, 16), "≥ 0.100 µs"),
+        ({"min": None, "max": 0.10}, np.arange(7), "≤ 0.100 µs"),
     ],
     ids=["lower-bound", "upper-bound"],
 )
-def test_open_series_keeps_a_legacy_bound_with_an_empty_member_pool(mainwindow, window, indices):
+def test_open_series_keeps_a_legacy_bound_with_an_empty_member_pool(
+    mainwindow, window, indices, summary
+):
     browser = mainwindow._data_browser
     runs = [4242, 4243]
     for run in runs:
@@ -685,10 +687,12 @@ def test_open_series_keeps_a_legacy_bound_with_an_empty_member_pool(mainwindow, 
     mainwindow._project_model.add_batch(series)
     bunch = mainwindow._view_bunch_spin
     bunch.setValue(32)
-    mainwindow._open_series_in_batch_tab(series.batch_id)
     tab = mainwindow._fit_panel._global_tab
+    tab.set_fit_range_display(0.0, 0.80)
+    mainwindow._open_series_in_batch_tab(series.batch_id)
     assert not tab._fit_btn.isEnabled()
     assert tab.current_recipe()["fit_range"] == window
+    assert tab.current_fit_range_text() == summary
 
     bunch.setValue(1)
     assert tab._fit_btn.isEnabled()
@@ -696,6 +700,12 @@ def test_open_series_keeps_a_legacy_bound_with_an_empty_member_pool(mainwindow, 
     for dataset in tab.batch_datasets():
         np.testing.assert_allclose(dataset.time, indices * BIN_WIDTH_US)
     assert tab.current_recipe()["fit_range"] == window
+    tab._set_composite_model(CompositeModel(["Constant"]))
+    tab._fit_btn.click()
+    assert tab.wait_for_fit()
+    fitted = mainwindow._project_model.batch(mainwindow._fit_panel.open_series_id())
+    assert fitted.recipe["fit_range"] == window
+    assert {item["fit_range"] for item in fitted.results_by_run.values()} == {summary}
 
 
 @pytest.mark.parametrize("view", ["raw_counts", "groups"])

@@ -41,6 +41,7 @@ class _StubDataBrowser(QWidget):
         super().__init__()
         self.dataset_selected = _DummySignal()
         self.selection_changed = _DummySignal()
+        self.run_conditions_changed = _DummySignal()
         # MainWindow connects this one unguarded (transitions plan, D2), so the
         # stub declares it rather than the window asking whether it exists.
         self.remove_phases_requested = _DummySignal()

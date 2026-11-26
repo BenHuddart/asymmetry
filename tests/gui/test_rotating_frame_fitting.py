@@ -14,8 +14,15 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.input_attribution import fit_input_attribution
+from asymmetry.core.fitting.likelihood import dataset_observations
+from asymmetry.core.fitting.recipe_inputs import build_recipe_engine_inputs
 from asymmetry.core.representation import RepresentationType
+from asymmetry.core.transform.counting_noise import CountingObservation
+from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.core.transform.projections import reduction_identity
 from asymmetry.core.transform.rotating_frame import FrameSnapshot, rotate_transverse
 from asymmetry.gui.mainwindow import MainWindow
@@ -223,7 +230,10 @@ def test_a_rotated_series_records_each_members_frame_and_goes_stale_with_one(mai
 
 def test_a_lab_frame_series_records_its_projection(mainwindow, monkeypatch):
     # The same recipe on another lab subplot is another series (review of #357).
-    panel = _show(mainwindow, _vector(932), _vector(933))
+    source = _vector(932)
+    source.metadata.update(field=50.0, temperature=1.5)
+    source.run.metadata.update(source.metadata)
+    panel = _show(mainwindow, source, _vector(933))
     panel.set_fit_target_projection("P_z")
     panel.set_fit_range(0.05, 9.0)
     series = mainwindow._project_model.batch(_batch_fit(mainwindow))
@@ -260,6 +270,67 @@ def test_a_lab_frame_series_records_its_projection(mainwindow, monkeypatch):
     tab._on_fit_range_spinbox_committed()
     assert prepared == [932]
     assert all(ds.time.min() >= 0.40 for ds in tab.batch_datasets())
+
+    before = next(ds for ds in tab.batch_datasets() if ds.run_number == 932)
+    attribution = fit_input_attribution(dataset_observations(before), before)
+    browser = mainwindow._data_browser
+    table = browser._table
+    field = next(
+        table.item(row, 3)
+        for row in range(table.rowCount())
+        if table.item(row, 0).data(Qt.ItemDataRole.UserRole) == 932
+    )
+    cache = mainwindow._reduction_cache
+    cached_curve = vector_projections.fit_projection_dataset(
+        source, "P_z", cache, mainwindow._resolve_background_reference, mainwindow
+    )
+    hits_before_edit = cache.hits
+    source.metadata["temperature"] = source.run.metadata["temperature"] = 2.5
+    field.setText("125")
+    after = next(ds for ds in tab.batch_datasets() if ds.run_number == 932)
+    for expression, pin in [("OscillatoryField", "field"), ("LongitudinalFieldKT", "B_L")]:
+        model = CompositeModel.from_expression(expression)
+        recipe = {
+            "parameters": [
+                {"name": name, "value": 1.0, "type": "File" if name == pin else "Fixed"}
+                for name in model.param_names
+            ]
+        }
+        inputs = build_recipe_engine_inputs(recipe, model, [after])
+        assert inputs.initial_params[932][pin].value == 125
+        assert inputs.initial_params[932][pin].fixed
+    assert after.metadata["field"] == 125
+    assert cache.hits > hits_before_edit
+    assert (
+        before.run.field == cached_curve.run.field == after.histogram_observation.source.field == 50
+    )
+    assert after.run.temperature == after.temperature == 2.5
+    assert before.run.temperature == after.histogram_observation.source.temperature == 1.5
+    assert after.run.metadata is not source.run.metadata
+    assert after.run.metadata is not cached_curve.run.metadata
+    assert after.run.grouping["vector_axis"] == "P_z"
+    assert fit_input_attribution(dataset_observations(after), after) == attribution
+    assert prepared == [932]
+
+
+def test_lab_projection_cache_counts_retained_histogram_variance_once():
+    counts = np.array([10.0, 12.0, 14.0])
+    variance = np.array([11.0, 15.0, 19.0])
+    hist = Histogram(counts, 0.1, counting_observation=CountingObservation(variance, object()))
+    run = Run(histograms=[hist])
+    original = np.zeros(3)
+    curve = MuonDataset(
+        original,
+        original,
+        original,
+        run=run,
+        histogram_observation=histogram_observation(run),
+        ratio_validity=RatioValidity(np.zeros(3, dtype=np.uint8)),
+    )
+
+    # The run and its captured snapshot own distinct counts and share one variance.
+    expected = 2 * counts.nbytes + variance.nbytes + original.nbytes + 3
+    assert vector_projections._projection_bytes(curve) == expected
 
 
 def test_a_batch_draft_follows_the_fit_target_into_the_rotating_frame(mainwindow):

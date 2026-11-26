@@ -526,21 +526,20 @@ def dataset_error_oversampling(dataset) -> float:
 
 
 def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
-    """Format the fit range as a provenance string, or ``None`` if degenerate.
-
-    Shared by the Single and Batch tabs (identical fit-range widgets) so the
-    ``fit_range`` stamped onto persisted records has one formatting source.
-    Reads the spin values, decimals, and the domain unit label (µs/MHz);
-    returns ``None`` when the spinboxes are disabled or the range is empty.
-    """
+    """Format the fit window using only its authored bounds."""
     if not min_spin.isEnabled():
         return None
-    lo = float(min_spin.value())
-    hi = float(max_spin.value())
-    if not hi > lo:
+    lo = None if min_spin.is_unset() else min_spin.value()
+    hi = None if max_spin.is_unset() else max_spin.value()
+    if lo is None and hi is None:
         return None
     decimals = min_spin.decimals()
-    return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit_label.text()}"
+    units = unit_label.text()
+    if lo is None:
+        return f"≤ {hi:.{decimals}f} {units}"
+    if hi is None:
+        return f"≥ {lo:.{decimals}f} {units}"
+    return f"{lo:.{decimals}f}–{hi:.{decimals}f} {units}" if hi > lo else None
 
 
 def _apply_fit_range_display(
