@@ -18,7 +18,7 @@ from tests.gui.gle_helpers import wait_for_gle
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings  # type: ignore
+from PySide6.QtCore import QSettings, Qt  # type: ignore
 from PySide6.QtWidgets import QApplication, QFileDialog  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
@@ -27,7 +27,7 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
 from asymmetry.core.fitting.input_attribution import fit_input_attribution
 from asymmetry.core.fitting.likelihood import dataset_observations
-from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation import FitSeries, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
@@ -331,7 +331,13 @@ def test_fit_availability_tracks_bunching_and_run_selection(mainwindow, recall):
     single = mainwindow._fit_panel._single_tab
     batch = mainwindow._fit_panel._global_tab
     reason = "No complete bins at Bunch 32. Reduce Bunch."
+    plot = mainwindow._plot_panel
+    fit_window = (0.10, 0.80)
+    plot.set_fit_range(*fit_window)
 
+    view_two.click()
+    bunch.setValue(1)
+    view_one.click()
     bunch.setValue(32)
     if recall:
         view_two.click()
@@ -345,6 +351,7 @@ def test_fit_availability_tracks_bunching_and_run_selection(mainwindow, recall):
     assert not single._fit_btn.isEnabled()
     assert single._fit_btn.toolTip() == reason
     assert mainwindow.statusBar().currentMessage() == reason
+    assert plot.get_fit_range() == fit_window
 
     browser.select_runs({long.run_number, short.run_number, other.run_number})
     assert not single._fit_btn.isEnabled()
@@ -354,6 +361,8 @@ def test_fit_availability_tracks_bunching_and_run_selection(mainwindow, recall):
 
     browser.select_runs({long.run_number})
     assert single._fit_btn.isEnabled()
+    assert plot.get_fit_range() == fit_window
+    np.testing.assert_allclose(mainwindow._fit_panel.single_dataset().time, [0.248, 0.76])
     assert reason not in mainwindow.statusBar().currentMessage()
 
     browser.select_runs({short.run_number})
@@ -361,18 +370,23 @@ def test_fit_availability_tracks_bunching_and_run_selection(mainwindow, recall):
     if recall:
         view_two.click()
         assert single._fit_btn.isEnabled()
-        assert mainwindow._fit_panel.single_dataset().n_points == 16
+        assert mainwindow._fit_panel.single_dataset().n_points == 9
         view_one.click()
         assert not single._fit_btn.isEnabled()
         assert mainwindow.statusBar().currentMessage() == reason
     bunch.setValue(1)
-    assert mainwindow._fit_panel.single_dataset().n_points == 16
+    assert mainwindow._fit_panel.single_dataset().n_points == 9
     assert single._fit_btn.isEnabled()
     assert reason not in mainwindow.statusBar().currentMessage()
 
     bunch.setValue(32)
     assert not single._fit_btn.isEnabled()
     assert mainwindow.statusBar().currentMessage() == reason
+    assert plot.get_fit_range() == fit_window
+    bunch.setValue(1)
+    assert single._fit_btn.isEnabled()
+    assert plot.get_fit_range() == fit_window
+    assert mainwindow._fit_panel.single_dataset().n_points == 9
 
 
 def test_fit_availability_tracks_the_window_independently_of_bunching(mainwindow):
@@ -422,6 +436,9 @@ def test_real_fit_keeps_attribution_when_bunch_and_zoom_change(mainwindow):
         assert plot.get_fit_range() == fit_window
         return fit_input_attribution(observations, panel.single_dataset())
 
+    view_two.click()
+    mainwindow._view_bunch_spin.setValue(1)
+    view_one.click()
     mainwindow._view_bunch_spin.setValue(4)
     producing_input = check_fit_input(4)
     plot.set_view_limits(0.2, 0.8, -30.0, 30.0)
@@ -456,6 +473,72 @@ def test_real_fit_keeps_attribution_when_bunch_and_zoom_change(mainwindow):
     assert not mainwindow._saved_fit_catalogue().entries[0].stale_reason
     assert original.result["input_attribution"] == saved_attribution
     assert dataset.run.grouping["bunching_factor"] == 1
+
+
+@pytest.mark.parametrize("reopened", [False, True], ids=["group-draft", "reopened"])
+def test_batch_pool_tracks_empty_inputs_without_losing_the_recipe(mainwindow, reopened):
+    runs = [4242, 4243, 4244, 4245]
+    browser = mainwindow._data_browser
+    for run, n in zip(runs, [256, 16, 256, 16], strict=True):
+        browser.add_dataset(
+            _histogram_run_dataset(np.full(n, 200.0), np.full(n, 150.0), run_number=run)
+        )
+    browser.select_runs({runs[0]})
+    plot = mainwindow._plot_panel
+    plot.set_fit_range(0.0, 0.8)
+    group = browser.create_data_group(runs, name="Mixed records")
+    mainwindow._on_fit_group_requested(group)
+    tab = mainwindow._fit_panel._global_tab
+
+    excluded = next(
+        entry
+        for row in range(tab._members_list.count())
+        if (entry := tab._members_list.item(row)).data(Qt.ItemDataRole.UserRole) == runs[-1]
+    )
+    excluded.setCheckState(Qt.CheckState.Unchecked)
+    tab.set_fit_range_display(0.0, 0.8)
+    recipe = tab.current_recipe()
+    bunch = mainwindow._view_bunch_spin
+    bunch.setValue(32)
+    assert tab.bound_group_id() == group
+    assert {ds.run_number for ds in tab.batch_datasets()} == {runs[0], runs[2]}
+    assert tab._fit_btn.isEnabled()
+
+    if reopened:
+        series = FitSeries(
+            "recorded",
+            RepresentationType.TIME_FB_ASYMMETRY,
+            member_run_numbers=runs[:-1],
+            excluded_run_numbers=[runs[-1]],
+            group_id=group,
+            recipe=recipe,
+        )
+        mainwindow._project_model.add_batch(series)
+        mainwindow._open_series_in_batch_tab(series.batch_id)
+        assert mainwindow._fit_panel.open_series_id() == series.batch_id
+
+    reason = "No complete bins at Bunch 32. Reduce Bunch."
+    assert tab.current_recipe() == recipe
+    assert tab._unavailable_members == {runs[1]: reason, runs[3]: reason}
+    assert {ds.run_number for ds in tab.batch_datasets()} == {runs[0], runs[2]}
+    assert tab._fit_btn.isEnabled()
+
+    tab.set_fit_range_display(0.0, 0.01)
+    tab._on_fit_range_spinbox_committed()
+    assert tab.batch_datasets() == []
+    assert not tab._fit_btn.isEnabled()
+    assert plot.get_fit_range() == (0.0, 0.8)
+
+    tab.set_fit_range_display(0.0, 0.8)
+    tab._on_fit_range_spinbox_committed()
+    assert tab._fit_btn.isEnabled()
+    assert {ds.run_number for ds in tab.batch_datasets()} == {runs[0], runs[2]}
+
+    bunch.setValue(1)
+    assert tab.bound_group_id() == group
+    assert tab.current_recipe() == recipe
+    assert not tab._unavailable_members
+    assert {ds.run_number for ds in tab.batch_datasets()} == set(runs[:-1])
 
 
 @pytest.mark.parametrize("view", ["raw_counts", "groups"])
