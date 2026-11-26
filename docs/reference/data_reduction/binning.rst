@@ -76,6 +76,8 @@ also drops its incomplete final group, even when its base mode is nonuniform.
    :alt: Fixed, Variable, and Constant error count reductions on a coarse synthetic grid.
    :width: 100%
 
+.. _display-bunching:
+
 Display bunching
 ----------------
 
@@ -114,7 +116,8 @@ centres used for fitting. If a run has too few recorded bins to complete a
 merge, **Fit** is disabled and the status bar reports, for example,
 ``No complete bins at Bunch 32. Reduce Bunch.`` A fit window that excludes every
 bin reports ``No bins in the fit window.`` Completed fits retain their original
-input attribution.
+input attribution. Follow the :ref:`EuO saved-view walkthrough
+<euo-saved-views>` to compare fine and coarse views of one run.
 
 Direct reduction, the workflow, CLI, and histogram toolbar honour the same
 authored merge without a spectral peak veto. This permits deliberate averaging

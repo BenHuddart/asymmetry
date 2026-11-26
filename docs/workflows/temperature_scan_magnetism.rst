@@ -66,28 +66,47 @@ for **T (K)**. This recorded sensor agrees with the school logbook for
 the selected runs. For run 2960 it reads 1.604 K, with a header setpoint of
 1.5 K. The captions round the logged temperature to 1.6 K.
 
+.. _euo-saved-views:
+
 Step 1 — Load and inspect
 -------------------------
 
 .. figure:: /_generated/corpus_screenshots/corpus_euo_load_browse.png
-   :alt: EuO ZF temperature scan loaded from PSI .bin files in the main window
+   :alt: Saved view 1 of EuO run 2960 showing the early zero-field oscillation at Bunch 4
    :width: 100%
 
-   The zero-field EuO scan loaded from the ``deltat_pta_gps`` histograms.
-   The plot shows the base-temperature run (2960, 1.6 K) over its first
-   0.6 μs, where the spontaneous precession is fastest. **T (K)** shows
-   the logged sample temperature where available.
+   **Saved views:** **1** shows the first 0.30 μs of run 2960 at 5 ns per
+   point. **T (K)** shows the logged sample temperature, 1.604 K (1.6 K
+   rounded). The header setpoint is 1.5 K.
 
-The data browser doubles as a run logbook: with the runs grouped and
-sorted by temperature, the scan reads top-to-bottom for the rest of the
-workflow. Selecting the base-temperature run and zooming into the first
-fraction of a microsecond already shows a coherent oscillation — the
-qualitative signature that the sample is magnetically ordered. Clicking
-up through the runs shows the precession slow and damp as the transition
-is approached, and disappear entirely above :math:`T_C`. This visual
-inspection is the first half of model selection: it is already clear that
-an oscillatory model is needed below :math:`T_C` and a plain relaxation
-above it.
+Select zero-field run 2960 (``deltat_pta_gps_2960.bin``) in **F-B asymmetry**.
+In **Grouping**, keep the file's default Back/Forw detector pair, set
+**Binning** to **Fixed** with factor **1**, and use **α (detector balance)**
+of 1. In **Deadtime**, select **Off**. In **Background**, choose **Range
+average**, open **Edit intervals…**, and enter ``10,85; 10,85``. These
+inclusive, zero-based acquisition bins lie before time zero. Click
+**Apply** and use the same reduction for both views. Absolute asymmetry
+amplitudes require detector balance calibration.
+
+#. Under **Saved views:** click **1**, set **Bunch:** to **4**, and enter
+   0 and 0.30 μs in **X min/max**. Press **Enter** after editing each
+   limit. The native 1.25 ns bins give 5 ns between points, resolving
+   the roughly 33 ns period of the 30 MHz spontaneous precession.
+#. Click **2** and set **X min/max** to 1 and 6 μs. At **Bunch:** **4**,
+   the late trace shows much weaker oscillation as the muon ensemble
+   loses phase coherence. Now set **Bunch:** to **32**. The 40 ns bins
+   show the slowly varying asymmetry and average over more than a
+   precession period.
+#. Click **1** again to recover the early oscillation and its 5 ns
+   spacing. The x-axis limits frame the plot, while the fit window
+   selects the times used for a fit. :ref:`Display bunching
+   <display-bunching>` changes the observations available to the next
+   time-domain F–B fit. Completed fits retain their original inputs.
+
+For the fitted scan below, use **Bunch:** **1** and set **Background**
+back to **None**. Sort the runs by temperature and inspect several traces
+as the transition approaches. Their precession slows and becomes more
+heavily damped, then disappears above :math:`T_C`.
 
 Step 2 — Group consistently across the scan
 -------------------------------------------
