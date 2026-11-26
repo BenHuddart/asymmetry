@@ -63,6 +63,7 @@ def restore_instrument_state(run: Run, choice, source) -> Run:
 def merge_grouping_request(current: dict, requested: dict) -> dict:
     """Keep acquired evidence ahead of saved tables while retaining request extensions."""
     incoming = grouping_request_payload(requested)
+    incoming.pop("nexus_grouping_declaration", None)
     for key in _PER_RUN_FACT_KEYS:
         if key in current:
             incoming.pop(key, None)

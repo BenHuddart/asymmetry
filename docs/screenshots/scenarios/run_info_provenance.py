@@ -116,3 +116,65 @@ class RunInfoUnitsScenario(Scenario):
 
 
 register(RunInfoUnitsScenario())
+
+
+class LegacyNexusGroupingLogScenario(Scenario):
+    """Capture the real desktop import warning using a synthetic V1 acquisition."""
+
+    name = "legacy_nexus_grouping_log"
+    description = "The desktop log reports the default grouping applied to legacy EMU counts."
+    size = (1080, 720)
+
+    def capture(self, ctx: CaptureContext) -> Path:
+        from contextlib import chdir
+        from tempfile import TemporaryDirectory
+
+        import h5py
+        import numpy as np
+
+        from asymmetry.gui.mainwindow import MainWindow
+
+        window = MainWindow()
+        try:
+            window.resize(*self.size)
+            window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+            window.show()
+            window._dock_log.show()
+            window.resizeDocks([window._dock_log], [150], Qt.Orientation.Vertical)
+            window._log_panel.clear()
+            with TemporaryDirectory() as directory:
+                source = Path(directory) / "synthetic-emu.nxs"
+                with h5py.File(source, "w") as handle:
+                    entry = handle.create_group("run")
+                    entry.create_dataset("analysis", data=b"muonTD")
+                    entry.create_dataset("number", data=42)
+                    entry.create_dataset("switching_states", data=1)
+                    entry.create_dataset("instrument/beam/period_type", data=[1])
+                    entry.create_dataset("instrument/name", data=b"EMU")
+                    entry.create_dataset("instrument/detector/orientation", data=b"l")
+                    entry.create_dataset("instrument/detector/number", data=96)
+                    detector = entry.create_group("histogram_data_1")
+                    counts = np.tile(np.arange(24, 0, -1), (96, 1))
+                    detector.create_dataset("counts", data=counts).attrs.update(
+                        t0_bin=3, first_good_bin=5, last_good_bin=20
+                    )
+                    detector.create_dataset("resolution", data=20).attrs["units"] = "ns"
+                    detector.create_dataset("grouping", data=np.zeros(96, dtype=int)).attrs[
+                        "available"
+                    ] = 1
+                with chdir(directory):
+                    window._load_files([source.name])
+            if "Applied the standard EMU" not in window._log_panel.to_plain_text():
+                raise RuntimeError("Legacy EMU import did not report its grouping")
+            _pump_events(200)
+            output = ctx.output_dir / f"{self.name}.png"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if not window._dock_log.grab().save(str(output), "PNG"):
+                raise RuntimeError("Could not save legacy NeXus grouping screenshot")
+            _optimize_png(output)
+            return output
+        finally:
+            self.teardown(window)
+
+
+register(LegacyNexusGroupingLogScenario())

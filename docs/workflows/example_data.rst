@@ -20,12 +20,17 @@ number when locating ISIS files. For example, the Basics folder has both a
 MuSR run 44989 for detector grouping and an EMU run 44989 for the
 steering-current trend.
 
-Some legacy ISIS NeXus files in the archive have a grouping declaration
-with no positive detector groups. Asymmetry rejects these files on load
-with **Grouping declaration contains no positive detector group**. For
-example, this affects EMU runs 18854, 19489, 51315, and 20721, and HiFi run
-9023 in the archive. See :doc:`/reference/loading_data` for supported
-file formats.
+EMU runs 18854, 19489, 51315, and 20721, and HiFi run 9023 open with
+the instrument's **Longitudinal** preset. Their legacy files declare all-zero
+grouping tables. For EMU, the desktop **LOG** reports this warning.
+
+   The file’s detector-grouping table contains only zeros. Applied the standard
+   EMU forward/backward grouping.
+
+The HiFi warning names HiFi. To change the grouping, open **Grouping**, choose a
+different **Preset** or edit the detectors in **Detector Layout**, then click
+**Apply** and save the project. See the :ref:`loading reference
+<legacy-v1-zero-grouping>` for the conditions and recorded provenance.
 
 .. list-table::
    :header-rows: 1

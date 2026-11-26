@@ -88,10 +88,10 @@ def test_undeclared_or_incompatible_identity_and_map_never_select_default(select
 def test_absent_grouping_rule_rejects_incomplete_or_noncanonical_facts(
     acquisition, orientation, preset
 ):
-    from asymmetry.core.instruments.schema import AbsentGroupingDefault
+    from asymmetry.core.instruments.schema import OrientationGroupingDefault
 
-    with pytest.raises(ValueError, match="Absent-file grouping"):
-        AbsentGroupingDefault(acquisition, orientation, preset)
+    with pytest.raises(ValueError, match="File grouping default"):
+        OrientationGroupingDefault(acquisition, orientation, preset)
 
 
 @pytest.mark.parametrize(
@@ -100,13 +100,13 @@ def test_absent_grouping_rule_rejects_incomplete_or_noncanonical_facts(
 def test_profile_rejects_absent_default_referencing_unavailable_acquisition_or_preset(
     acquisition, preset
 ):
-    from asymmetry.core.instruments.schema import AbsentGroupingDefault, Defaults
+    from asymmetry.core.instruments.schema import Defaults, OrientationGroupingDefault
 
-    with pytest.raises(ValueError, match="Absent-file grouping"):
+    with pytest.raises(ValueError, match="File grouping default"):
         replace(
             MUSR,
             defaults=Defaults(
-                absent_file_grouping=AbsentGroupingDefault(acquisition, "Longitudinal", preset)
+                absent_file_grouping=OrientationGroupingDefault(acquisition, "Longitudinal", preset)
             ),
         )
 

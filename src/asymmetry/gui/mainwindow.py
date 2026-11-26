@@ -3925,8 +3925,7 @@ class MainWindow(QMainWindow):
         auto_grouping_attempts = 0
         auto_grouping_applied = 0
 
-        # Duplicate handling happens up-front so every prompt is answered
-        # before the background load starts — no modal dialogs mid-load.
+        # Resolve duplicate prompts before starting the worker.
         paths_to_load: list[str] = []
         overwrite_paths: set[str] = set()
         for path in paths:
@@ -3941,8 +3940,6 @@ class MainWindow(QMainWindow):
                 overwrite_paths.add(path)
             paths_to_load.append(path)
 
-        # File I/O runs on a worker thread; everything below stays on the
-        # GUI thread (dialog prompts, grouping, browser/plot updates).
         requests = [(None, path, None) for path in paths_to_load]
         loaded_by_path = self._load_paths_with_progress(requests)
 
@@ -3971,7 +3968,8 @@ class MainWindow(QMainWindow):
                     )
 
                 for dataset in datasets:
-                    # Offer to apply field extracted from comment when available.
+                    if message := dataset.metadata.get("nexus_grouping_warning"):
+                        self._log_panel.log(f"Run {dataset.run_label}. {message}", tag="warn")
                     apply_choice = self._maybe_apply_comment_field(
                         dataset,
                         path,
@@ -4178,12 +4176,7 @@ class MainWindow(QMainWindow):
         return QMessageBox.StandardButton.No
 
     def _get_project_grouping_template(self) -> PreparedGrouping | None:
-        """Return grouping payload from the highest-run dataset in the browser.
-
-        When multiple datasets have different grouping definitions, this chooses
-        the payload from the largest run number currently loaded in the data
-        browser so newly added files inherit the latest in-browser grouping.
-        """
+        """Use the highest run number as the template for newly imported files."""
         browser_datasets: list = []
         if hasattr(self._data_browser, "get_all_datasets"):
             browser_datasets = list(self._data_browser.get_all_datasets())
@@ -4203,15 +4196,15 @@ class MainWindow(QMainWindow):
         for _, dataset in ranked:
             payload = self._extract_grouping_overrides(dataset)
             if isinstance(payload, dict) and isinstance(payload.get("groups"), dict):
-                groups = payload.get("groups", {})
-                if groups:
-                    context = resolve_instrument(dataset.run)
-                    choice = context.recorded
-                    if choice is None and context.selection is not None:
-                        choice = RecordedInstrumentChoice(
-                            context.selection, context.observed.evidence
-                        )
-                    return PreparedGrouping(payload, choice)
+                if not payload["groups"]:
+                    continue
+                payload.pop("nexus_grouping_declaration", None)
+                payload.pop("grouping_provenance", None)
+                context = resolve_instrument(dataset.run)
+                choice = context.recorded
+                if choice is None and context.selection is not None:
+                    choice = RecordedInstrumentChoice(context.selection, context.observed.evidence)
+                return PreparedGrouping(payload, choice)
         return None
 
     def _load_file(self, path: str, *, replay: ReplayState | None = None):

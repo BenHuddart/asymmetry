@@ -263,7 +263,7 @@ def profile_rst(profile: InstrumentProfile, diagrams: dict[str, str]) -> str:
         if profile.quirks
         else "No instrument-specific file quirk is declared.\n\n"
     )
-    text += f"Automatic default-preset application on fresh load: **{'yes' if profile.defaults.apply_default_preset_on_load else 'no'}**. This definition supplies display and explicit preset data; it does not apply revised defaults to recorded analyses.\n\n"
+    text += f"Unconditional default-preset application on fresh load: **{'yes' if profile.defaults.apply_default_preset_on_load else 'no'}**. This definition supplies display and explicit preset data; it does not apply revised defaults to recorded analyses.\n\n"
     rule = profile.defaults.absent_file_grouping
     if rule is not None:
         text += (
@@ -271,6 +271,14 @@ def profile_rst(profile: InstrumentProfile, diagrams: dict[str, str]) -> str:
             f"explicit **{rule.detector_orientation}** detector orientation selects "
             f"the **{rule.preset}** preset. Present file tables and saved requests "
             "retain precedence.\n\n"
+        )
+    rule = profile.defaults.legacy_v1_zero_grouping
+    if rule is not None:
+        text += (
+            f"Matching single-period NeXus V1 **{rule.acquisition}** data with an "
+            f"all-zero grouping table and **{rule.detector_orientation}** detector orientation "
+            f"use the **{rule.preset}** preset. See :ref:`legacy-v1-zero-grouping` "
+            "for the input conditions and warning.\n\n"
         )
     text += "Evidence and unresolved assumptions\n-----------------------------------\n\n"
     text += "Status applies to the named fact or coherent table, separately from expert review. Unknown affiliations stay unknown even when other rows have source support.\n\n"
