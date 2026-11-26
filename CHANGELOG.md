@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Require acquired-data corpus figures for GitHub Pages and retain labelled
+  placeholders for local documentation previews.
+- Restore the EMU dead-time comparison and the HAL high-field FFT and MaxEnt
+  figures using the acquired detector groups.
+
 - Link the worked examples to public Rigi school data and ISIS runs, and show
   the LiFeAs Sample 1 linewidth from fits to the raw GPS data.
 - Open matching single-period legacy EMU and HiFi files with all-zero grouping

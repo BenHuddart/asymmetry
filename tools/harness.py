@@ -1218,15 +1218,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 def cmd_docs(args: argparse.Namespace) -> int:
     if args.screenshots:
-        capture_result = _run_command(
-            [
-                sys.executable,
-                "-m",
-                "docs.screenshots.capture",
-                "--out",
-                "docs/_generated/screenshots",
-            ]
-        )
+        capture_result = _run_command([sys.executable, "-m", "docs.screenshots.capture"])
         if capture_result:
             return capture_result
     return _run_command(
@@ -1318,10 +1310,9 @@ def build_parser() -> argparse.ArgumentParser:
     docs_parser.add_argument(
         "--screenshots",
         action="store_true",
-        default=False,
         help="Regenerate GUI screenshots (slow, offscreen Qt) before the Sphinx build",
     )
-    docs_parser.add_argument("--mode", choices=("source", "publish"), default="source")
+    docs_parser.add_argument("--mode", choices=("source", "publish", "pages"), default="source")
     docs_parser.set_defaults(func=cmd_docs)
 
     examples_parser = subparsers.add_parser("examples", help="Run documentation examples")

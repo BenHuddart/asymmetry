@@ -147,7 +147,7 @@ def test_harness_wraps_problems_as_structural_failures(tmp_path: Path) -> None:
     assert any("orphan_scenario" in message for message in messages)
 
 
-def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch, tmp_path) -> None:
+def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch) -> None:
     harness = _load_harness()
     recorded: list[list[str]] = []
 
@@ -160,18 +160,18 @@ def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch, tmp_
 
     assert harness.cmd_docs(SimpleNamespace(screenshots=True, mode="publish")) == 0
     assert len(recorded) == 2
-    assert recorded[0][1:] == [
-        "-m",
-        "docs.screenshots.capture",
-        "--out",
-        "docs/_generated/screenshots",
-    ]
+    assert recorded[0][1:] == ["-m", "docs.screenshots.capture"]
     assert recorded[1][1:] == [str(ROOT / "tools/docs_build.py"), "--mode", "publish"]
 
     recorded.clear()
     assert harness.cmd_docs(SimpleNamespace(screenshots=False, mode="source")) == 0
     assert len(recorded) == 1
     assert recorded[0][1:] == [str(ROOT / "tools/docs_build.py"), "--mode", "source"]
+
+
+def test_default_capture_output_is_the_sphinx_screenshot_directory() -> None:
+    capture = _load_capture()
+    assert capture._parse_args([]).out == Path("docs/_generated/screenshots")
 
 
 def test_oversized_paths_flags_only_files_over_budget(tmp_path: Path) -> None:
@@ -346,3 +346,44 @@ def test_check_complete_cli_mode_does_not_require_qt(monkeypatch, tmp_path: Path
     exit_code = capture.main(["--check-complete", "--out", str(tmp_path / "out")])
 
     assert exit_code == 1
+
+
+def test_published_corpus_capture_imports_only_the_selected_module(tmp_path, monkeypatch):
+    from docs.screenshots import capture_corpus
+    from docs.screenshots.scenarios import _base, corpus
+
+    scenarios = tmp_path / "scenarios"
+    module = _write_scenario(scenarios, "published_probe", "corpus_used")
+    module.write_text(
+        "from PIL import Image\n"
+        "from docs.screenshots.scenarios._base import register\n"
+        "class Used:\n"
+        "    name = 'corpus_used'\n"
+        "    def capture(self, ctx):\n"
+        "        path = ctx.output_dir / 'corpus_used.png'\n"
+        "        Image.new('RGB', (2, 2)).save(path)\n"
+        "        return path\n"
+        "class Unused:\n"
+        "    name = 'corpus_unused'\n"
+        "register(Used())\n"
+        "register(Unused())\n",
+        encoding="utf-8",
+    )
+    unpublished = _write_scenario(scenarios, "unpublished_probe", "corpus_unpublished")
+    with unpublished.open("a") as stream:
+        stream.write("raise RuntimeError('an unpublished module cannot import')\n")
+    (tmp_path / "index.rst").write_text(
+        ".. figure:: _generated/corpus_screenshots/corpus_used.png\n"
+    )
+    scan = capture_corpus._static_scenarios_by_module
+    monkeypatch.setattr(capture_corpus, "DOCS_DIR", tmp_path)
+    monkeypatch.setattr(capture_corpus, "_static_scenarios_by_module", lambda: scan(scenarios))
+    monkeypatch.setattr(capture_corpus, "_start_watchdog", lambda: None)
+    monkeypatch.setattr(capture_corpus, "_boot_qapplication", lambda: None)
+    monkeypatch.setattr(corpus, "__path__", [str(scenarios)])
+    monkeypatch.setattr(_base, "_REGISTRY", {})
+
+    out = tmp_path / "output"
+    status = capture_corpus.main(["--out", str(out), "--module", "published_probe", "--published"])
+    assert status == 0
+    assert sorted(p.name for p in out.iterdir()) == ["corpus_used.png", "corpus_used.sha256"]

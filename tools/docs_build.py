@@ -27,7 +27,7 @@ def oversized_docs_pages(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("source", "publish"), required=True)
+    parser.add_argument("--mode", choices=("source", "publish", "pages"), required=True)
     parser.add_argument("--source-dir", type=Path, default=ROOT / "docs")
     parser.add_argument("--output-dir", type=Path, default=DOCS_HTML_DIR)
     args = parser.parse_args(argv)

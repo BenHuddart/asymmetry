@@ -105,7 +105,9 @@ the (private) corpus repository `BenHuddart/wimda-muon-school-corpus`:
   for each deploy build, verifies the pinned digest before extraction, and
   stores the files in the runner's temporary directory for the duration of the
   job. PR workflows can read base-branch Actions caches, so these files stay
-  outside the cache. Without the token, the build uses placeholders.
-- Capture runs one process per scenario module (`--list-modules` / `--module`)
-  to stay inside the per-process watchdog; `--stubs-missing` then fills any
-  hole so the built site is always image-complete.
+  outside the cache. A missing token or invalid snapshot fails the build.
+- Capture runs the published scenarios (`--published`) one process per module
+  (`--list-modules` / `--module`) under the per-process watchdog. The `pages`
+  documentation gate requires the completed PNG and checksum for every
+  referenced corpus figure before artifact upload. `--stubs-missing` provides
+  labelled placeholders for local previews.

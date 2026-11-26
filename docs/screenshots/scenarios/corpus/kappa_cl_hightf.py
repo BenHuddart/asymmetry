@@ -26,12 +26,11 @@ Scenarios registered:
 * ``corpus_kappacl_load_browse`` — the 6 T + 8 T ``.mdu`` series in the data
   browser (measured temperatures), with an ordered-run time trace zoomed onto
   the fast ~813 MHz precession (format-support / loader render).
-* ``corpus_kappacl_tf_fft``      — frequency domain: the 6 T diamagnetic line
+* ``corpus_kappacl_tf_fft``      — frequency domain: the 6 T precession line
   at ~813 MHz for an ordered run (3.2 K) overlaid on a paramagnetic run
-  (50.7 K), showing the AFM broadening/depletion.
-* ``corpus_kappacl_maxent``      — MaxEnt internal-field distribution ΔB around
-  the 6 T applied field (the paper's actual observable, field-centred auto
-  window) for the base-T ordered run.
+  (50.7 K), with a lower central peak for the ordered run.
+* ``corpus_kappacl_maxent``      — field-centred spectrum of the same ordered
+  run, reconstructed from the eight acquired forward detectors.
 * ``corpus_kappacl_amplitude_t`` — headline: the 6 T order parameter Â(T) from
   the central-line depletion, fitted with the OrderParameter power law to
   recover T_N ≈ 28 K (GT §6b target 28.2(5) K).
@@ -87,6 +86,38 @@ _PARA_6T = 693  # 50.66 K — paramagnetic reference
 
 def _rel(run: int) -> str:
     return _DATA % run
+
+
+def _load_forward_ring(window, run_number):
+    """Apply the explicit grouping for the acquired forward-ring spectra."""
+    from asymmetry.core.project.profiles import GoodWindowPolicy
+    from asymmetry.core.transform.grouping import common_t0_for_groups
+
+    dataset = load_corpus_datasets([_rel(run_number)])[0]
+    run = dataset.run
+    labels = run.grouping["histogram_labels"]
+    names = {gid: f"F{gid}" for gid in range(1, 9)}
+    groups = {gid: [labels.index(name) + 1] for gid, name in names.items()}
+    forward, backward = 1, 5
+    applied, _ = window._apply_grouping_settings_to_dataset(
+        dataset,
+        {
+            "groups": groups,
+            "group_names": names,
+            "included_groups": dict.fromkeys(groups, True),
+            "forward_group": forward,
+            "backward_group": backward,
+            "t0_bin": common_t0_for_groups(
+                run.histograms,
+                [groups[forward][0] - 1, groups[backward][0] - 1],
+                detector_t0_bins=None,
+            ),
+            "good_window_policy": GoodWindowPolicy().to_dict(),
+        },
+    )
+    if not applied or not dataset.time.size:
+        raise RuntimeError(f"Run {run_number} requires a reduced F1/F5 asymmetry")
+    return dataset
 
 
 # --------------------------------------------------------------------------- #
@@ -263,9 +294,8 @@ class KappaClLoadBrowseScenario(CorpusScenario):
 class KappaClTfFftScenario(CorpusScenario):
     name = "corpus_kappacl_tf_fft"
     description = (
-        "Frequency domain: the 6 T diamagnetic Larmor line at ~813 MHz for the "
-        "ordered κ-Cl run (3.2 K, broadened/depleted) overlaid on the "
-        "paramagnetic run (50.7 K, sharp)."
+        "The 6 T κ-Cl precession line from F1–F5 asymmetry, with the ordered "
+        "run (3.2 K) overlaid on the paramagnetic run (50.7 K)."
     )
     example = EXAMPLE
     size = (1440, 880)
@@ -274,68 +304,59 @@ class KappaClTfFftScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window._on_fourier()
         window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
-        # The real in-window multi-run FFT overlay (#265): both 6 T runs live in
-        # the browser, each FFT is computed once, then the frequency plot's
-        # Overlay toggle draws them on one axis with a temperature legend — the
-        # workflow the docs describe, replacing the old standalone-PlotPanel
-        # workaround. Strong Lorentzian apodisation (τ = 3 µs) matched to the long
-        # coherent HAL signal resolves the ~813 MHz line; the 0.0244 ns binning
-        # puts it well below the 20.5 GHz Nyquist (no rotating frame needed).
-        para = load_corpus_datasets([_rel(_PARA_6T)])[0]
-        ordered = load_corpus_datasets([_rel(_ORDERED_6T)])[0]
+        para = _load_forward_ring(window, _PARA_6T)
+        ordered = _load_forward_ring(window, _ORDERED_6T)
         with window._data_browser.batch_updates():
             window._data_browser.add_dataset(para)
             window._data_browser.add_dataset(ordered)
+        window._on_dataset_selected(ordered.run_number)
+        window._data_browser._table.selectAll()
+        # End before both automatic low-count tail cutoffs.
+        window._plot_panel.set_fit_range(0.0, 8.0)
 
+        # Configure both runs before the frequency view can seed a default FFT.
         fp = window._fourier_panel
+        fp._signal_fb_radio.setChecked(True)
+        fp._power_sqrt_radio.setChecked(True)
         fp._filter_lorentzian_radio.setChecked(True)
         fp._filter_time_constant_edit.setText("3.0")
-        _process_events_for(milliseconds=40)
-
-        window._on_domain_button_clicked("frequency")
         _process_events_for(milliseconds=80)
+        window._on_compute_fourier()
+        _wait_until(lambda: not window._fourier_compute_active, timeout_ms=60000)
 
-        # Compute each run's FFT once (caches it); ordered last so it is the
-        # active run when the overlay is toggled on.
-        for run in (_PARA_6T, _ORDERED_6T):
-            window._on_dataset_selected(run)
-            _process_events_for(milliseconds=80)
-            window._on_compute_fourier()
-            _wait_until(lambda: not window._frequency_recompute_active, timeout_ms=60000)
-            _process_events_for(milliseconds=120)
-
-        # Label the overlaid traces by measured temperature (3.2 K / 50.7 K).
         freq_panel = window._frequency_plot_panel
         combo = freq_panel._label_field_combo
         combo.setCurrentIndex(combo.findData("temperature"))
-        _process_events_for(milliseconds=40)
-
-        # Select both runs and turn on Overlay — both spectra are cached, so the
-        # overlay renders immediately (no async wave).
-        window._data_browser._table.selectAll()
-        _process_events_for(milliseconds=40)
         freq_panel.set_overlay_enabled(True, emit_signal=True)
-        _wait_until(lambda: not window._frequency_recompute_active, timeout_ms=60000)
         _process_events_for(milliseconds=200)
 
-        # Peak (para is the taller, sharper line) sets a common Y so the ordered
-        # line's depletion + broadening reads on the same scale.
-        peak = 1.0
+        # Use one scale for the two spectra in the same frequency window.
+        peaks = []
         for line in freq_panel._figure.axes[0].get_lines():
             x = np.asarray(line.get_xdata(), dtype=float)
             y = np.asarray(line.get_ydata(), dtype=float)
             if x.size > 10:
                 band = (x > _CENTRE_6T_MHZ - 6) & (x < _CENTRE_6T_MHZ + 6)
                 if band.any():
-                    peak = max(peak, float(np.nanmax(y[band])))
+                    peaks.append(float(np.nanmax(y[band])))
+        if not window._frequency_overlay_active or len(peaks) != 2 or not all(p > 0 for p in peaks):
+            raise RuntimeError("κ-Cl FFT capture requires two plotted 6 T spectra")
+        if window._fourier_overlay_mismatch():
+            raise RuntimeError("κ-Cl FFT comparison requires matching transform settings")
+        peak = max(peaks)
         freq_panel.set_view_limits(
             _CENTRE_6T_MHZ - 4.0, _CENTRE_6T_MHZ + 4.0, -0.03 * peak, 1.10 * peak
         )
         _process_events_for(milliseconds=120)
         return window
+
+    def settle(self, widget: QWidget) -> None:
+        from ..fourier_tf import _raise_inspector_tab
+
+        super().settle(widget)
+        _raise_inspector_tab(widget, widget._dock_fourier.windowTitle())
 
 
 # --------------------------------------------------------------------------- #
@@ -344,10 +365,8 @@ class KappaClTfFftScenario(CorpusScenario):
 class KappaClMaxEntScenario(CorpusScenario):
     name = "corpus_kappacl_maxent"
     description = (
-        "MaxEnt internal-field distribution around the 6 T applied field "
-        "(field-centred auto window, auto workload steering) for the base-T "
-        "ordered κ-Cl run: the internal-field line resolves at ~813.6 MHz, just "
-        "above the γ_µ·B applied-field marker — the paper's headline observable."
+        "MaxEnt reconstruction of the ordered 6 T κ-Cl run from eight "
+        "forward detectors with a field-centred frequency window."
     )
     example = EXAMPLE
     size = (1500, 920)
@@ -359,25 +378,15 @@ class KappaClMaxEntScenario(CorpusScenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window._on_fourier()
         window.resizeDocks([window._dock_data_browser], [300], Qt.Orientation.Horizontal)
 
-        ordered = load_corpus_datasets([_rel(_ORDERED_6T)])[0]
+        ordered = _load_forward_ring(window, _ORDERED_6T)
         window._data_browser.add_dataset(ordered)
         window._on_dataset_selected(ordered.run_number)
-        _process_events_for(milliseconds=120)
-
         window._on_domain_button_clicked("maxent")
         _process_events_for(milliseconds=120)
 
-        # Out-of-the-box auto workload steering (PR 249, default on) sizes the
-        # binning and end time to this raw 389k-bin .mdu run: with the End and
-        # Binning fields left unset it raises binning to 10 and caps t_max at
-        # ≈2.0 µs — the same values this scenario used to hand-tune — so the
-        # field-centred auto window (centres on γ_µ·6T ≈ 813 MHz) reconstructs
-        # the internal-field line without any manual time-range/binning steering.
-        # Only the spectrum-point count is set explicitly (256, for capture
-        # speed — the GUI always honours the explicit Spectrum-points value).
+        # Leave End and Binning unset for workload steering on the native HAL grid.
         panel = window._maxent_panel
         panel._auto_window_check.setChecked(True)
         panel._auto_steer_check.setChecked(True)
@@ -394,23 +403,17 @@ class KappaClMaxEntScenario(CorpusScenario):
             if run_number in window._maxent_result_by_run:
                 break
         _process_events_for(milliseconds=250)
+        stored = window._maxent_export_result(run_number)
+        if stored is None or not stored[0].converged:
+            raise RuntimeError("κ-Cl MaxEnt capture requires a converged reconstruction")
 
-        # Frame onto the reconstructed line; the field-centred auto window
-        # already brackets it (≈809–817 MHz around γ_µ·6T ≈ 813 MHz — the paper's
-        # ΔB = internal − applied region), so autoscale Y from that range. (The
-        # panel's "X relative to ref. field" toggle re-maps this axis to ΔB, the
-        # paper's Fig 8 presentation; it is left in absolute MHz here so the
-        # γ_µ·B reference marker and the internal-field line both read cleanly.)
         freq_panel = window._frequency_plot_panel
-        x = freq_panel._last_plot_time
-        y = freq_panel._last_plot_asymmetry
-        if x is not None and y is not None and len(x):
-            x = np.asarray(x, dtype=float)
-            y = np.asarray(y, dtype=float)
-            lo, hi = float(np.nanmin(x)), float(np.nanmax(x))
-            inw = np.isfinite(y)
-            peak = float(np.nanmax(y[inw])) if np.any(inw) else 1.0
-            freq_panel.set_view_limits(lo, hi, -0.04 * peak, 1.10 * peak)
+        x = np.asarray(freq_panel._last_plot_time, dtype=float)
+        y = np.asarray(freq_panel._last_plot_asymmetry, dtype=float)
+        if x.ndim != 1 or x.size < 2 or not np.all(np.isfinite(y)) or np.ptp(y) <= 0:
+            raise RuntimeError("κ-Cl MaxEnt capture requires a plotted spectrum")
+        peak = float(np.max(y))
+        freq_panel.set_view_limits(float(x.min()), float(x.max()), -0.04 * peak, 1.10 * peak)
         _process_events_for(milliseconds=120)
         return window
 
