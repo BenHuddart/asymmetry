@@ -1094,11 +1094,9 @@ def test_preview_curve_stays_dashed_after_failed_fit(qapp: QApplication) -> None
     assert dlg._current_preview_ranges()[0].fitted is False
 
 
-def test_quality_verdict_silent_for_unknown_point_count(qapp: QApplication) -> None:
-    """Results built outside fit_parameter_model (cross-group bridge, legacy
-    saved state) have n_points=0 — say nothing rather than implying the fit
-    had no degrees of freedom."""
-    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+def test_quality_verdict_explains_unknown_point_count(qapp: QApplication) -> None:
+    """An unrecorded count leaves the residual degrees of freedom unknown."""
+    from asymmetry.core.fitting.trend_result import ColumnErrorSource, ParameterModelFitResult
 
     dlg = _make_dialog(qapp)
     fit_range = dlg._fit.ranges[0]
@@ -1107,8 +1105,9 @@ def test_quality_verdict_silent_for_unknown_point_count(qapp: QApplication) -> N
         chi_squared=9.0,
         reduced_chi_squared=0.9,
         parameters=fit_range.parameters,
+        column_error_source=ColumnErrorSource.SUPPLIED,
     )
-    assert dlg._quality_text_for_range(fit_range) == ""
+    assert "Residual degrees of freedom are unknown." in dlg._quality_text_for_range(fit_range)
 
 
 # ── F4: context-aware default trend model (discoverability) ────────────────

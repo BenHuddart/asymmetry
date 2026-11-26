@@ -29,6 +29,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
@@ -6922,13 +6923,15 @@ class TestRefitCoadded:
     """Browser "Re-fit as Co-added": combine selection, fit, record trend row."""
 
     @staticmethod
-    def _fake_result(params: dict[str, float]):
-        return SimpleNamespace(
+    def _fake_result(params: dict[str, float]) -> FitResult:
+        return FitResult(
             success=True,
+            objective=Objective.GAUSSIAN,
             chi_squared=2.0,
-            reduced_chi_squared=0.9,
-            parameters=[SimpleNamespace(name=k, value=v) for k, v in params.items()],
+            reduced_chi_squared=1.0,
+            parameters=ParameterSet([Parameter(name, value) for name, value in params.items()]),
             uncertainties={k: 0.01 for k in params},
+            dof=2,
         )
 
     @staticmethod
@@ -7032,16 +7035,11 @@ class TestRefitCoadded:
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The real async path: combine the runs and fit off-thread, then record."""
+        result = self._fake_result({"A": 0.2})
 
         class _FakeEngine:
-            def fit(self, dataset, _fn, seed, **_kw):
-                return SimpleNamespace(
-                    success=True,
-                    chi_squared=1.0,
-                    reduced_chi_squared=0.8,
-                    parameters=list(seed),
-                    uncertainties={},
-                )
+            def fit(self, _dataset, _fn, _seed, **_kw):
+                return result
 
         monkeypatch.setattr("asymmetry.core.fitting.engine.FitEngine", _FakeEngine)
         for rn in (501, 502):
