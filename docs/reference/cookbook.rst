@@ -571,6 +571,15 @@ arrays must arrive on the same scale as the parameter seeds. See
 :ref:`fitting-arrays-without-a-dataset` for the validation rules and the one
 advisory guard bare arrays cannot support.
 
+The self-contained example below needs only the core installation. It adds
+seeded Gaussian noise to synthetic asymmetry. Time is in μs, asymmetry in
+percent, and uncertainties in percentage points. The fit recovers the
+generating rate of 0.3 μs⁻¹ to within 0.02 μs⁻¹. Download and run :download:`fit_arrays.py
+<../../examples/fit_arrays.py>` or copy the example into your own script.
+
+.. literalinclude:: ../../examples/fit_arrays.py
+   :language: python
+
 
 Parameter trends across runs
 ----------------------------

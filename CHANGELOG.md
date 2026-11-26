@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Show how to compare and export the two BiSCCO linewidth scans, with a
   penetration-depth estimate conditional on the normal-state and vortex models.
 
+- Put desktop downloads and supported data formats near the top of the README
+  and show how to fit arrays in the API cookbook.
+
 - Add machine-readable citation metadata for researchers citing Asymmetry.
 
 - Download fewer assets on the documentation site and wrap long API signatures

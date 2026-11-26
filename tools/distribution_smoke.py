@@ -26,6 +26,7 @@ RESOURCE_PATHS = (
     "asymmetry/resources/skills/asymmetry-analysis/SKILL.md",
     "asymmetry/resources/skills/asymmetry-analysis/references/commands.md",
 )
+FIT_ARRAYS_EXAMPLE = "examples/fit_arrays.py"
 INSTALL_PROFILES = {
     "core": ("", ()),
     "gui": ("gui,hdf5,root", ("PySide6", "matplotlib", "h5py", "uproot")),
@@ -45,6 +46,12 @@ def artifact_contract(source: Path, sdist: Path, wheel: Path) -> dict:
         metadata_file = archive.extractfile(pkg_info)
         assert metadata_file is not None
         sdist_metadata = BytesParser(policy=metadata_policy).parsebytes(metadata_file.read())
+        example_path = f"{pkg_info.removesuffix('/PKG-INFO')}/{FIT_ARRAYS_EXAMPLE}"
+        assert example_path in members, example_path
+        example = archive.extractfile(example_path)
+        assert (
+            example is not None and example.read() == (source / FIT_ARRAYS_EXAMPLE).read_bytes()
+        ), example_path
         for resource in RESOURCE_PATHS:
             assert any(name.endswith("/src/" + resource) for name in members), resource
     with zipfile.ZipFile(wheel) as archive:
@@ -530,17 +537,12 @@ def smoke(
             + ")))\n"
         )
         run_logged([str(python), "-I", "-c", probe], work, env, work / "probe.log")
-        readme_code = (
-            (source / "README.md")
-            .read_text(encoding="utf-8")
-            .split("```python\n", 1)[1]
-            .split("```", 1)[0]
+        run_logged(
+            [str(python), "-I", str(source / FIT_ARRAYS_EXAMPLE)],
+            work,
+            env,
+            work / "fit-arrays.log",
         )
-        readme_probe = (
-            readme_code
-            + "\nassert result.success\nassert abs(result.parameters['Lambda'].value - 0.3) < 0.02\n"
-        )
-        run_logged([str(python), "-I", "-c", readme_probe], work, env, work / "readme.log")
         if required_modules:
             feature_probe = (
                 inspect.getsource(exercise_optional_features)

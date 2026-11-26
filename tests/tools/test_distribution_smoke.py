@@ -84,6 +84,9 @@ def artifact(tmp_path: Path) -> tuple[Path, Path, Path]:
         '[project.scripts]\nasymmetry="asymmetry.cli:main"\n'
         '[project.gui-scripts]\nasymmetry-gui="asymmetry.gui.app:main"\n'
     )
+    example = source / "examples/fit_arrays.py"
+    example.parent.mkdir()
+    example.write_text('print("Synthetic cookbook fixture")\n')
     metadata = b"Name: Asymmetry\nVersion: 1.0\nRequires-Python: >=3.11\nClassifier: Programming Language :: Python :: 3.11\nSummary: \xce\xbcSR\n"
     members = {
         "asymmetry-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
@@ -99,12 +102,20 @@ def artifact(tmp_path: Path) -> tuple[Path, Path, Path]:
     with tarfile.open(sdist, "w:gz") as archive:
         for name, content in {
             "PKG-INFO": metadata,
+            "examples/fit_arrays.py": example.read_bytes(),
             **{"src/" + path: members[path] for path in RESOURCE_PATHS},
         }.items():
             info = tarfile.TarInfo("asymmetry-1.0/" + name)
             info.size = len(content)
             archive.addfile(info, BytesIO(content))
     return source, sdist, wheel
+
+
+def test_artifact_contract_rejects_cookbook_example_substitution(artifact) -> None:
+    source, sdist, wheel = artifact
+    (source / "examples/fit_arrays.py").write_text('print("Substituted example")\n')
+    with pytest.raises(AssertionError, match="examples/fit_arrays.py"):
+        artifact_contract(source, sdist, wheel)
 
 
 @pytest.mark.parametrize("defect", [None, "resource", "metadata", "entrypoint"])
