@@ -2664,8 +2664,6 @@ class MainWindow(QMainWindow):
         self,
         datasets: list[MuonDataset],
         labels: list[str] | None = None,
-        *,
-        publish: bool = True,
     ) -> dict[str, list[MuonDataset]]:
         """Return one core counting-observation cohort per vector run."""
         from asymmetry.gui.utils.vector_projections import vector_axis_datasets
@@ -2677,8 +2675,7 @@ class MainWindow(QMainWindow):
             self._resolve_background_reference,
             self,
         )
-        if publish:
-            self._capture_time_results([ds for cohort in result.values() for ds in cohort])
+        self._capture_time_results([ds for cohort in result.values() for ds in cohort])
         return result
 
     def _synchronize_targets_to_axis(
@@ -9771,17 +9768,13 @@ class MainWindow(QMainWindow):
             )
 
     def _on_group_selected(self, group_id: str) -> None:
-        """Track selected data-group context for grouped global-fit workflows."""
-        group_name = self._data_browser.get_group_name(group_id)
-        if group_name is None:
-            self._active_group_context = None
-            if hasattr(self._plot_panel, "set_active_label_group"):
-                self._plot_panel.set_active_label_group(None)
-            return
-        self._active_group_context = (group_id, group_name)
+        """Track the selected group and retain the active fit's availability reason."""
+        name = self._data_browser.get_group_name(group_id)
+        self._active_group_context = (group_id, name) if name is not None else None
         if hasattr(self._plot_panel, "set_active_label_group"):
-            self._plot_panel.set_active_label_group(group_id)
-        self.statusBar().showMessage(f"Selected group: {group_name}")
+            self._plot_panel.set_active_label_group(group_id if name is not None else None)
+        if name is not None:
+            self.statusBar().showMessage(self._empty_fit_status or f"Selected group: {name}")
 
     def _on_overlay_toggled(self, enabled: bool) -> None:
         """Refresh plotting and fit context when overlay mode changes."""
@@ -11092,21 +11085,26 @@ class MainWindow(QMainWindow):
         self, sources, fit_range, projection, unavailable: dict[int, str] | None
     ) -> list[MuonDataset]:
         """Collect fit crops and disable empty F–B members in editable pools."""
+        from asymmetry.gui.utils.vector_projections import fit_projection_dataset
+
         datasets = []
         lab_projection = projection is not None and projection not in ROTATED_PROJECTIONS
         for source in sources:
             if source.metadata.get("correction_error") is not None:
                 continue
             if unavailable is not None and lab_projection:
-                _, current = self._vector_axis_state_for_dataset(source)
+                pairs, current = self._vector_axis_state_for_dataset(source)
                 if current is not None and current != projection:
-                    members = self._build_vector_axis_datasets(
-                        [source], [projection], publish=False
-                    )[projection]
-                    if not members:
+                    if projection not in pairs:
                         unavailable[int(source.run_number)] = f"No {projection} projection."
                         continue
-                    (source,) = members
+                    source = fit_projection_dataset(
+                        source,
+                        projection,
+                        self._reduction_cache,
+                        self._resolve_background_reference,
+                        self,
+                    )
             crop = self._get_fit_dataset(source, fit_range, projection=projection)
             if crop is None:
                 continue
@@ -15122,7 +15120,7 @@ class MainWindow(QMainWindow):
     def _get_fit_dataset(
         self,
         dataset,
-        fit_range: tuple[float, float] | None = None,
+        fit_range: tuple[float | None, float | None] | None = None,
         *,
         projection: str | None = None,
     ):
@@ -15201,7 +15199,7 @@ class MainWindow(QMainWindow):
             if crop is None:
                 return dataset
             crop.metadata = dict(dataset.metadata) | rotated_tags
-            if requested != (None, None):
+            if None not in requested:
                 crop.metadata["fit_range"] = requested
             return crop
         if snapshot is None:

@@ -1,9 +1,12 @@
 """Adapt applied vector requests to the authoritative core projection cohort."""
 
+from dataclasses import replace
 from functools import partial
 
+from asymmetry.core import computation
 from asymmetry.core.instrument import derive_projection_pairs
 from asymmetry.core.transform.background import resolve_background_mode, resolve_facility
+from asymmetry.core.transform.preparation import observation_histograms
 from asymmetry.core.transform.projections import (
     reduce_selected_projections,
     rotate_selected_projections,
@@ -39,6 +42,57 @@ def vector_axis_datasets(datasets, labels, memberships, reference_resolver, pare
     return axis_map
 
 
+def fit_projection_dataset(dataset, projection, cache, reference_resolver, parent):
+    """Prepare a lab fit projection from the run's captured histogram observation."""
+    observation = dataset.histogram_observation
+    if observation is None:
+        return _prepare_vector(dataset, reference_resolver, parent, reduce_selected_projections)[
+            projection
+        ]
+
+    def prepare():
+        snapshot = replace(dataset, run=observation.source)
+        return _prepare_vector(
+            snapshot, lambda _: observation.reference, parent, reduce_selected_projections
+        )[projection]
+
+    key = (observation.identity, projection, computation.COMPUTATION_REVISION)
+    curve = cache.get_or_compute(dataset.run, "lab_fit_projection", key, prepare, _projection_bytes)
+    _refresh_projection_metadata(dataset, curve)
+    return curve
+
+
+def _projection_bytes(curve):
+    """Count retained histogram buffers and sparse noise responses once."""
+    observation = curve.histogram_observation
+    histograms = observation_histograms(curve.run) + observation_histograms(observation.source)
+    if observation.reference is not None:
+        histograms.extend(observation.reference.histograms)
+    buffers = [curve.time, curve.asymmetry, curve.error, curve.ratio_validity.reasons]
+    buffers.extend(array for hist in histograms for array in (hist.counts, hist.count_variance))
+    if curve.counting_noise is not None:
+        for term in curve.counting_noise.terms:
+            buffers.extend(
+                (
+                    term.observation.variance,
+                    term.direct.data,
+                    term.direct.indices,
+                    term.direct.indptr,
+                )
+            )
+            buffers.extend(array for estimator in term.estimators for array in estimator)
+    return sum(array.nbytes for array in {id(a): a for a in buffers if a is not None}.values())
+
+
+def _refresh_projection_metadata(dataset, curve):
+    """Refresh condition labels without changing the retained projection reduction."""
+    labels = {key: curve.metadata[key] for key in ("projection", "period_index")}
+    curve.metadata = (
+        asymmetry_reduction_metadata(dataset.run.metadata | dataset.metadata, curve.metadata)
+        | labels
+    )
+
+
 def _prepare_vector(dataset, reference_resolver, parent, operation):
     run = dataset.run
     grouping = run.grouping
@@ -64,10 +118,7 @@ def _prepare_vector(dataset, reference_resolver, parent, operation):
         context="Vector projection",
     )
     for curve in result.values():
-        labels = {key: curve.metadata[key] for key in ("projection", "period_index")}
-        curve.metadata = (
-            asymmetry_reduction_metadata(run.metadata | dataset.metadata, curve.metadata) | labels
-        )
+        _refresh_projection_metadata(dataset, curve)
     return result
 
 

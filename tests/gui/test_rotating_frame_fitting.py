@@ -20,6 +20,7 @@ from asymmetry.core.transform.projections import reduction_identity
 from asymmetry.core.transform.rotating_frame import FrameSnapshot, rotate_transverse
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.plot_panel import SINGLE_FIT_ID, PlotPanel
+from asymmetry.gui.utils import vector_projections
 from tests.gui.test_rotating_frame_projection import (
     PHI,
     W1,
@@ -220,7 +221,7 @@ def test_a_rotated_series_records_each_members_frame_and_goes_stale_with_one(mai
     assert mainwindow._series_stale_reason(active, None) == ""
 
 
-def test_a_lab_frame_series_records_its_projection(mainwindow):
+def test_a_lab_frame_series_records_its_projection(mainwindow, monkeypatch):
     # The same recipe on another lab subplot is another series (review of #357).
     panel = _show(mainwindow, _vector(932), _vector(933))
     panel.set_fit_target_projection("P_z")
@@ -240,6 +241,25 @@ def test_a_lab_frame_series_records_its_projection(mainwindow):
         np.testing.assert_array_equal(dataset.time, original[run].time)
         np.testing.assert_array_equal(dataset.asymmetry, original[run].asymmetry)
         np.testing.assert_allclose(dataset.error, original[run].error, rtol=1e-14, atol=0.0)
+
+    prepared = []
+    original_prepare = vector_projections.prepare_histogram_operation
+
+    def count_preparation(run, **kwargs):
+        prepared.append(run.run_number)
+        return original_prepare(run, **kwargs)
+
+    monkeypatch.setattr(vector_projections, "prepare_histogram_operation", count_preparation)
+    mainwindow._reduction_cache.invalidate_run(mainwindow._data_browser.get_dataset(932).run)
+    tab = mainwindow._fit_panel._global_tab
+    tab.set_fit_range_display(0.12, 2.0)
+    tab._on_fit_range_spinbox_committed()
+    assert prepared == [932]
+    panel.fit_range_guide_changed.emit(0.20, 2.0)
+    tab.set_fit_range_display(0.40, 2.0)
+    tab._on_fit_range_spinbox_committed()
+    assert prepared == [932]
+    assert all(ds.time.min() >= 0.40 for ds in tab.batch_datasets())
 
 
 def test_a_batch_draft_follows_the_fit_target_into_the_rotating_frame(mainwindow):

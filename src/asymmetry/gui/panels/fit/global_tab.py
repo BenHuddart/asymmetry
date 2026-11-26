@@ -12,7 +12,7 @@ from itertools import chain
 from types import MappingProxyType
 
 import numpy as np
-from PySide6.QtCore import QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QSettings, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -1403,16 +1403,22 @@ class GlobalFitTab(FitTabBase):
         self._update_mode_ui(preserve_result=True)
 
     def _apply_recipe_fit_range(self, fit_range: dict) -> None:
-        """Fill missing recipe bounds from the available members' extent."""
+        """Keep explicit bounds when the members have no usable extent."""
         low, high = fit_range["min"], fit_range["max"]
-        if low is None or high is None:
-            extent = self._member_extent()
-            if extent is not None:
-                low = extent[0] if low is None else low
-                high = extent[1] if high is None else high
-        if low is None or high is None:
-            low = high = 0.0
-        self.set_fit_range_display(float(low), float(high))
+        extent = self._member_extent() if low is None or high is None else None
+        if extent is not None:
+            first, last = extent
+            low, high = (
+                first if low is None and (high is None or first < high) else low,
+                last if high is None and (low is None or last > low) else high,
+            )
+        for field, bound in ((self._fit_range_min_spin, low), (self._fit_range_max_spin, high)):
+            with QSignalBlocker(field):
+                field.setEnabled(True)
+                if bound is None:
+                    field.set_unset("Unbounded")
+                else:
+                    field.setValue(bound)
 
     def _member_extent(self) -> tuple[float, float] | None:
         """The x-extent the current members span, or ``None`` without members."""
@@ -5169,26 +5175,13 @@ class GlobalFitTab(FitTabBase):
         return params
 
     def fit_range_bounds(self) -> tuple[float | None, float | None]:
-        """The window the range fields describe, ``(None, None)`` when they have none.
-
-        Read straight off the two fields — the cheap half of
-        :meth:`current_recipe`, for the per-event callers (the plot's range
-        guides, the batch dataset crop) that need only the window.
-        """
-        low = self._fit_range_min_spin.value()
-        high = self._fit_range_max_spin.value()
-        return (low, high) if high > low else (None, None)
+        """Read the Batch window, including a legacy recipe with one open bound."""
+        low = None if self._fit_range_min_spin.is_unset() else self._fit_range_min_spin.value()
+        high = None if self._fit_range_max_spin.is_unset() else self._fit_range_max_spin.value()
+        return (low, high) if low is None or high is None or high > low else (None, None)
 
     def current_recipe(self) -> dict:
-        """Return the tab's current setup as a :class:`FitSeries` recipe (D2).
-
-        The parameter rows, the fit window as numbers (the provenance *string*
-        stays a per-result summary field), the seeding mode and the co-add
-        block — everything a re-run compares against to decide whether it is
-        the same analysis (D3). Range fields that have never been given a
-        window (both still at their initial value) describe no window, and are
-        recorded as the recipe's unbounded one rather than as "0 to 0".
-        """
+        """Capture the rows, fit window, seeding and co-add settings as a series recipe."""
         low, high = self.fit_range_bounds()
         return normalise_recipe(
             {

@@ -18,7 +18,7 @@ from tests.gui.gle_helpers import wait_for_gle
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings, Qt  # type: ignore
+from PySide6.QtCore import QItemSelectionModel, QSettings, Qt  # type: ignore
 from PySide6.QtWidgets import QApplication, QFileDialog  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
@@ -436,6 +436,38 @@ def test_fit_window_survives_an_empty_bunched_overlay(mainwindow, recall):
     assert {ds.run_number for ds in panel.batch_datasets()} == set(runs)
 
 
+def test_selecting_a_group_keeps_the_empty_fit_reason(mainwindow):
+    browser = mainwindow._data_browser
+    runs = [4242, 4243]
+    for run in runs:
+        browser.add_dataset(
+            _histogram_run_dataset(np.full(16, 200.0), np.full(16, 150.0), run_number=run)
+        )
+    group = browser.create_data_group(runs, name="Short runs")
+    table = browser._table
+    header = next(
+        table.model().index(row, 0)
+        for row in range(table.rowCount())
+        if table.item(row, 0).data(Qt.ItemDataRole.UserRole) == f"group:{group}"
+    )
+    browser.select_runs({runs[0]})
+    mainwindow._view_bunch_spin.setValue(32)
+    fit = mainwindow._fit_panel._single_tab._fit_btn
+    reason = "No complete bins at Bunch 32. Reduce Bunch."
+
+    select = QItemSelectionModel.SelectionFlag
+    table.selectionModel().select(header, select.ClearAndSelect | select.Rows)
+    assert not fit.isEnabled()
+    assert fit.toolTip() == reason
+    assert mainwindow.statusBar().currentMessage() == reason
+
+    mainwindow._view_bunch_spin.setValue(1)
+    browser.select_runs({runs[0]})
+    table.selectionModel().select(header, select.ClearAndSelect | select.Rows)
+    assert fit.isEnabled()
+    assert mainwindow.statusBar().currentMessage() == "Selected group: Short runs"
+
+
 def test_fit_availability_tracks_the_window_independently_of_bunching(mainwindow):
     dataset = _histogram_run_dataset(np.full(64, 200.0), np.full(64, 150.0))
     mainwindow._data_browser.add_dataset(dataset)
@@ -626,6 +658,44 @@ def test_group_draft_uses_its_own_window_before_launch(mainwindow):
     for summary in series.results_by_run.values():
         assert summary["success"]
         assert summary["input_attribution"]["n"] == 13
+
+
+@pytest.mark.parametrize(
+    "window,indices",
+    [
+        ({"min": 0.10, "max": None}, np.arange(7, 16)),
+        ({"min": None, "max": 0.10}, np.arange(7)),
+    ],
+    ids=["lower-bound", "upper-bound"],
+)
+def test_open_series_keeps_a_legacy_bound_with_an_empty_member_pool(mainwindow, window, indices):
+    browser = mainwindow._data_browser
+    runs = [4242, 4243]
+    for run in runs:
+        browser.add_dataset(
+            _histogram_run_dataset(np.full(16, 200.0), np.full(16, 150.0), run_number=run)
+        )
+    browser.select_runs({runs[0]})
+    series = FitSeries(
+        "legacy",
+        RepresentationType.TIME_FB_ASYMMETRY,
+        member_run_numbers=runs,
+        recipe={"fit_range": window},
+    )
+    mainwindow._project_model.add_batch(series)
+    bunch = mainwindow._view_bunch_spin
+    bunch.setValue(32)
+    mainwindow._open_series_in_batch_tab(series.batch_id)
+    tab = mainwindow._fit_panel._global_tab
+    assert not tab._fit_btn.isEnabled()
+    assert tab.current_recipe()["fit_range"] == window
+
+    bunch.setValue(1)
+    assert tab._fit_btn.isEnabled()
+    assert {ds.run_number for ds in tab.batch_datasets()} == set(runs)
+    for dataset in tab.batch_datasets():
+        np.testing.assert_allclose(dataset.time, indices * BIN_WIDTH_US)
+    assert tab.current_recipe()["fit_range"] == window
 
 
 @pytest.mark.parametrize("view", ["raw_counts", "groups"])
