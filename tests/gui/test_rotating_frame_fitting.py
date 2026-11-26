@@ -229,6 +229,18 @@ def test_a_lab_frame_series_records_its_projection(mainwindow):
     assert series.projection == "P_z"
     assert series.member_frames == {}
 
+    original = {ds.run_number: ds for ds in mainwindow._fit_panel.batch_datasets()}
+    panel.set_fit_target_projection("P_x")
+    mainwindow._data_browser.select_runs({932})
+    assert mainwindow._current_single_fit_projection() == "P_x"
+    assert mainwindow._fit_panel.open_series_id() == series.batch_id
+    current = {ds.run_number: ds for ds in mainwindow._fit_panel.batch_datasets()}
+    assert current.keys() == original.keys() == {932, 933}
+    for run, dataset in current.items():
+        np.testing.assert_array_equal(dataset.time, original[run].time)
+        np.testing.assert_array_equal(dataset.asymmetry, original[run].asymmetry)
+        np.testing.assert_allclose(dataset.error, original[run].error, rtol=1e-14, atol=0.0)
+
 
 def test_a_batch_draft_follows_the_fit_target_into_the_rotating_frame(mainwindow):
     for run in (930, 931):

@@ -2664,6 +2664,8 @@ class MainWindow(QMainWindow):
         self,
         datasets: list[MuonDataset],
         labels: list[str] | None = None,
+        *,
+        publish: bool = True,
     ) -> dict[str, list[MuonDataset]]:
         """Return one core counting-observation cohort per vector run."""
         from asymmetry.gui.utils.vector_projections import vector_axis_datasets
@@ -2675,7 +2677,8 @@ class MainWindow(QMainWindow):
             self._resolve_background_reference,
             self,
         )
-        self._capture_time_results([ds for cohort in result.values() for ds in cohort])
+        if publish:
+            self._capture_time_results([ds for cohort in result.values() for ds in cohort])
         return result
 
     def _synchronize_targets_to_axis(
@@ -5843,11 +5846,7 @@ class MainWindow(QMainWindow):
         return datasets, unavailable
 
     def _unavailable_members(self, runs, projection: str | None) -> dict[int, str]:
-        """The loaded *runs* that cannot be members of a series on *projection*, by why.
-
-        Only a rotated projection excludes anyone: P′_x and P′_y exist only for a
-        run with a frame (D7).
-        """
+        """Report loaded runs lacking the requested rotating frame."""
         if projection not in ROTATED_PROJECTIONS:
             return {}
         datasets = [self._data_browser.get_dataset(int(run)) for run in runs]
@@ -9959,12 +9958,7 @@ class MainWindow(QMainWindow):
         self._sync_batch_fit_range_guide()
 
     def _sync_batch_fit_range_guide(self) -> None:
-        """Point the plot's range guides at whichever window is being edited (D8).
-
-        The Batch tab's series window while that tab is visible, the project's
-        own range otherwise. The override is set on the active domain's panel
-        only — the two speak different units — and cleared on the other.
-        """
+        """Draw the visible Batch tab's separate window in the owning domain."""
         frequency = self._plot_workspace.active_domain() == "frequency"
         active = self._frequency_plot_panel if frequency else self._plot_panel
         other = self._plot_panel if frequency else self._frequency_plot_panel
@@ -11099,7 +11093,20 @@ class MainWindow(QMainWindow):
     ) -> list[MuonDataset]:
         """Collect fit crops and disable empty F–B members in editable pools."""
         datasets = []
+        lab_projection = projection is not None and projection not in ROTATED_PROJECTIONS
         for source in sources:
+            if source.metadata.get("correction_error") is not None:
+                continue
+            if unavailable is not None and lab_projection:
+                _, current = self._vector_axis_state_for_dataset(source)
+                if current is not None and current != projection:
+                    members = self._build_vector_axis_datasets(
+                        [source], [projection], publish=False
+                    )[projection]
+                    if not members:
+                        unavailable[int(source.run_number)] = f"No {projection} projection."
+                        continue
+                    (source,) = members
             crop = self._get_fit_dataset(source, fit_range, projection=projection)
             if crop is None:
                 continue
@@ -11118,12 +11125,7 @@ class MainWindow(QMainWindow):
         return window["min"], window["max"]
 
     def _group_member_pool(self, group_id: str | None, fallback_runs) -> list[int]:
-        """The runs the Batch tab's member list offers for a group-bound series.
-
-        The owning group's whole membership — the series' exclusions are what
-        untick rows within it — falling back to *fallback_runs* for a frozen
-        (group-less) series.
-        """
+        """Read the owning group's membership or use the series' frozen runs."""
         group = self._project_model.data_group(group_id) if group_id else None
         if group is None:
             return [int(run) for run in fallback_runs]
@@ -11196,12 +11198,7 @@ class MainWindow(QMainWindow):
             self._open_series_in_batch_tab(saved)
 
     def _on_new_series_from_selection(self) -> None:
-        """Drop the Batch tab to a draft over the browser selection (D7).
-
-        The pre-series behaviour, now reached deliberately rather than by every
-        selection change: the member pool becomes the selection and the group
-        binding is cleared, so the run mints or adopts its own group.
-        """
+        """Start a draft over the current browser selection."""
         self._fit_panel.set_datasets(*self._selected_time_batch_inputs())
         self._fit_panel.clear_bound_group()
         self._sync_batch_fit_range_guide()
