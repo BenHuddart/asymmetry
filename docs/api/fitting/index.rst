@@ -3,45 +3,37 @@ Fitting
 
 .. py:module:: asymmetry.core.fitting
 
-
 .. currentmodule:: asymmetry.core.fitting
 
-The fitting subsystem is split into four parts: the iminuit-backed
-:class:`~asymmetry.core.fitting.engine.FitEngine` that minimises any
-``f(t, **params) -> array`` callable; the
-:data:`~asymmetry.core.fitting.models.MODELS` registry of standalone
-time-domain models with explicit baselines (one-shot Python use); the
-:class:`~asymmetry.core.fitting.composite.CompositeModel` builder that
-parses arithmetic expressions over the
-:data:`~asymmetry.core.fitting.composite.COMPONENTS` registry into a
-compiled callable (the canonical path for any non-trivial muSR model,
-mirroring the GUI **Edit…** dialog); and the
-:mod:`~asymmetry.core.fitting.parameter_models` package that fits
-*extracted* fit parameters as a function of field, temperature, or run
-number with the same machinery. Superconducting models live under
-:mod:`asymmetry.core.fitting.sc` and are surfaced through both the
-composite registry and the parameter-trending registry — the physics
-context is in :doc:`/reference/sc_penetration_depth`. Symbols, units,
-and physical descriptions for every fit parameter are sourced from the
-:data:`~asymmetry.core.fitting.parameters.PARAM_INFO_REGISTRY`, which
-is canonical: GUI labels, GLE export labels, and the autodoc parameter
-tables all derive from it.
+To fit time-domain asymmetry with an expression from the GUI model builder, use
+:class:`~asymmetry.core.fitting.composite.CompositeModel`. The
+:ref:`worked damped-precession fit <python-damped-precession-fit>` compiles
+``Oscillatory * Exponential + Constant``, seeds the generated parameter names,
+and uses :class:`~asymmetry.core.fitting.engine.FitEngine` to recover the curve
+from synthetic data. The :doc:`/reference/cookbook` shows how to fit a loaded
+dataset.
 
-Importing ``asymmetry.core.fitting`` leaves the fitting modules unloaded.
+For a single built-in time-domain curve with its own amplitude and baseline,
+pass the callable from :data:`~asymmetry.core.fitting.models.MODELS` to the
+same engine. To fit values already extracted from several runs, such as
+precession frequency versus temperature, use :doc:`parameter_models`.
+
+The :doc:`/reference/fit_functions/index` guide describes the physics of the
+builder components. The :data:`~asymmetry.core.fitting.parameters.PARAM_INFO_REGISTRY`
+supplies parameter symbols and units. :doc:`spectral` covers Fourier-peak fitting,
+and :doc:`/reference/sc_penetration_depth` explains the superconducting models
+used for both time-domain and parameter-trend fits.
+
 Public imports such as ``from asymmetry.core.fitting import FitEngine`` load
 the module that defines the requested object.
-
-Frequency-domain peak fitting reuses the same engine and composite-model path.
-The spectral helper module supplies the default Fourier-spectrum peak model,
-MHz/G conversion, and derived field parameters for trend tables.
 
 .. toctree::
    :maxdepth: 1
 
-   engine
-   calibration
    models
    composite
+   engine
+   calibration
    parameter_models
    experiment_design
    knight_shift

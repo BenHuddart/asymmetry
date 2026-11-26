@@ -1,26 +1,23 @@
 """Built-in μSR fit functions.
 
-Each model is a callable ``f(t, **params) -> array`` plus metadata describing
-its parameters.  Models are collected in the :data:`~asymmetry.core.fitting.models.MODELS` registry.
-
 Scale
 -----
-Every asymmetry-valued parameter of every model here — the amplitudes ``A0`` /
-``A`` and the additive ``baseline`` — is **in percent (0–100)**, and so is the
-curve each model returns.  That is the WiMDA-style convention
-:attr:`asymmetry.core.data.dataset.MuonDataset.asymmetry` uses, which is why the
-seeds in :data:`~asymmetry.core.fitting.models.MODELS` default ``A0`` to ``25`` rather than ``0.25``, and why
-``PARAM_INFO_REGISTRY`` gives ``A``/``A0``/``A_bg`` the unit string ``"%"``.
-Fitting these models against fraction-scale data (what
-:func:`asymmetry.core.transform.asymmetry.compute_asymmetry` and
-:func:`asymmetry.core.transform.rebin.binned_fb_asymmetry` return) converges to the
-wrong minimum and trips
-:class:`~asymmetry.core.fitting.engine.AsymmetryScaleWarning`; scale the data with
-:func:`asymmetry.core.transform.units.to_percent` first.  The polarization-shape
-functions that carry no amplitude (:func:`risch_kehr`,
-:func:`bessel_oscillation`, and the ``P(t)`` kernels in the muonium /
-muon-fluorine / nuclear-dipole modules) are scale-free; selected-transition
-functions need not start at one. See "Asymmetry units across the API" in the documentation.
+The :data:`~asymmetry.core.fitting.models.MODELS` callables take time ``t`` in
+μs. Their amplitude ``A0``, constant offset ``baseline``, and returned
+asymmetry use the same percent scale as
+:attr:`asymmetry.core.data.dataset.MuonDataset.asymmetry`. For example,
+``A0=20.0`` represents an amplitude of 20 %. Use
+:func:`asymmetry.core.transform.units.to_percent` to convert fraction-scale
+asymmetry and its errors before fitting with percent-scale seeds.
+See :ref:`asymmetry-units` for the scales used across the API.
+
+``frequency`` in MHz measures precession cycles per μs and enters the
+oscillation phase as ``2π * frequency * t``. In fluctuating-field models
+``nu`` is the inverse correlation time in μs⁻¹ (labelled MHz in the
+parameter registry), so the rate enters as ``nu * t``.
+
+Shape-only functions such as :func:`risch_kehr`, :func:`bessel_oscillation`,
+and :func:`gaussian_broadened_kt` return dimensionless values.
 """
 
 from __future__ import annotations
@@ -49,25 +46,9 @@ from asymmetry.core.fitting.strong_collision import (
 )
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
-#: Groundwork for the deferred variable-projection (VarPro) follow-up. VarPro is
-#: not wired into a fit path yet (see the PR body: it is a constant-factor win
-#: once profiled locals already separate the per-dataset solves, and its marginal
-#: errors need a final full Hessian), so this metadata is presently consumed only
-#: by tests and the follow-up plan — but it is the generic, name-role marking the
-#: study asks for, kept here so the follow-up does not re-derive it.
-#:
-#: Parameter *role* names that enter a μSR model **linearly** — amplitudes and
-#: additive constant backgrounds. These are roles, not component names: an
-#: amplitude ``A`` scales its term and a constant baseline ``baseline`` adds to
-#: the model, so both appear to first order as ``model = a·term + ...``. Variable
-#: projection (VarPro) solves such parameters by linear least-squares inside the
-#: objective instead of by Minuit. The set is deliberately generic (matched by
-#: name, never by which component a parameter belongs to); an ``f_<Component>``
-#: fraction weight is *not* here because a normalised fraction group is not a free
-#: linear scale. VarPro always *verifies* affineness numerically at runtime and
-#: falls back to the nonlinear treatment when a flagged name is not actually
-#: affine in a given model, so this list only has to be a safe over-approximation
-#: of "usually linear".
+#: Parameter roles that usually enter a μSR model linearly, such as amplitudes
+#: and constant backgrounds. The model expression determines whether a candidate
+#: is affine. A normalised fraction depends on the other weights in its group.
 LINEAR_PARAM_ROLE_NAMES: frozenset[str] = frozenset(
     {
         "A",
@@ -158,17 +139,23 @@ def field_decoupling_threshold_gauss(width_per_us: float) -> float:
 
 
 def exponential_relaxation(t: NDArray, A0: float, Lambda: float, baseline: float = 0.0) -> NDArray:
-    """Simple exponential: A(t) = A0 exp(−Λt) + baseline."""
+    """Single-rate relaxation, A0 exp(−Lambda |t|) + baseline in percent.
+
+    The rate ``Lambda`` is in μs⁻¹. A positive rate gives a decay to ``baseline``
+    and zero rate gives the constant ``A0 + baseline``.
+    """
     # Clamp exponent to prevent overflow; exp(-700) ≈ 0 numerically
     exponent = np.clip(-Lambda * np.abs(t), -700, 0)
     return A0 * np.exp(exponent) + baseline
 
 
 def gaussian_relaxation(t: NDArray, A0: float, sigma: float, baseline: float = 0.0) -> NDArray:
-    """Gaussian envelope A0 exp(−σ²t²) + baseline.
+    r"""Gaussian envelope A0 exp(−σ²t²) + baseline in percent.
 
-    For per-component angular-field width Delta, sigma = Delta matches the
-    zero-field KT curvature; sigma = Delta/sqrt(2) gives its TF envelope.
+    ``sigma`` is in μs⁻¹. For per-component angular-field width :math:`\Delta`,
+    :math:`\sigma=\Delta/\sqrt{2}` gives the high transverse-field envelope and
+    :math:`\sigma=\Delta` matches the zero-field KT curvature at early times.
+    See :ref:`fit-gaussian` for the dip and long-time recovery of the full KT model.
     """
     # Clamp exponent to prevent overflow
     exponent = np.clip(-((sigma * t) ** 2), -700, 0)
@@ -183,7 +170,12 @@ def oscillatory(
     Lambda: float = 0.0,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Damped oscillation: A0 cos(2πft + φ) exp(−Λt) + baseline."""
+    """Single-frequency damped precession with a constant baseline, in percent.
+
+    ``frequency`` is in MHz, ``phase`` is in radians, and the exponential damping
+    rate ``Lambda`` is in μs⁻¹. At zero time the curve is A0 cos(phase) + baseline.
+    See :ref:`fit-oscillatory` for the corresponding builder component.
+    """
     # Clamp damping exponent to prevent overflow
     exponent = np.clip(-Lambda * np.abs(t), -700, 0)
     return A0 * np.cos(2.0 * np.pi * frequency * t + phase) * np.exp(exponent) + baseline
@@ -196,7 +188,11 @@ def stretched_exponential(
     beta: float = 1.0,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Stretched exponential: A0 exp(−(Λt)^β) + baseline."""
+    """Stretched relaxation, A0 exp(−|Lambda t|^beta) + baseline in percent.
+
+    ``Lambda`` is in μs⁻¹ and ``beta`` is dimensionless. With a non-negative rate,
+    ``beta=1`` recovers simple exponential relaxation.
+    """
     # Clamp exponent to prevent overflow
     exponent = np.clip(-(np.abs(Lambda * t) ** beta), -700, 0)
     return A0 * np.exp(exponent) + baseline
@@ -208,10 +204,12 @@ def static_gkt_zf(
     Delta: float,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Static Gaussian KT, with per-component angular-field width Delta.
+    """Zero-field asymmetry for static isotropic Gaussian local fields, in percent.
 
-    GKT = A0 [1/3 + 2/3 (1−Δ²t²) exp(−Δ²t²/2)] + baseline.
-    Its normalised short-time form is 1−Δ²t²+(5/12)Δ⁴t⁴+O(t⁶).
+    ``Delta`` is the angular-frequency width of one Cartesian field component
+    in μs⁻¹. The asymmetry is A0 [1/3 + 2/3 (1−Δ²t²) exp(−Δ²t²/2)] + baseline.
+    For positive width the long-time asymmetry is A0/3 + baseline. The normalised
+    short-time form is 1−Δ²t²+(5/12)Δ⁴t⁴+O(t⁶).
     """
     dt2 = (Delta * t) ** 2
     # Clamp exponent to prevent overflow
@@ -228,11 +226,8 @@ def longitudinal_field_kubo_toyabe(
 ) -> NDArray:
     r"""Static Gaussian Kubo-Toyabe relaxation in a longitudinal field.
 
-    The longitudinal-field depolarisation function for a muon in a static,
-    isotropic **Gaussian** distribution of local fields of width ``Delta`` with an
-    applied longitudinal decoupling field ``B_L``.  As ``B_L`` is swept through the
-    decoupling crossover the polarisation recovers toward unity, which is the
-    experimental signature of a *static* (rather than dynamic) local field.
+    The normalised longitudinal polarisation for a static, isotropic
+    Gaussian distribution of local fields is
 
     .. math::
 
@@ -241,23 +236,30 @@ def longitudinal_field_kubo_toyabe(
                + \frac{2\Delta^4}{\omega_0^3}
                  \int_0^t e^{-\Delta^2\tau^2/2}\sin(\omega_0\tau)\,d\tau ,
 
-    with :math:`\omega_0 = \gamma_\mu B_L` (``B_L`` in Gauss, converted to Tesla
-    internally).  The returned asymmetry is :math:`A(t) = A_0\,G_z(t) + baseline`.
-    For ``B_L = 0`` it reduces exactly to the zero-field Gaussian Kubo-Toyabe
-    function (:func:`static_gkt_zf`); for large ``B_L`` it tends to 1 (decoupling).
+    Here :math:`\omega_0 = \gamma_\mu B_L`. As the field increases, :math:`G_z`
+    approaches 1 and the returned asymmetry approaches ``A0 + baseline``.
+    At ``B_L=0`` the function reduces to :func:`static_gkt_zf` exactly. Both static
+    and slowly fluctuating fields can show high-field recovery. See
+    :doc:`/workflows/lf_decoupling_dynamics` for how to interpret a field series.
 
     Parameters
     ----------
     t : NDArray
         Time values in microseconds.
     A0 : float
-        Initial asymmetry amplitude at ``t = 0``.
+        Initial signal amplitude in percent.
     Delta : float
-        Per-component angular-field width in us^-1: Delta = gamma_mu * B_c.
+        Per-component angular-frequency width in μs⁻¹.
     B_L : float
-        Applied longitudinal magnetic field in Gauss.
+        Applied longitudinal magnetic field in gauss (G).
     baseline : float, optional
-        Constant additive baseline.
+        Constant additive baseline in percent.
+
+    Returns
+    -------
+    NDArray or float
+        Asymmetry :math:`A(t) = A_0\,G_z(t) + \mathrm{baseline}` in percent,
+        with a scalar return for scalar time.
 
     Notes
     -----
@@ -286,12 +288,6 @@ def longitudinal_field_kubo_toyabe(
 # Dynamic / fluctuating-field relaxation functions
 # ---------------------------------------------------------------------------
 #
-# A static local-field distribution dephases the muon, giving the static
-# Kubo-Toyabe function G_s(t).  When the field reorients stochastically at rate
-# ``nu`` (strong-collision / Markovian model), the polarisation becomes the
-# *dynamic* G_d(t).  Limits: nu -> 0 recovers the static function; nu -> infinity
-# gives motional narrowing (exponential decay, rate 2*Delta^2/nu for Gaussian).
-# ``nu`` is a rate in MHz (== us^-1).
 
 
 def abragam(
@@ -303,11 +299,12 @@ def abragam(
 ) -> NDArray:
     r"""Abragam relaxation function (Abragam, *Principles of Nuclear Magnetism*, 1961).
 
-    At positive fluctuation rate :math:`\nu`, the transverse-field envelope is
+    At positive fluctuation rate :math:`\nu`, the transverse-field envelope
+    with baseline is returned in percent.
 
     .. math::
 
-        G(t) = A_0 \exp\left[-\frac{\Delta^2}{\nu^2}
+        A(t) = A_0 \exp\left[-\frac{\Delta^2}{\nu^2}
         \left(e^{-\nu |t|}-1+\nu |t|\right)\right] + \mathrm{baseline}.
 
     At :math:`\nu=0`, the envelope is Gaussian with :math:`\sigma=\Delta/\sqrt{2}`
@@ -319,14 +316,13 @@ def abragam(
     t : NDArray
         Time values in microseconds.
     A0 : float
-        Initial asymmetry amplitude.
+        Initial signal amplitude in percent.
     Delta : float
-        Static Gaussian field-distribution width in us^-1.
+        Static per-component Gaussian angular-frequency width in μs⁻¹.
     nu : float
-        Finite, non-negative field fluctuation (hop) rate in MHz (== us^-1).
-        Zero gives the static Gaussian limit; negative/non-finite rates raise ValueError.
+        Finite, non-negative field fluctuation (hop) rate in μs⁻¹.
     baseline : float, optional
-        Constant baseline offset.
+        Constant offset in percent.
     """
     nu = _require_rate(nu)
     t = np.abs(np.asarray(t, dtype=float))
@@ -344,34 +340,33 @@ def keren(
 ) -> NDArray:
     """Keren dynamic Gaussian relaxation in a longitudinal field (Keren, PRB 50, 10039 (1994)).
 
-    P(t) = A0 exp[-Gamma(t)] + baseline, with omega0 = gamma_mu * B_L and::
+    The returned asymmetry is A0 exp[−Gamma(t)] + baseline in percent,
+    with omega0 = gamma_mu * B_L and::
 
         Gamma(t) = (2 Delta^2 / (omega0^2 + nu^2)^2) * [
             (omega0^2 + nu^2) nu t + (omega0^2 - nu^2) (1 - e^{-nu t} cos(omega0 t))
             - 2 nu omega0 e^{-nu t} sin(omega0 t) ]
 
-    At B_L = 0 the exponent is twice the transverse-field Abragam exponent.
-    As nu -> 0 the limit is exp(-Delta^2 t^2), matching Gaussian at sigma = Delta
-    and the early-time zero-field KT curvature; the full KT model supplies its tail.
-    Numerical evaluation uses the entire phi2 function, including zero rate and
-    field. Physical validity is perturbative (Delta/nu < 1, or early times);
-    numerical support at nu=0 does not supply the static KT tail. See Eq. (4)
-    of Keren (1994); the exponent here denotes his Gamma(t)*t.
+    At zero field the exponent is twice the transverse-field Abragam exponent,
+    with the zero-rate limit exp(−Delta² t²) for the polarisation. The full KT
+    model supplies the static tail. Keren's perturbative model applies for
+    Delta/nu < 1 or at early times. See :ref:`fit-keren` for the derivation and
+    validity limits.
 
     Parameters
     ----------
     t : NDArray
         Time values in microseconds.
     A0 : float
-        Initial asymmetry amplitude.
+        Initial signal amplitude in percent.
     Delta : float
-        Static Gaussian field-distribution width in us^-1.
+        Static per-component Gaussian angular-frequency width in μs⁻¹.
     nu : float
-        Finite, non-negative fluctuation rate in MHz (== us^-1); invalid rates raise ValueError.
+        Finite, non-negative field fluctuation rate in μs⁻¹.
     B_L : float
-        Longitudinal magnetic field in Gauss (omega0 = gamma_mu * B_L).
+        Applied longitudinal magnetic field in gauss (G).
     baseline : float, optional
-        Constant baseline offset.
+        Constant offset in percent.
     """
     nu = _require_rate(nu)
     t = np.abs(np.asarray(t, dtype=float))
@@ -834,15 +829,16 @@ def dynamic_gaussian_kt(
     B_L: float = 0.0,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Dynamic Gaussian Kubo-Toyabe (strong collision; Hayano et al. PRB 20, 850 (1979)).
+    """Dynamic Gaussian Kubo-Toyabe asymmetry in percent (Hayano et al. 1979).
 
-    Strong-collision generalisation of the static Gaussian KT: a Gaussian local
-    field of width ``Delta`` (us^-1) fluctuating at rate ``nu`` (MHz), with
-    optional longitudinal field ``B_L`` (Gauss).
+    The strong-collision model redraws the local Gaussian field at rate ``nu``
+    (μs⁻¹). The angular-frequency width per component is ``Delta`` (μs⁻¹),
+    and ``B_L`` is the applied longitudinal field in gauss (G). The result
+    is A0 G(t) + baseline, with G(t) the normalised polarisation.
 
-    - ``nu -> 0``     : recovers the static (LF) Gaussian Kubo-Toyabe.
-    - ``nu >> Delta`` : motional narrowing, G -> exp(-2 Delta^2 t / nu) (B_L = 0).
-    - ``B_L -> inf``  : decoupling, G -> 1.
+    Zero rate gives the static Gaussian KT response. At zero field with
+    nu ≫ Delta the polarisation approaches exp(−2 Delta² |t| / nu).
+    See :ref:`fit-dynamic-gaussian-kt` for conventions and limits.
     """
     nu = _require_rate(nu)
     t = np.asarray(t, dtype=float)
@@ -866,25 +862,23 @@ def dynamic_lorentzian_kt(
     B_L: float = 0.0,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Dynamic Lorentzian Kubo-Toyabe (strong collision; Uemura et al. PRB 31, 546 (1985)).
+    """Dynamic Lorentzian Kubo-Toyabe asymmetry in percent (Uemura et al. 1985).
 
-    Strong-collision generalisation of the static Lorentzian KT for a dilute /
-    Lorentzian local-field distribution of half-width ``a_L`` (us^-1) fluctuating
-    at rate ``nu`` (MHz), with optional longitudinal field ``B_L`` (Gauss).
+    The strong-collision model redraws the local Lorentzian field at rate
+    ``nu`` (μs⁻¹). The angular-frequency half-width is ``a_L`` (μs⁻¹), and
+    ``B_L`` is the applied longitudinal field in gauss (G). The result is
+    A0 G(t) + baseline, with G(t) the normalised polarisation.
 
-    In exactly zero field the solution is **exact and closed
-    form**: the static function is a three-state linear system, so the
-    strong-collision integral equation has a rational three-pole transform.
-    A bracketed real pole and an entire paired-mode expression evaluate the
-    exact zero-field solution without an integration grid. In a longitudinal field,
-    exponential-weighted product integration solves the same renewal equation;
-    the requested fluctuation rate is never frozen or replaced.
+    Zero rate gives the static Lorentzian KT response. At zero field with
+    nu ≫ a_L the relaxation rate approaches 4 a_L / 3 because the Lorentzian
+    distribution has no finite second moment. See :ref:`fit-dynamic-lorentzian-kt`
+    for conventions and limits.
 
-    - ``nu -> 0``    : recovers the static Lorentzian KT (zero-field analytic
-      eqn 5.47; longitudinal field computed numerically per Blundell et al. 2022).
-    - ``nu >> a_L``  : the relaxation rate saturates at ``4 a_L / 3`` (a
-      Lorentzian distribution has no second moment to narrow).
-    - ``B_L -> inf`` : decoupling, G -> 1.
+    Notes
+    -----
+    At zero field a rational three-pole transform gives a closed-form solution.
+    At finite field, exponential-weighted product integration gives the field
+    correction to the zero-field response.
     """
     nu = _require_rate(nu)
     t = np.asarray(t, dtype=float)
