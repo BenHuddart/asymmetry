@@ -394,29 +394,103 @@ to the onset of molecular motion.
    coupling lies along it, sharpening R3 and R4, while the less favourably
    oriented R1/R2 sites broaden instead.
 
-A complementary muonium fingerprint: repolarisation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Half recovery in the low-field scans
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The same runs at low field give a second, independent measurement. A
-longitudinal-field **repolarisation** curve plots the recovered muon
-polarisation against field: as the field decouples the muon from its electron,
-the polarisation climbs through a step whose size is the **muonium fraction**.
+Build a separate **Integral scan** for each low-field block (runs
+``118242``–``118259`` at 40 K and ``118204``–``118221`` at 410 K), covering
+0–5000 G. Each point is the integral asymmetry :math:`A(B)` at longitudinal
+field :math:`B`. As the field decouples the muon and electron spins, more of
+the muon polarisation is recovered.
+
+Click **Data table…** to inspect the run number, field, integral asymmetry,
+and counting error in **ALC scan data**. The table displays rounded values.
+The Python example below uses the full-precision values from the same
+count-integral reduction, with the default detector groups and each run's
+full good-bin interval. Point ``data`` at the HiFi NeXus files in the
+`ISIS data record <https://doi.org/10.5286/ISIS.E.86390140>`__.
+
+The figure script averages the integral asymmetry over 0–3 G for the low-field
+reference :math:`A_\mathrm{low}` and over 1000–2500 G for the high-field
+reference :math:`A_\mathrm{high}`, using each scan's own measurements. The
+high-field interval samples the shoulder near the top of the recovery. The
+integral asymmetry falls at 3500 and 5000 G in both scans. The script plots
+the normalised recovery
+
+.. math::
+
+   R(B) = \frac{A(B)-A_\mathrm{low}}{A_\mathrm{high}-A_\mathrm{low}}.
+
+To find :math:`B_{1/2}`, the script interpolates linearly in field between
+the two adjacent measurements that bracket :math:`R(B)=0.5` on the rise
+(54–100 G at 40 K and 180–300 G at 410 K). With the low-field mean fixed,
+using the 1000, 1800, and 2500 G measurements in turn as the high-field
+reference gives a span of about 4 G at 40 K and 25 G at 410 K. For the
+counting-only check, the script draws 10,000 replicas per temperature with a
+NumPy random generator seeded with 777. Each replica adds independent Gaussian
+noise with the per-point counting errors as standard deviations and recomputes
+both reference means. The central 68 % interval has a half-width of about
+1 G at 40 K and 2 G at 410 K.
+
+.. code-block:: python
+
+   from pathlib import Path
+
+   import numpy as np
+   from asymmetry.core.io import load
+   from asymmetry.core.transform.integral import build_field_scan
+
+
+   def half_recovery_field(field, asymmetry):
+       low = np.flatnonzero((0 <= field) & (field <= 3))
+       high = np.flatnonzero((1000 <= field) & (field <= 2500))
+       low_mean = asymmetry[low].mean()
+       high_mean = asymmetry[high].mean()
+       recovery = (asymmetry - low_mean) / (high_mean - low_mean)
+       rise = recovery[low[-1] : high[0] + 1]
+       crossings = np.flatnonzero((rise[:-1] <= 0.5) & (rise[1:] > 0.5))
+       if crossings.size != 1:
+           raise ValueError("Half recovery requires one rising bracket between the references")
+       left = low[-1] + crossings[0]
+       pair = slice(left, left + 2)
+       return np.interp(0.5, recovery[pair], field[pair])
+
+
+   data = Path("data")
+   rng = np.random.default_rng(777)
+   for temperature, first, last in [(40, 118242, 118259), (410, 118204, 118221)]:
+       runs = [
+           load(str(data / f"HIFI00{run}.nxs")).run for run in range(first, last + 1)
+       ]
+       scan = build_field_scan(runs, method="integral", order_key="field")
+       if scan.n_points != len(runs):
+           raise ValueError(f"Excluded runs: {scan.excluded}")
+       midpoint = half_recovery_field(scan.x, scan.value)
+       replicas = rng.normal(scan.value, scan.error, size=(10_000, scan.x.size))
+       fields = [half_recovery_field(scan.x, replica) for replica in replicas]
+       low, high = np.percentile(fields, [16, 84])
+       print(f"{temperature} K: about {round(midpoint, -1):.0f} G")
+       print(f"Counting-only interval: {low:.1f}–{high:.1f} G")
 
 .. figure:: /_generated/corpus_screenshots/corpus_corannulene_repolarisation.png
    :width: 90%
    :align: center
-   :alt: Normalised repolarisation curves P_µ(B) at 40 K and 410 K on a log field
-      axis. Both rise through a muonium step; the half-repolarisation field is
-      about 100 G at 40 K and 233 G at 410 K, both inside the paper's shaded
-      100-400 G band.
+   :alt: Normalised integral asymmetry at 40 K and 410 K on a logarithmic field
+      axis. A horizontal line at 0.5 marks half recovery. Vertical lines mark
+      about 100 G at 40 K and 220 G at 410 K. Both curves decline beyond the
+      high-field shoulder.
 
-   The low-field repolarisation curves at 40 K and 410 K (log field). Both climb
-   through the muonium step that signals ≈ 80 % of implanted muons forming
-   muonium, and the half-repolarisation field :math:`B_{1/2}` — where the curve
-   crosses halfway — moves from **≈ 100 G at 40 K to ≈ 233 G at 410 K**, both
-   inside the paper's stated 100–400 G range (shaded). The shift to higher field
-   on warming means the polarisation is recovered more slowly, a complementary
-   readout of the same hyperfine physics the µLCR dips measure directly.
+   Half of the rise between the reference levels is reached at about **100 G
+   at 40 K** and **220 G at 410 K**. The zero-field measurement contributes
+   to the low-field reference and is omitted from the logarithmic axis.
+
+Rescaling assigns the same unit height and midpoint to steps of the same
+shape even when their original heights differ. Estimating the absolute
+muonium fraction requires an independently calibrated full-polarisation
+sample asymmetry, corrections for detector balance and background, and a
+model of how much polarisation the muonium component recovers between the
+reference fields. The four hyperfine couplings come from the fitted resonance
+centres in the wide-field scan above.
 
 Assumptions and limitations
 ---------------------------
@@ -438,12 +512,9 @@ Assumptions and limitations
   corannulene dip positions are robust to a small over-shoot of the Quartic
   between R1 and R2, but a precise depth or area would not be.
 
-- **Absolute amplitudes are not graded.** The corannulene paper plots µLCR
-  signals in arbitrary units with the two temperatures offset, and the
-  repolarisation step here is normalised to its high-field plateau — so the
-  *positions and widths* (hence the couplings and the narrowing contrast) are the
-  reproduced quantities, not absolute dip depths or the absolute 0.80 muonium
-  fraction.
+- **Resonance amplitudes.** The corannulene paper plots the µLCR spectra in
+  arbitrary units with the two temperatures offset. Compare the fitted
+  centres and the changes in linewidth across temperatures.
 
 - **Field geometry labelling.** These scans are longitudinal-field sweeps, though
   the corannulene NeXus metadata mislabels the field state; the applied-field
@@ -453,9 +524,9 @@ References
 ----------
 
 - M\. Gaboardi, F. L. Pratt, C. Milanese, J. Taylor, J. Siegel, and
-  F\. Fernandez-Alonso, Carbon **155**, 432 (2019) — the published µLCR study of
-  corannulene reproduced in the advanced section: four muoniated-radical
-  hyperfine couplings and their motional narrowing.
+  F\. Fernandez-Alonso, Carbon **155**, 432 (2019) — the study of corannulene's
+  four muoniated-radical hyperfine couplings and their motional narrowing.
+  `DOI <https://doi.org/10.1016/j.carbon.2019.08.087>`__.
 - F\. L. Pratt *et al.*, Magn. Reson. Chem. **38**, S27 (2000) — muonium addition
   to TCNQ and the muoniated radical.
 - R\. M. Macrae, Magn. Reson. Chem. **38**, S33 (2000) — the *ab initio*

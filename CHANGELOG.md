@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a χ² quality verdict unavailable, while retaining fitted values and the raw objective.
 - Preserve fixed parameters and count the fitted shared parameters in each
   diagnostic residual statistic of a block-separable grouped fit.
+- Explain how the corannulene integral scans give half-recovery fields and
+  which independent calibration an absolute muonium fraction requires.
 
 - Add machine-readable citation metadata for researchers citing Asymmetry.
 

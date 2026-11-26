@@ -12,7 +12,7 @@ largest set in the corpus).
 | `corpus_corannulene_ulcr_scan` | **Real GUI** integral-scan view: 40 K wide µLCR scan (158 runs, 0.5–3.0 T) with the R3 dip carved out of the rising repolarisation baseline; ALC-scan fit panel visible. | Program-in-action / core-analysis surface on the corpus's widest field scan. | §3, §4.1–4.2 |
 | `corpus_corannulene_resonance_fit` | Matplotlib: background-subtracted 40 K Δα scan, four Gaussian |ΔM|=1 dips fitted (R2/R3 joint doublet), each B_r → A_µ annotated vs paper. | **Headline** — hyperfine deliverable reproducing Table 1. | §4.3–4.4, §6a/§6b |
 | `corpus_corannulene_temperature` | Matplotlib: 40 K vs 410 K subtracted Δα overlaid (offset, Fig. 4 style); R4/R3 narrow, R1/R2 broaden. | The "molecular dynamics" story (motional narrowing). | §4.6, §6a note |
-| `corpus_corannulene_repolarisation` | Matplotlib: normalised P_µ(B) at 40 K & 410 K (log field); B½ markers + paper 100–400 G band. | Complementary muonium / repolarisation result. | §4.5, §6d |
+| `corpus_corannulene_repolarisation` | Matplotlib: normalised integral asymmetry at 40 K and 410 K on a log field axis with B½ markers. | Half recovery in the low-field scans. | §4.5, §6d |
 
 All three matplotlib scenarios are `requires_fit` where an iminuit fit runs at
 capture time (resonance_fit, temperature). Capture is fast: GUI scan ≈ 15 s
@@ -79,28 +79,13 @@ pre-melting), while **R1 (2.44 T) all but vanishes** and R2 weakens — matching
 arbitrary units, offset ±1); the narrowing/broadening *contrast* is the target,
 and it comes through clearly.
 
-### Repolarisation (GT §6d)
+### Half recovery
 
-| Feature | 40 K | 410 K | Paper |
-|---|---|---|---|
-| Half-repolarisation field B½ | **≈ 100 G** | **≈ 233 G** | 100–400 G range; 40 K ~100, 420 K ~200 G |
-| Curve shift on warming | — | to higher field | 420 K "shifted to higher field / slower" |
-
-B½ reproduces the paper's stated 100–400 G window and the 40 K < 410 K ordering.
-The 410 K curve is clearly shifted to higher field (slower repolarisation).
+The [walkthrough](../../../workflows/alc_scan_tcnq.rst) gives the reference
+intervals, rising brackets, and sensitivity of the half-recovery fields.
 
 ## Problems / caveats (honest)
 
-- **Absolute muonium fraction (≈ 0.80) not directly extracted.** The scenario
-  plots the repolarisation *step* normalised to the high-field plateau (0 → 1),
-  which cleanly yields B½. Recovering the paper's absolute 0.80 needs the
-  step referenced to the full-polarisation asymmetry a₀ (the 20 G TF α-
-  calibration amplitude): our measured low-/high-plateau ratio (raw 10.3 % →
-  23.5 % at 40 K) gives a repolarisable fraction ≈ 0.55 without that a₀
-  normalisation. The title frames 0.80 as the qualitative muonium-formation
-  signature; B½ (100 / 233 G) is the quantitatively reproduced number. The
-  per-T 20 G TF calibration runs (setup block 118133–118141, F=20 G) are present
-  if a future scenario wants to anchor a₀ properly.
 - **Quartic baseline overshoots slightly** between R2 and R1 (a small positive
   bump near 2.1 T in the subtracted 40 K scan) and merges the R2/R3 region at
   410 K; it's a smooth-background artifact, not a resonance. The four dip
