@@ -129,6 +129,7 @@ class AlcLegacyFitHistoryScenario(AlcFieldScanScenario):
         original = super().build()
         state = original.collect_project_state()
         state["schema_version"] = 39
+        state.pop("view_modes_state")
         extra = next(b["extra"] for b in state["batches"] if b["extra"].get("kind") == "alc_scan")
         extra.pop("fit_history")
         extra.update(baseline_fitted=True, peaks_fitted=True)
