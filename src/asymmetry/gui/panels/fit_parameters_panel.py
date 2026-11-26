@@ -76,9 +76,8 @@ from asymmetry.core.fitting.knight_shift import (
     REFERENCE_APPLIED_FIELD,
     KnightShiftConfig,
     concrete_unit,
-    knight_shift,
+    fitted_knight_shift,
     label_for_unit,
-    larmor_frequency_mhz,
     scale_for_unit,
 )
 from asymmetry.core.fitting.parameter_models import (
@@ -103,7 +102,9 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.fitting.result_summary import (
     fit_result_covariance_map,
+    fit_result_fixed_parameters,
     fit_result_uncertainties,
+    recorded_fit_uncertainties,
 )
 from asymmetry.core.fitting.sc.trend_width import (
     TrendWidthContext,
@@ -981,6 +982,7 @@ class FitParametersPanel(QWidget):
                 "temperature": float(row.temperature),
                 "values": {k: float(v) for k, v in row.values.items()},
                 "errors": {k: float(v) for k, v in row.errors.items()},
+                "fixed_parameters": sorted(row.fixed_parameters),
                 "combined_from": [int(v) for v in row.combined_from] if row.combined_from else None,
                 "covariance": self._serialize_row_covariance(row.covariance),
                 "custom_values": {k: str(v) for k, v in row.custom_values.items()},
@@ -1174,6 +1176,7 @@ class FitParametersPanel(QWidget):
                             run_number=int(entry.get("run_number", 0)),
                             computation_revision=entry.get("computation_revision"),
                             parameter_sources=dict(entry.get("parameter_sources", {})),
+                            fixed_parameters=frozenset(entry.get("fixed_parameters") or ()),
                             warnings=list(entry.get("warnings", [])),
                             run_label=str(entry.get("run_label") or entry.get("run_number", 0)),
                             field=float(entry.get("field", 0.0)),
@@ -1181,9 +1184,7 @@ class FitParametersPanel(QWidget):
                             values={
                                 str(k): float(v) for k, v in dict(entry.get("values", {})).items()
                             },
-                            errors={
-                                str(k): float(v) for k, v in dict(entry.get("errors", {})).items()
-                            },
+                            errors=recorded_fit_uncertainties(entry.get("errors")),
                             combined_from=[int(v) for v in entry.get("combined_from", [])]
                             if entry.get("combined_from")
                             else None,
@@ -1379,6 +1380,7 @@ class FitParametersPanel(QWidget):
                     temperature=float(meta.get("temperature", 0.0)),
                     values=values,
                     errors=errors,
+                    fixed_parameters=frozenset(fit_result_fixed_parameters(fit_result)),
                     combined_from=[int(v) for v in meta.get("combined_from", [])]
                     if meta.get("combined_from")
                     else None,
@@ -1546,6 +1548,7 @@ class FitParametersPanel(QWidget):
                             run_number=int(rd["run_number"]),
                             computation_revision=rd.get("computation_revision"),
                             parameter_sources=dict(rd.get("parameter_sources", {})),
+                            fixed_parameters=frozenset(rd.get("fixed_parameters") or ()),
                             warnings=list(rd.get("warnings", [])),
                             run_label=str(rd.get("run_label") or rd["run_number"]),
                             field=float(rd.get("field", 0.0)),
@@ -2238,6 +2241,7 @@ class FitParametersPanel(QWidget):
                         "temperature": float(row.temperature),
                         "values": {k: float(v) for k, v in row.values.items()},
                         "errors": {k: float(v) for k, v in row.errors.items()},
+                        "fixed_parameters": sorted(row.fixed_parameters),
                         "combined_from": [int(v) for v in row.combined_from]
                         if row.combined_from
                         else None,
@@ -2292,6 +2296,7 @@ class FitParametersPanel(QWidget):
                             run_number=int(row_entry.get("run_number", 0)),
                             computation_revision=row_entry.get("computation_revision"),
                             parameter_sources=dict(row_entry.get("parameter_sources", {})),
+                            fixed_parameters=frozenset(row_entry.get("fixed_parameters") or ()),
                             warnings=list(row_entry.get("warnings", [])),
                             run_label=str(
                                 row_entry.get("run_label", row_entry.get("run_number", ""))
@@ -2302,10 +2307,7 @@ class FitParametersPanel(QWidget):
                                 str(k): float(v)
                                 for k, v in dict(row_entry.get("values", {})).items()
                             },
-                            errors={
-                                str(k): float(v)
-                                for k, v in dict(row_entry.get("errors", {})).items()
-                            },
+                            errors=recorded_fit_uncertainties(row_entry.get("errors")),
                             combined_from=[int(v) for v in row_entry.get("combined_from", [])]
                             if row_entry.get("combined_from")
                             else None,
@@ -2505,8 +2507,6 @@ class FitParametersPanel(QWidget):
                 symbol_values = dict(row.values)
                 symbol_uncertainties = dict(global_uncertainties or {})
                 symbol_uncertainties.update(row.errors)
-                for name in row.values:
-                    symbol_uncertainties.setdefault(name, float("nan"))
 
                 for definition in definitions:
                     try:
@@ -2515,6 +2515,7 @@ class FitParametersPanel(QWidget):
                             symbol_values,
                             symbol_uncertainties,
                             covariance=row.covariance,
+                            fixed_parameters=row.fixed_parameters,
                         )
                         row.values[definition.name] = float(evaluation.value)
                         row.errors[definition.name] = float(evaluation.uncertainty)
@@ -2671,7 +2672,16 @@ class FitParametersPanel(QWidget):
         for comp, kind in selected:
             per_row: list[tuple[_FitRow, float, float]] = []
             for row in rows:
-                k, sigma_k = self._row_knight_shift(row, comp, kind, ref_name)
+                k, sigma_k = fitted_knight_shift(
+                    row.values,
+                    row.errors,
+                    component=comp,
+                    kind=kind,
+                    field_gauss=row.field,
+                    config=config,
+                    covariance=row.covariance,
+                    fixed_parameters=row.fixed_parameters,
+                )
                 per_row.append((row, k, sigma_k))
             shifts[comp] = per_row
 
@@ -2723,32 +2733,6 @@ class FitParametersPanel(QWidget):
             events.extend(detect_crossings(points))
         self._knight_shift_crossing_x_key = x_key
         return events
-
-    def _row_knight_shift(
-        self, row: _FitRow, component_name: str, kind: str, reference_name: str | None
-    ) -> tuple[float, float]:
-        """Dimensionless Knight shift (and σ) for one component on one row.
-
-        ``kind`` selects the applied-field reference: a *frequency* component
-        (MHz) is referenced to the Larmor frequency γ_µ·B, a *field* component
-        (Gauss; the fitted local field B_µ) directly to the applied field B —
-        i.e. K = (B_µ − B)/B, the most direct form of the shift.
-        """
-        nu = row.values.get(component_name)
-        if nu is None:
-            return float("nan"), float("nan")
-        sigma_nu = float(row.errors.get(component_name, 0.0) or 0.0)
-        if self._knight_shift_config.reference_mode == REFERENCE_APPLIED_FIELD:
-            nu_ref = row.field if kind == "field" else larmor_frequency_mhz(row.field)
-            return knight_shift(nu, nu_ref, sigma_nu=sigma_nu)
-        nu_ref = row.values.get(reference_name)
-        if nu_ref is None:
-            return float("nan"), float("nan")
-        sigma_ref = float(row.errors.get(reference_name, 0.0) or 0.0)
-        cov = 0.0
-        if row.covariance is not None:
-            cov = float(row.covariance.get(component_name, {}).get(reference_name, 0.0))
-        return knight_shift(nu, nu_ref, sigma_nu=sigma_nu, sigma_ref=sigma_ref, cov=cov)
 
     def _register_knight_label(self, kname: str, subscript: str, unit_label: str) -> None:
         """Register display metadata so a Knight-shift quantity renders as K_n (unit).
@@ -3976,6 +3960,7 @@ class FitParametersPanel(QWidget):
             preview_values=dict(preview_row.values),
             preview_uncertainties=preview_uncertainties,
             preview_covariance=preview_row.covariance,
+            preview_fixed_parameters=preview_row.fixed_parameters,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

@@ -1771,15 +1771,27 @@ parameters:
 - They are saved/restored with project state.
 - They are recomputed automatically when source fit parameters change.
 
-Uncertainties are propagated using first-order error propagation:
+The first-order variance follows the
+`NIST law of propagation of uncertainty <https://physics.nist.gov/cuu/Uncertainty/combination.html>`_.
 
 .. math::
 
     \sigma_f^2 = J\,\Sigma\,J^T
 
-where :math:`J` is the gradient of the expression with respect to source
-parameters and :math:`\Sigma` is the parameter covariance matrix when
-available (falling back to diagonal variances otherwise).
+Here :math:`J` is the gradient of the expression with respect to the source
+parameters. Asymmetry uses valid covariance diagonals or recorded marginal
+errors for the variances in :math:`\Sigma`. Missing cross-covariances are
+treated as zero. Fixed parameters and inputs with a zero derivative
+contribute zero first-order variance. When a required variance is unavailable
+or an active derivative is singular, the central estimate still appears. The
+preview ends with ``(error unavailable)``, the plot has a marker without an error
+bar, and the TSV error cell is blank.
+
+.. figure:: /_generated/screenshots/composite_parameter_uncertainty.png
+   :alt: Edit Composite Parameter with a preview that reads 0.1 (error unavailable).
+
+   The frequency difference is 0.1 MHz for fitted frequencies of 5.1 and
+   5.0 MHz. The reference frequency has no recorded uncertainty.
 
 .. _knight-shift:
 
@@ -1895,8 +1907,11 @@ fitted in is not always recoverable).
 * **Designated component** — :math:`\nu_{\mathrm{ref}}` is the fitted frequency of
   a chosen oscillation component, such as a co-measured diamagnetic line. Because
   :math:`\nu` and :math:`\nu_{\mathrm{ref}}` then come from the same fit, their
-  covariance is carried through the error propagation; the applied-field reference
-  treats :math:`B` as exact.
+  covariance is carried through the error propagation. A component explicitly
+  fixed in the source fit is treated as exact, as is the applied field.
+  If a required variance is unavailable from either a covariance diagonal or
+  a recorded marginal error, the plot retains the central value without an
+  error bar and TSV export leaves the error cell blank.
 
 K is dimensionless. It is stored internally as a fraction and shown in a unit you
 select, with an **Auto** mode that reads parts per million for a diamagnet

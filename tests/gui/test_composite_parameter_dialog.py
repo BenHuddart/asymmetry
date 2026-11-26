@@ -72,6 +72,20 @@ def test_dialog_accepts_valid_expression_and_returns_definition(qapp: QApplicati
     assert definition.expression == "sqrt(A0^2 + Lambda^2)"
 
 
+@pytest.mark.parametrize("errors", [{}, {"a": 0.02}, {"a": 0.02, "b": float("nan")}])
+def test_preview_keeps_the_value_when_the_error_is_unavailable(qapp, errors):
+    dialog = CompositeParameterDialog(
+        available_parameters=["a", "b"],
+        existing_parameter_names=[],
+        initial_definition=CompositeParameterDefinition("difference", "a-b"),
+        preview_values={"a": 5.1, "b": 5.0},
+        preview_uncertainties=errors,
+    )
+
+    assert dialog._preview_label.text() == "Preview (representative row): 0.1 (error unavailable)"
+    assert _ok_enabled(dialog)
+
+
 def test_insert_parameter_button_inserts_selected_parameter(qapp: QApplication) -> None:
     dialog = CompositeParameterDialog(
         available_parameters=["A0", "Lambda"],

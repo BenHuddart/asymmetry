@@ -128,6 +128,7 @@ class _FitRow:
     computation_revision: str | None = None
     parameter_sources: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    fixed_parameters: frozenset[str] = frozenset()
 
 
 def _x_custom_id(x_key: str) -> str | None:

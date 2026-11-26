@@ -28,12 +28,13 @@ display unit from the data.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
 import numpy as np
 
+from asymmetry.core.fitting.derived_uncertainty import first_order_uncertainty
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 
 #: Free-muon Larmor frequency per unit applied field, γ_µ/(2π) in MHz/G
@@ -68,31 +69,57 @@ def knight_shift(
 
         σ_K² = σ_ν²/ν_ref²  +  ν²·σ_ref²/ν_ref⁴  −  2·ν·cov/ν_ref³
     """
-    nu = float(nu)
-    nu_ref = float(nu_ref)
-    if nu_ref == 0.0 or not math.isfinite(nu_ref):
-        return float("nan"), float("nan")
+    return _shift_with_uncertainty(
+        nu,
+        nu_ref,
+        "sample",
+        "reference",
+        {"sample": sigma_nu, "reference": sigma_ref},
+        {"sample": {"reference": cov}},
+    )
 
-    k = nu / nu_ref - 1.0
 
-    # Partial derivatives: ∂K/∂ν = 1/ν_ref, ∂K/∂ν_ref = −ν/ν_ref².
-    d_nu = 1.0 / nu_ref
-    d_ref = -nu / (nu_ref * nu_ref)
-    term_nu = d_nu * d_nu * float(sigma_nu) ** 2
-    term_ref = d_ref * d_ref * float(sigma_ref) ** 2
-    term_cov = 2.0 * d_nu * d_ref * float(cov)
-    variance = term_nu + term_ref + term_cov
-    if variance >= 0.0:
-        sigma_k = math.sqrt(variance)
-    elif variance >= -1e-9 * (abs(term_nu) + abs(term_ref) + abs(term_cov)):
-        # Round-off around zero: clamp rather than emit NaN.
-        sigma_k = 0.0
+def fitted_knight_shift(
+    values: Mapping[str, float],
+    errors: Mapping[str, float],
+    *,
+    component: str,
+    kind: str,
+    field_gauss: float,
+    config: KnightShiftConfig,
+    covariance: Mapping[str, Mapping[str, float]] | None = None,
+    fixed_parameters: Collection[str] = (),
+) -> tuple[float, float]:
+    """Derive a shift from a fit, using an exact field or a co-fitted reference."""
+    nu = values.get(component, math.nan)
+    reference = None
+    if config.reference_mode == REFERENCE_APPLIED_FIELD:
+        nu_ref = field_gauss if kind == "field" else larmor_frequency_mhz(field_gauss)
     else:
-        # A genuinely negative variance (e.g. an over-large reported covariance)
-        # means the propagation is ill-posed; surface NaN rather than a
-        # misleadingly precise zero uncertainty.
-        sigma_k = float("nan")
-    return k, sigma_k
+        reference = config.reference_component
+        nu_ref = values.get(reference, math.nan) if reference is not None else math.nan
+    return _shift_with_uncertainty(
+        nu, nu_ref, component, reference, errors, covariance, fixed_parameters
+    )
+
+
+def _shift_with_uncertainty(
+    nu: float,
+    nu_ref: float,
+    component: str,
+    reference: str | None,
+    errors: Mapping[str, float],
+    covariance: Mapping[str, Mapping[str, float]] | None,
+    fixed_parameters: Collection[str] = (),
+) -> tuple[float, float]:
+    if nu_ref == 0.0 or not math.isfinite(nu_ref) or not math.isfinite(nu):
+        return math.nan, math.nan
+    ratio = nu / nu_ref
+    gradient = {component: 1.0 / nu_ref}
+    if reference is not None:
+        gradient[reference] = gradient.get(reference, 0.0) - ratio / nu_ref
+    sigma = first_order_uncertainty(gradient, errors, covariance, fixed_parameters=fixed_parameters)
+    return ratio - 1.0, sigma
 
 
 class KnightShiftUnit(Enum):

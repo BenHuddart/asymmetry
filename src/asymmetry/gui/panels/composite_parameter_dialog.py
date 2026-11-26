@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import math
+from collections.abc import Collection, Mapping, Sequence
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -41,6 +42,7 @@ class CompositeParameterDialog(QDialog):
         preview_values: Mapping[str, float] | None = None,
         preview_uncertainties: Mapping[str, float] | None = None,
         preview_covariance: Mapping[str, Mapping[str, float]] | None = None,
+        preview_fixed_parameters: Collection[str] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -64,6 +66,7 @@ class CompositeParameterDialog(QDialog):
             str(k): {str(subk): float(subv) for subk, subv in row.items()}
             for k, row in (preview_covariance or {}).items()
         }
+        self._preview_fixed_parameters = frozenset(preview_fixed_parameters)
         self._result: CompositeParameterDefinition | None = None
 
         root = QVBoxLayout(self)
@@ -218,14 +221,18 @@ class CompositeParameterDialog(QDialog):
                 self._preview_values,
                 self._preview_uncertainties,
                 covariance=self._preview_covariance,
+                fixed_parameters=self._preview_fixed_parameters,
             )
         except CompositeExpressionError as exc:
             self._preview_label.setText(f"Preview unavailable: {exc}")
             return
 
-        self._preview_label.setText(
-            f"Preview (representative row): {evaluated.value:.6g} +/- {evaluated.uncertainty:.3g}"
+        error = (
+            f" +/- {evaluated.uncertainty:.3g}"
+            if math.isfinite(evaluated.uncertainty)
+            else " (error unavailable)"
         )
+        self._preview_label.setText(f"Preview (representative row): {evaluated.value:.6g}{error}")
 
     def _on_accept(self) -> None:
         valid, error, _parsed = self._validate_inputs()

@@ -44,9 +44,8 @@ from asymmetry.core.fitting.knight_shift import (
     KnightShiftConfig,
     KnightShiftUnit,
     concrete_unit,
-    knight_shift,
+    fitted_knight_shift,
     label_for_unit,
-    larmor_frequency_mhz,
     scale_for_unit,
 )
 from asymmetry.core.fitting.parameters import split_parameter_name
@@ -77,7 +76,8 @@ class KnightPoint:
     scan the unfolded angle in degrees; NaN drops the point). ``values`` /
     ``errors`` carry the fitted component parameters; ``covariance`` is the
     (optional) nested parameter-covariance map used by the designated-component
-    reference. ``include`` mirrors the trend include-gate so excluded runs stay
+    reference. ``fixed_parameters`` designates exact fit inputs.
+    ``include`` mirrors the trend include-gate so excluded runs stay
     visible-but-skipped rather than silently vanishing.
     """
 
@@ -89,6 +89,7 @@ class KnightPoint:
     errors: Mapping[str, float]
     covariance: Mapping[str, Mapping[str, float]] | None = None
     include: bool = True
+    fixed_parameters: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -230,44 +231,6 @@ def _component_subscript(component: str) -> str:
     return index if index is not None else "1"
 
 
-def _point_shift(
-    point: KnightPoint,
-    component: str,
-    kind: str,
-    config: KnightShiftConfig,
-) -> tuple[float, float]:
-    """Dimensionless K (and σ) for one component on one point.
-
-    Mirrors the reference conventions of
-    :func:`asymmetry.core.fitting.knight_shift.knight_shift`: the applied-field
-    reference is exact (γ_µ·B for a frequency component, B itself for a local
-    field component); the designated-component reference carries the fitted
-    reference's uncertainty and its covariance with the component.
-    """
-    nu = point.values.get(component)
-    if nu is None:
-        return float("nan"), float("nan")
-    sigma_nu = _finite_or_nan(point.errors.get(component, 0.0))
-    if not math.isfinite(sigma_nu):
-        sigma_nu = 0.0
-    if config.reference_mode == REFERENCE_APPLIED_FIELD:
-        nu_ref = point.field_gauss if kind == "field" else larmor_frequency_mhz(point.field_gauss)
-        return knight_shift(float(nu), nu_ref, sigma_nu=sigma_nu)
-    reference = config.reference_component
-    nu_ref = point.values.get(reference) if reference else None
-    if nu_ref is None:
-        return float("nan"), float("nan")
-    sigma_ref = _finite_or_nan(point.errors.get(reference, 0.0))
-    if not math.isfinite(sigma_ref):
-        sigma_ref = 0.0
-    cov = 0.0
-    if point.covariance is not None:
-        cov = _finite_or_nan(point.covariance.get(component, {}).get(reference, 0.0))
-        if not math.isfinite(cov):
-            cov = 0.0
-    return knight_shift(float(nu), float(nu_ref), sigma_nu=sigma_nu, sigma_ref=sigma_ref, cov=cov)
-
-
 def selected_components(
     analysis_input: KnightAnalysisInput, config: KnightShiftConfig
 ) -> tuple[tuple[str, str], ...]:
@@ -351,7 +314,16 @@ def evaluate(
         for point in sorted(analysis_input.points, key=lambda p: p.x):
             if not math.isfinite(point.x) or name not in point.values:
                 continue
-            k, sigma_k = _point_shift(point, name, kind, config)
+            k, sigma_k = fitted_knight_shift(
+                point.values,
+                point.errors,
+                component=name,
+                kind=kind,
+                field_gauss=point.field_gauss,
+                config=config,
+                covariance=point.covariance,
+                fixed_parameters=point.fixed_parameters,
+            )
             rows.append((point, k + correction_offset, sigma_k))
         per_component[name] = rows
 
@@ -1342,7 +1314,7 @@ def snapshot_from_rows(
 
     ``rows`` are duck-typed against the trend panel's row records (attributes
     ``run_number``, ``run_label``, ``field``, ``values``, ``errors``,
-    ``covariance``, ``include_in_trend``); ``x_values`` supplies the resolved
+    ``covariance``, ``include_in_trend``, optional ``fixed_parameters``); ``x_values`` supplies the resolved
     (unfolded) abscissa for each row, letting the caller keep ownership of the
     axis resolution. Rows and abscissae must align.
     """
@@ -1361,6 +1333,7 @@ def snapshot_from_rows(
                 errors=dict(getattr(row, "errors", {}) or {}),
                 covariance=covariance if isinstance(covariance, Mapping) else None,
                 include=bool(getattr(row, "include_in_trend", True)),
+                fixed_parameters=frozenset(getattr(row, "fixed_parameters", ())),
             )
         )
     return KnightAnalysisInput(

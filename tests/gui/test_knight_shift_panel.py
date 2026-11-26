@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import math
 import os
 
 import pytest
@@ -11,13 +13,16 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QFileDialog
 
+from asymmetry.core.fitting.composite_parameters import CompositeParameterDefinition
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_COMPONENT,
     KnightShiftConfig,
     KnightShiftUnit,
     larmor_frequency_mhz,
 )
+from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, load_project, save_project
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
 
@@ -96,6 +101,112 @@ def test_component_reference_excludes_reference_and_uses_it(qapp):
     assert "K[frequency]" not in panel._knight_shift_names
     k2 = panel._rows[0].values["K[frequency_2]"]
     assert k2 == pytest.approx((94.2 - 94.0) / 94.0, rel=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("errors", "fixed", "expected_errors"),
+    [
+        ({}, [], ("", "")),
+        ({"frequency": 0.02}, [], ("", "")),
+        ({"frequency_2": float("inf")}, [], ("", "")),
+        ({"frequency": 0.02}, ["frequency_2"], ("0.004", "0.02")),
+    ],
+)
+def test_derived_tsv_retains_values_and_recorded_uncertainties(
+    qapp, tmp_path, monkeypatch, errors, fixed, expected_errors
+):
+    panel = FitParametersPanel()
+    row = _row(1, 7000.0, {"frequency": 5.1, "frequency_2": 5.0})
+    row["errors"] = errors
+    if fixed:
+        row["fixed_parameters"] = fixed
+    _load(panel, [row])
+    panel._composite_parameters = [CompositeParameterDefinition("delta", "frequency-frequency_2")]
+    panel.set_knight_shift_config(
+        KnightShiftConfig(
+            enabled=True,
+            reference_mode=REFERENCE_COMPONENT,
+            reference_component="frequency_2",
+            unit=KnightShiftUnit.FRACTION,
+        )
+    )
+    project = tmp_path / "derived.asymp"
+    save_project(
+        {
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "datasets": [],
+            "fit_parameters_state": panel.get_state(),
+        },
+        project,
+    )
+    reopened = FitParametersPanel()
+    reopened.restore_state(load_project(project)["fit_parameters_state"])
+
+    export = tmp_path / "derived.tsv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(export), ""))
+    for current in (panel, reopened):
+        current._export_tsv()
+        with export.open(encoding="utf-8", newline="") as handle:
+            (record,) = csv.DictReader(
+                (line for line in handle if not line.startswith("#")), delimiter="\t"
+            )
+
+        assert float(record["K[frequency]"]) == pytest.approx(0.02)
+        assert float(record["delta"]) == pytest.approx(0.1)
+        assert (record["err_K[frequency]"], record["err_delta"]) == expected_errors
+
+
+@pytest.mark.parametrize(
+    ("legacy_fields", "expected_sigma"),
+    [
+        ({"errors": None}, math.nan),
+        ({"errors": {"frequency": 0.02, "frequency_2": None}}, math.nan),
+        ({"errors": {"frequency": 0.02}, "fixed_parameters": None}, math.nan),
+        (
+            {
+                "errors": {"frequency": 0.02, "frequency_2": None},
+                "fixed_parameters": ["frequency_2"],
+            },
+            0.004,
+        ),
+    ],
+)
+def test_legacy_cached_trend_retains_rows_with_null_uncertainties(
+    qapp, tmp_path, legacy_fields, expected_sigma
+):
+    row = _row(1, 7000.0, {"frequency": 5.1, "frequency_2": 5.0}) | legacy_fields
+    config = KnightShiftConfig(
+        enabled=True,
+        reference_mode=REFERENCE_COMPONENT,
+        reference_component="frequency_2",
+        unit=KnightShiftUnit.FRACTION,
+    )
+    project = tmp_path / "legacy-trend.asymp"
+    save_project(
+        {
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "datasets": [],
+            "fit_parameters_state": {
+                "rows": [row],
+                "knight_shift": config.to_dict(),
+                "composite_parameters": [{"name": "delta", "expression": "frequency-frequency_2"}],
+                "group_fit_results": {"legacy": {"rows": [row]}},
+            },
+        },
+        project,
+    )
+
+    panel = FitParametersPanel()
+    panel.restore_state(load_project(project)["fit_parameters_state"])
+    (restored,) = panel._rows
+    (group_row,) = panel._group_fit_results["legacy"].rows
+
+    assert restored.values["K[frequency]"] == pytest.approx(0.02)
+    assert restored.values["delta"] == pytest.approx(0.1)
+    assert restored.errors["K[frequency]"] == pytest.approx(expected_sigma, nan_ok=True)
+    assert restored.errors["delta"] == pytest.approx(expected_sigma * 5.0, nan_ok=True)
+    assert group_row.errors.get("frequency_2", math.nan) == pytest.approx(math.nan, nan_ok=True)
+    assert group_row.fixed_parameters == frozenset(legacy_fields.get("fixed_parameters") or ())
 
 
 def test_model_observable_map_excludes_non_local_field(qapp):
