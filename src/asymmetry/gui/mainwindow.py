@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMainWindow,
+    QMenu,
     QMenuBar,
     QMessageBox,
     QProgressDialog,
@@ -1209,7 +1210,9 @@ class MainWindow(QMainWindow):
         save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_as_action = file_menu.addAction("Save Project &As\u2026", self._on_save_project_as)
         save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
-        self._recent_menu = file_menu.addMenu("Recent Projects")
+        # Python-created menu wrappers survive the release of a temporary QAction.menu() owner.
+        self._recent_menu = QMenu("Recent Projects", file_menu)
+        file_menu.addMenu(self._recent_menu)
         self._update_recent_projects_menu()
         _recent_projects_broadcast.recent_projects_changed.connect(
             self._update_recent_projects_menu
@@ -17078,12 +17081,8 @@ class MainWindow(QMainWindow):
     def _add_recent_project(self, path: str) -> None:
         """Add *path* to the front of the recent-projects list in QSettings."""
         raw = self._settings.value("project/recent_files")
-        recent: list[str] = list(raw) if isinstance(raw, (list, tuple)) else []
-        # Remove any existing entry for this path (avoid duplicates).
-        recent = [p for p in recent if p != path]
-        recent.insert(0, path)
-        recent = recent[:_MAX_RECENT_PROJECTS]
-        self._settings.setValue("project/recent_files", recent)
+        recent = [entry for entry in raw if entry != path] if isinstance(raw, (list, tuple)) else []
+        self._settings.setValue("project/recent_files", [path, *recent][:_MAX_RECENT_PROJECTS])
         # Flush so other tabs' QSettings instances see this write before the broadcast.
         self._settings.sync()
         _recent_projects_broadcast.recent_projects_changed.emit()
