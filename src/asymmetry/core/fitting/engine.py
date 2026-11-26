@@ -12,7 +12,6 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.global_covariance import (
@@ -1352,8 +1351,7 @@ def _pack_coupled_block(
             if isinstance(record, PoissonCounts)
             else None
         )
-        results[ds.run_number] = FitResult(
-            computation_revision=computation.COMPUTATION_REVISION,
+        results[ds.run_number] = FitResult.from_computation(
             input_attribution=fit_input_attribution(
                 record,
                 ds,
@@ -1672,8 +1670,7 @@ class FitEngine:
         except ImportError as e:
             error_msg = str(e)
             if "numba" in error_msg.lower() or "numpy" in error_msg.lower():
-                return FitResult(
-                    computation_revision=computation.COMPUTATION_REVISION,
+                return FitResult.from_computation(
                     objective=Objective.GAUSSIAN
                     if cost_factory is None
                     else cost_factory.objective,
@@ -1681,8 +1678,7 @@ class FitEngine:
                     message=f"iminuit import error: {error_msg}\n"
                     "Try: pip install 'numpy<2.3' to fix numpy/numba compatibility.",
                 )
-            return FitResult(
-                computation_revision=computation.COMPUTATION_REVISION,
+            return FitResult.from_computation(
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {error_msg}\nInstall it with: pip install iminuit",
@@ -1690,8 +1686,7 @@ class FitEngine:
 
         free = parameters.free_parameters
         if gaussian is not None and (message := gaussian.insufficient_bins_message(len(free))):
-            return FitResult(
-                computation_revision=computation.COMPUTATION_REVISION,
+            return FitResult.from_computation(
                 input_attribution=attribution,
                 success=False,
                 objective=Objective.GAUSSIAN,
@@ -1954,8 +1949,7 @@ class FitEngine:
             if oversampling_message:
                 result_warnings.append(oversampling_message)
 
-        return FitResult(
-            computation_revision=computation.COMPUTATION_REVISION,
+        return FitResult.from_computation(
             input_attribution=attribution,
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=m.valid and invalid_model is None,
@@ -2334,8 +2328,7 @@ class FitEngine:
         except ImportError as e:
             # No iminuit: report the failure on every dataset rather than raising,
             # so a caller fitting a series gets one failed result per run.
-            error_result = FitResult(
-                computation_revision=computation.COMPUTATION_REVISION,
+            error_result = FitResult.from_computation(
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {str(e)}",
@@ -2343,8 +2336,7 @@ class FitEngine:
             return {ds.run_number: error_result for ds in datasets}, ParameterSet()
         except _CoupledMinimizationError as e:
             # If fitting fails, return error results
-            error_result = FitResult(
-                computation_revision=computation.COMPUTATION_REVISION,
+            error_result = FitResult.from_computation(
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=str(e),
@@ -2578,8 +2570,7 @@ class FitEngine:
         try:
             from iminuit import Minuit
         except ImportError as e:  # pragma: no cover - exercised only without iminuit
-            error_result = FitResult(
-                computation_revision=computation.COMPUTATION_REVISION,
+            error_result = FitResult.from_computation(
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {e}",
@@ -2739,8 +2730,7 @@ class FitEngine:
         except FitCancelledError:
             raise
         except Exception as e:
-            error_result = FitResult(
-                computation_revision=computation.COMPUTATION_REVISION,
+            error_result = FitResult.from_computation(
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"Profiled global fit failed: {e}",

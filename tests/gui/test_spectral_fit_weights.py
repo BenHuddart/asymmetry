@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QFileDialog
 
+import asymmetry
 from asymmetry.core.fitting.likelihood import dataset_observations
 from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.project.schema import load_project, save_project
@@ -40,6 +41,7 @@ def test_gui_default_fft_uses_unit_weights_in_single_and_batch(
     assert np.array_equal(single._current_dataset.time, expected_time)
     assert np.array_equal(single._current_dataset.error, np.zeros_like(expected_time))
 
+    monkeypatch.setattr(asymmetry, "__version__", "0.29.0")
     solved = []
     single.fit_completed.connect(lambda result, *_: solved.append(result))
     single._run_fit()
@@ -59,6 +61,7 @@ def test_gui_default_fft_uses_unit_weights_in_single_and_batch(
     assert "Unit weights" in single._results_card.content_html()
     assert "Residual sum of squares" in single._results_card.content_html()
 
+    monkeypatch.setattr(asymmetry, "__version__", "0.30.0")
     window._fit_panel.restore_ui_state({"active_tab_index": 1})
     batch = window._fit_panel._global_tab
     window._data_browser.select_runs([run, other_run])
@@ -87,9 +90,12 @@ def test_gui_default_fft_uses_unit_weights_in_single_and_batch(
 
     project = tmp_path / "fits.asymp"
     save_project(window.collect_project_state(), project)
+    monkeypatch.setattr(asymmetry, "__version__", "0.31.0")
     window._project_model = ProjectModel.from_project_state(load_project(project))
     slot = window._project_model.representation(run, FFT).fit
     series = window._project_model.batch(series_id)
+    assert slot.result["producing_version"] == "0.29.0"
+    assert {record["producing_version"] for record in series.results_by_run.values()} == {"0.30.0"}
     for record in (slot.result, *series.results_by_run.values()):
         assert record["input_attribution"]["spectral_weighting"]["policy"] == "unit"
         assert record["quality"] is None and record["reduced_chi_squared"] is None
@@ -97,6 +103,8 @@ def test_gui_default_fft_uses_unit_weights_in_single_and_batch(
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_: (str(report), "Text files"))
     window._on_export_fit_report()
     content = report.read_text()
+    assert content.count("Asymmetry version: 0.29.0") == 1
+    assert content.count("Asymmetry version: 0.30.0") == 2
     assert content.count("Unit weights on") == 3
     assert content.count("Residual sum of squares =") == 3
     assert "target" not in content

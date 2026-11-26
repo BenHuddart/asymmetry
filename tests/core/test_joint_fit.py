@@ -19,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import asymmetry
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine
 from asymmetry.core.fitting.joint import (
@@ -116,9 +117,10 @@ def _shared_background(value: float = 0.0) -> SharedParameter:
 # --------------------------------------------------------------------------- #
 
 
-def test_two_models_sharing_a_background_recover_it_with_one_uncertainty() -> None:
+def test_two_models_sharing_a_background_recover_it_with_one_uncertainty(monkeypatch) -> None:
     """The shared value is fitted once, and both series report the *same* σ for it."""
     problems = [_oscillating_series(), _relaxing_series()]
+    monkeypatch.setattr(asymmetry, "__version__", "0.29.0")
     result = fit_joint(problems, [_shared_background()])
 
     assert result.success
@@ -130,6 +132,7 @@ def test_two_models_sharing_a_background_recover_it_with_one_uncertainty() -> No
     for key in ("ordered", "paramagnetic"):
         assert result.series_global_parameters[key]["A_bg"].value == pytest.approx(shared)
         for run_result in result.series_results[key].values():
+            assert run_result.producing_version == "0.29.0"
             assert run_result.parameters["A_bg"].value == pytest.approx(shared)
             # ...and the one shared uncertainty, not a per-series re-estimate.
             assert run_result.uncertainties["A_bg"] == pytest.approx(sigma, rel=1e-12)

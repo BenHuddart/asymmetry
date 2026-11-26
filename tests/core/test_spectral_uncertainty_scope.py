@@ -2,6 +2,7 @@
 
 import numpy as np
 
+import asymmetry
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting import FitEngine, Parameter, ParameterSet
 from asymmetry.core.fitting.result_payload import _deserialize_fit_result, _serialize_fit_result
@@ -29,7 +30,7 @@ def test_moment_recipe_and_trend_retain_approximation_scope():
     assert row["moments_recipe"] == result.recipe
 
 
-def test_frequency_fit_warns_at_padding_one_and_survives_payload():
+def test_frequency_fit_warns_at_padding_one_and_survives_payload(monkeypatch):
     x = np.linspace(-2, 2, 41)
     datasets = [
         MuonDataset(time=x, asymmetry=2 * x + 3, error=np.full(len(x), 0.1), metadata=meta)
@@ -39,6 +40,7 @@ def test_frequency_fit_warns_at_padding_one_and_survives_payload():
     def model(x, **p):
         return p["m"] * x + p["b"]
 
+    monkeypatch.setattr(asymmetry, "__version__", "0.29.0")
     results = [
         FitEngine().fit(
             ds, model, ParameterSet([Parameter(name="m", value=1), Parameter(name="b", value=2)])
@@ -53,9 +55,14 @@ def test_frequency_fit_warns_at_padding_one_and_survives_payload():
     assert any("Approximate spectral fit" in w for w in results[1].warnings)
     np.testing.assert_array_equal(results[0].covariance, results[1].covariance)
     assert results[0].chi_squared == results[1].chi_squared
-    restored = _deserialize_fit_result(_serialize_fit_result(results[1]))
-    assert fit_result_summary(restored)["warnings"] == results[1].warnings
-    assert restored.input_attribution == results[1].input_attribution
+    monkeypatch.setattr(asymmetry, "__version__", "0.30.0")
+    payload = _serialize_fit_result(results[1])
+    restored = fit_result_summary(_deserialize_fit_result(payload))
+    assert restored["warnings"] == results[1].warnings
+    assert restored["input_attribution"] == results[1].input_attribution
+    assert restored["producing_version"] == "0.29.0"
+    del payload["producing_version"]
+    assert "producing_version" not in fit_result_summary(_deserialize_fit_result(payload))
 
 
 def test_unknown_historical_scope_is_not_invented():

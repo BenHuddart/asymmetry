@@ -89,12 +89,13 @@ class FitLog:
 
         Recognised keys (all optional except for a graceful empty block):
         ``parameters``, ``uncertainties``, ``uncertainties_asymmetric``, ``quality``,
-        ``chi_squared``, ``reduced_chi_squared``, ``success`` plus the provenance keys
-        from :func:`enrich_summary_provenance`.
+        ``chi_squared``, ``reduced_chi_squared``, ``success``, ``producing_version``
+        plus the provenance keys from :func:`enrich_summary_provenance`.
         """
         lines: list[str] = []
         heading = title or self._default_title(record)
         lines.append(f"=== {heading} ===")
+        lines.append(f"Asymmetry version: {record.get('producing_version') or 'unknown'}")
 
         model_name = record.get("model_name")
         if model_name:

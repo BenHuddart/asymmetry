@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
+import asymmetry
+from asymmetry.core import computation
 from asymmetry.core.data.ratio_validity import ObservationReport
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import ParameterSet
@@ -71,6 +74,19 @@ class FitResult:
     input_attribution: dict | None = None
     computation_revision: str | None = None
     spectral_residual_attribution: dict | None = None
+    #: Package release that produced the fit. ``None`` means no producer was recorded.
+    producing_version: str | None = None
+
+    @classmethod
+    def from_computation(cls, *, objective: Objective, success: bool, **outcome: Any) -> FitResult:
+        """Capture execution attribution at the source of a new fit outcome."""
+        return cls(
+            objective=objective,
+            success=success,
+            computation_revision=computation.COMPUTATION_REVISION,
+            producing_version=asymmetry.__version__,
+            **outcome,
+        )
 
     def __post_init__(self):
         self.objective = Objective(self.objective)

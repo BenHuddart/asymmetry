@@ -1256,10 +1256,11 @@ are ranked together." A changed or unverified input also receives a historical-f
 hint in the **Saved fits** row; re-fitting keeps the historical result separately.
 
 Saved fits are written into the project file, and **Analysis ▸ Export fit report…**
-lists every saved fit by name. A fit of a rotated projection (``P′_x``,
-``P′_y``) records the rotating frame it was fitted in; once that frame changes,
-its menu entry carries ⚠ and the line under its name reads "Fitted in a
-different rotating frame — re-run the fit to update it." (see
+lists every saved fit by name with the Asymmetry version that produced it. A fit
+with no recorded producer shows ``Asymmetry version: unknown``. A fit of a rotated
+projection (``P′_x``, ``P′_y``) records the rotating frame it was fitted in; once
+that frame changes, its menu entry carries ⚠ and the line under its name reads
+"Fitted in a different rotating frame — re-run the fit to update it." (see
 :doc:`rotating_frame_projection`).
 
 **Carrying a model forward between runs**
