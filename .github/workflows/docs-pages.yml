@@ -112,6 +112,7 @@ jobs:
     timeout-minutes: 75
     env:
       CORPUS_VERSION: "2026.07.16"
+      CORPUS_SHA256: "3d6a3dff8ab2dea9782d84c1ceb284b28a394fa1fab614d1aa97bce7f7f25afe"
       CORPUS_REPO: "BenHuddart/wimda-muon-school-corpus"
     steps:
       - name: Checkout repository
@@ -137,20 +138,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libegl1 libxkbcommon0 libdbus-1-3 fonts-dejavu-core zstd
 
-      - name: Restore corpus cache
-        id: corpus-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/wimda-corpus
-          key: wimda-corpus-${{ env.CORPUS_VERSION }}
-
       - name: Download muon-school corpus
-        # The corpus lives as a release asset on a separate (private) repo.
-        # CORPUS_REPO_TOKEN is a fine-grained PAT with read access to that
-        # repo's releases; when it is absent (e.g. a fork), the step
-        # returns without downloading; permitted corpus placeholders below fill
-        # missing renders. A download failure still fails the job.
-        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        # Base-branch Actions caches are readable by PR workflows. Keep the
+        # private release asset and extracted data in this runner's temp directory.
         env:
           GH_TOKEN: ${{ secrets.CORPUS_REPO_TOKEN }}
         run: |
@@ -158,16 +148,18 @@ jobs:
             echo "CORPUS_REPO_TOKEN not available; corpus renders will be stubs."
             exit 0
           fi
+          archive="wimda-corpus-${CORPUS_VERSION}.tar.zst"
+          download_dir=$(mktemp -d "$RUNNER_TEMP/wimda-download.XXXXXX")
+          trap 'rm -rf -- "$download_dir"' EXIT
           gh release download "v${CORPUS_VERSION}" \
             --repo "$CORPUS_REPO" \
-            --pattern "wimda-corpus-${CORPUS_VERSION}.tar.zst*" \
-            --dir /tmp/corpus
-          (cd /tmp/corpus && sha256sum -c "wimda-corpus-${CORPUS_VERSION}.tar.zst.sha256")
-          mkdir -p ~/wimda-corpus
+            --pattern "$archive" \
+            --dir "$download_dir"
+          printf '%s  %s\n' "$CORPUS_SHA256" "$download_dir/$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/wimda-corpus"
           tar --use-compress-program=unzstd \
-            -xf "/tmp/corpus/wimda-corpus-${CORPUS_VERSION}.tar.zst" \
-            -C ~/wimda-corpus --strip-components=1
-          rm -rf /tmp/corpus
+            -xf "$download_dir/$archive" \
+            -C "$RUNNER_TEMP/wimda-corpus" --strip-components=1
 
       - name: Generate GUI screenshots
         continue-on-error: true
@@ -190,10 +182,11 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          if [ ! -d ~/wimda-corpus/Basics ]; then
+          corpus_root="$RUNNER_TEMP/wimda-corpus"
+          if [ ! -d "$corpus_root/Basics" ]; then
             echo "Corpus not provisioned; writing stub renders only."
           else
-            export ASYMMETRY_CORPUS_ROOT="$HOME/wimda-corpus"
+            export ASYMMETRY_CORPUS_ROOT="$corpus_root"
             for module in $(python -m docs.screenshots.capture_corpus --list-modules); do
               echo "::group::corpus module ${module}"
               python -m docs.screenshots.capture_corpus --module "${module}" || \
@@ -208,7 +201,7 @@ jobs:
           # workflow warning + step summary instead of a quietly green job.
           STUB_LOG=$(python -m docs.screenshots.capture_corpus --stubs-missing)
           echo "$STUB_LOG"
-          if [ -d ~/wimda-corpus/Basics ] && echo "$STUB_LOG" | grep -q "] stub "; then
+          if [ -d "$corpus_root/Basics" ] && echo "$STUB_LOG" | grep -q "] stub "; then
             COUNT=$(echo "$STUB_LOG" | grep -c "] stub ")
             echo "::warning::${COUNT} corpus render(s) fell back to stubs despite the corpus being provisioned — see the step summary"
             {

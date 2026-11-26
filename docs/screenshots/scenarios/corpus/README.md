@@ -97,13 +97,15 @@ the (private) corpus repository `BenHuddart/wimda-muon-school-corpus`:
 - `tools/package_corpus.py --corpus "<root>" --version <YYYY.MM.DD>` builds the
   CI archive (`dist/wimda-corpus-<version>.tar.zst`, ~272 MB): data files,
   logbooks, ground truths and reference outputs; no papers/guides/duplicates.
-- Publish it (with its `.sha256`) as release `v<version>` on the corpus repo,
-  then bump `CORPUS_VERSION` in `.github/workflows/docs-pages.yml`.
+- Publish it with its `.sha256` as release `v<version>` on the private
+  repository. Update both `CORPUS_VERSION` and `CORPUS_SHA256` in
+  `.github/workflows/docs-pages.yml` using the new archive's verified digest.
 - The workflow needs a `CORPUS_REPO_TOKEN` repo secret (fine-grained PAT with
-  read access to the corpus repo's releases). Without it — e.g. on forks — the
-  build falls back to `--stubs` placeholders and stays green. The extracted
-  corpus is cached (`actions/cache`) keyed on the version, so the download is
-  paid once per corpus bump.
+  read access to the corpus repo's releases). The build downloads the archive
+  for each deploy build, verifies the pinned digest before extraction, and
+  stores the files in the runner's temporary directory for the duration of the
+  job. PR workflows can read base-branch Actions caches, so these files stay
+  outside the cache. Without the token, the build uses placeholders.
 - Capture runs one process per scenario module (`--list-modules` / `--module`)
   to stay inside the per-process watchdog; `--stubs-missing` then fills any
   hole so the built site is always image-complete.
