@@ -1027,8 +1027,12 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
 
 
 def _register_superconducting_components() -> None:
-    """Register superconducting sigma(T) components for temperature trending."""
-
+    """Register superconducting temperature and field trend components."""
+    brandt_param_info = {
+        "lambda_ab": replace(get_param_info("lambda_ab"), default_min=1.0),
+        "Bc2": get_param_info("Bc2"),
+        "sigma_bg": get_param_info("sigma_bg"),
+    }
     PARAMETER_MODEL_COMPONENTS.update(
         {
             "SC_SWave": ParameterModelComponentDefinition(
@@ -1329,11 +1333,7 @@ def _register_superconducting_components() -> None:
                 function=sc_models.brandt_field_width_sigma,
                 param_names=["lambda_ab", "Bc2", "sigma_bg"],
                 param_defaults={"lambda_ab": 200.0, "Bc2": 10.0, "sigma_bg": 0.0},
-                param_info={
-                    "lambda_ab": get_param_info("lambda_ab"),
-                    "Bc2": get_param_info("Bc2"),
-                    "sigma_bg": get_param_info("sigma_bg"),
-                },
+                param_info=brandt_param_info.copy(),
                 formula_template=(
                     "sqrt((sigma0({lambda_ab})*(1-b)*(1+1.21*(1-sqrt(b))^3)/2.21)^2 + {sigma_bg}^2), "
                     "b=B0/{Bc2}"
@@ -1351,11 +1351,7 @@ def _register_superconducting_components() -> None:
                 function=sc_models.brandt_field_width_sigma_powder,
                 param_names=["lambda_ab", "Bc2", "sigma_bg"],
                 param_defaults={"lambda_ab": 200.0, "Bc2": 10.0, "sigma_bg": 0.0},
-                param_info={
-                    "lambda_ab": get_param_info("lambda_ab"),
-                    "Bc2": get_param_info("Bc2"),
-                    "sigma_bg": get_param_info("sigma_bg"),
-                },
+                param_info=brandt_param_info.copy(),
                 formula_template=(
                     "sqrt((sigma0(3^0.25*{lambda_ab})*(1-b)*(1+1.21*(1-sqrt(b))^3)/2.21)^2 "
                     "+ {sigma_bg}^2), b=B0/{Bc2}"

@@ -9,11 +9,13 @@ field-scope parameter-trend components.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from asymmetry.core.fitting import ParameterCompositeModel
 from asymmetry.core.fitting.parameter_models import component_names_for_x, fit_parameter_model
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.sc import constants, models
+from asymmetry.core.fitting.seeding import seed_trend_parameters
 
 # muon gyromagnetic ratio in us^-1 mT^-1 (= 2*pi*135.5 MHz/T), per Pratt 2009.
 _GAMMA_MU_US_PER_MT = 0.8516
@@ -81,10 +83,21 @@ def test_powder_brms_plateau_matches_lifeas_figure() -> None:
     assert np.isclose(s244 / _GAMMA_MU_US_PER_MT, 1.22, atol=0.05)
 
 
-def test_guards_against_nonpositive_inputs() -> None:
-    # Non-positive lambda/Bc2 must stay finite (no NaN/inf in the residual path).
-    for value in models.brandt_field_width_sigma(np.array([100.0, 400.0]), lambda_ab=0.0, Bc2=0.0):
-        assert np.isfinite(value)
+@pytest.mark.parametrize("depth", [np.nan, 0.0, -1.0, -np.inf])
+def test_undefined_depth_remains_undefined_at_all_fields(depth: float) -> None:
+    values = models.brandt_field_width_sigma([100.0, 1e4], depth, 0.5, sigma_bg=0.3)
+    assert np.all(np.isnan(values))
+
+
+@pytest.mark.parametrize("powder", [False, True])
+def test_infinite_depth_leaves_only_the_background(powder: bool) -> None:
+    values = models.brandt_field_width_sigma([100.0, 1e4], np.inf, 0.5, sigma_bg=0.3, powder=powder)
+    np.testing.assert_array_equal(values, [0.3, 0.3])
+
+
+def test_guards_against_nonpositive_upper_critical_field() -> None:
+    arr = models.brandt_field_width_sigma(np.array([100.0, 400.0]), 200.0, 0.0)
+    assert np.all(np.isfinite(arr))
     arr = models.brandt_field_width_sigma(np.array([0.0, 100.0, 1e9]), 200.0, 0.5)
     assert np.all(np.isfinite(arr))
     assert arr.dtype == np.float64
@@ -104,6 +117,24 @@ def test_components_registered_in_field_scope() -> None:
     # These are field-domain models; they must not leak into the temperature scope.
     temperature_names = component_names_for_x("temperature")
     assert "SC_Brandt_VortexLattice" not in temperature_names
+
+
+@pytest.mark.parametrize("component", ["SC_Brandt_VortexLattice", "SC_Brandt_VortexLattice_Powder"])
+def test_fit_with_default_depth_bound_recovers_from_zero_start(component: str) -> None:
+    model = ParameterCompositeModel([component])
+    fields = np.array([100.0, 300.0, 800.0, 1600.0, 4000.0, 7000.0])
+    widths = model.function(fields, lambda_ab=195.0, Bc2=0.5, sigma_bg=0.0)
+    seeds = seed_trend_parameters(model, fields, widths)
+    params = ParameterSet(
+        [
+            Parameter("lambda_ab", 0.0, min=seeds["lambda_ab"].min),
+            Parameter("Bc2", 0.5, fixed=True),
+            Parameter("sigma_bg", 0.0, fixed=True),
+        ]
+    )
+    result = fit_parameter_model(fields, widths, np.full_like(fields, 0.01), model, params)
+    assert result.success, result.message
+    assert result.parameters["lambda_ab"].value == pytest.approx(195.0, rel=1e-5)
 
 
 def _fit_recovery(powder: bool, component: str) -> None:

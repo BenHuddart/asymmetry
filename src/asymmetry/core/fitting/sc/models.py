@@ -656,8 +656,9 @@ def brandt_field_width_sigma(
     B0
         Applied transverse field in **gauss** (the field-scope x convention).
     lambda_ab
-        Magnetic penetration depth in **nm**. For ``powder=True`` this is the
-        ab-plane depth :math:`\lambda_{ab}`.
+        Positive magnetic penetration depth in **nm**. For ``powder=True`` this
+        is the ab-plane depth :math:`\lambda_{ab}`. Positive infinity gives
+        zero vortex-lattice width. Missing or nonpositive depths give NaN.
     Bc2
         Upper critical field :math:`B_{c2}` in **tesla**.
     sigma_bg

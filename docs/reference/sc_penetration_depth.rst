@@ -81,6 +81,15 @@ Subtract the non-superconducting contribution before converting to penetration
 depth. A width-convention conversion does not account for vortex-lattice
 asymmetry, disorder, or anisotropic powder geometry.
 
+Both helpers operate elementwise on scalar and array inputs. For positive
+finite inputs, the London relation gives :math:`\sigma\propto\lambda^{-2}`
+[5, Eq. (11)]. Zero width maps to :math:`\lambda=+\infty`, and that depth
+maps back to zero width. NaN inputs remain NaN. Negative or infinite widths
+and zero or negative depths, including :math:`-\infty`, are outside the
+conversion domain and give NaN at the corresponding positions. Extremely
+small positive depths can give widths larger than floating point can represent,
+which return :math:`+\infty`.
+
 .. _derived-sc-field-width:
 
 Field-width domain
@@ -493,6 +502,11 @@ adds in quadrature, :math:`\sigma=\sqrt{\sigma_{VL}^2+\sigma_{bg}^2}` (Pratt
 These are **field-scope** components (they appear for field-trend fits, not
 temperature trends). ``x`` is the applied field in **gauss**; ``Bc2`` is a
 parameter in **tesla**; ``lambda_ab`` is in **nm**.
+
+The field-width models take positive penetration depths. A depth of
+:math:`+\infty` leaves only the background width. Missing and nonpositive
+depths give NaN across the field range. The default fit lower bound of 1 nm
+keeps the optimiser away from the singularity of :math:`\lambda^{-2}` at zero.
 
 ``SC_Brandt_VortexLattice``
    Single-crystal Brandt :math:`\sigma(B_0)` for a type-II superconductor.

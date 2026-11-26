@@ -6,12 +6,12 @@ import numpy as np
 
 from asymmetry.core.fitting import Parameter, ParameterCompositeModel, ParameterSet
 from asymmetry.core.fitting.parameter_models import fit_parameter_model
-from asymmetry.core.fitting.sc.constants import sigma_to_lambda_nm
+from asymmetry.core.fitting.sc import GaussianWidth, sigma_to_lambda_nm
 from asymmetry.core.fitting.sc.models import sc_two_gap_ss
 
 
 def build_synthetic_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Create MgB2-like synthetic sigma(T) data from a two-gap model."""
+    """Create MgB2-like synthetic second-moment widths from a two-gap model."""
     rng = np.random.default_rng(42)
     temp = np.linspace(1.5, 35.0, 28)
 
@@ -51,7 +51,6 @@ def fit_single_gap_swave(temp: np.ndarray, sigma: np.ndarray, err: np.ndarray) -
         print(f"  {p.name:10s} = {p.value:.5f}")
 
 
-
 def fit_two_gap_ss(temp: np.ndarray, sigma: np.ndarray, err: np.ndarray) -> None:
     model = ParameterCompositeModel(["SC_TwoGap_SS"])
     params = ParameterSet(
@@ -76,10 +75,8 @@ def fit_two_gap_ss(temp: np.ndarray, sigma: np.ndarray, err: np.ndarray) -> None
     for p in result.parameters:
         print(f"  {p.name:10s} = {p.value:.5f}")
 
-    sigma0_sc = max(values["sigma_0"] - values["sigma_bg"], 1e-12)
-    lambda0_nm = float(sigma_to_lambda_nm(np.array([sigma0_sc]))[0])
+    lambda0_nm = sigma_to_lambda_nm(values["sigma_0"], width=GaussianWidth.SECOND_MOMENT).item()
     print("  estimated lambda(0) [nm]:", f"{lambda0_nm:.2f}")
-
 
 
 def main() -> None:
