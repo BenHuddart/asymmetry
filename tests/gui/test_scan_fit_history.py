@@ -150,6 +150,7 @@ def test_legacy_settings_require_explicit_fit(kind, tmp_path, qapp, monkeypatch)
     series = build_fitted_scan(original, kind)
     state = original.collect_project_state()
     state["schema_version"] = 39
+    state.pop("view_modes_state")
     extra = state["batches"][0]["extra"]
     extra.pop("fit_history")
     extra["baseline_fitted"] = kind != "rf"

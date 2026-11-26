@@ -245,6 +245,7 @@ def test_legacy_project_migrates_to_one_study(mainwindow: MainWindow) -> None:
     base = mainwindow.collect_project_state()
     base["schema_version"] = 12
     base.pop("global_fit_studies", None)
+    base.pop("view_modes_state")
     fp_state = dict(base.get("fit_parameters_state") or {})
     fp_state["last_cross_group_fit"] = legacy_fit
     base["fit_parameters_state"] = fp_state

@@ -306,6 +306,7 @@ def test_released_project_zero_override_cannot_supply_absent_file_table(
     window._data_browser.add_dataset(dataset)
     state = window.collect_project_state()
     state["schema_version"] = 31
+    state.pop("view_modes_state")
     state["datasets"][0]["grouping_overrides"] = dict(
         dataset.run.grouping,
         deadtime_correction=True,
