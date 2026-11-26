@@ -70,8 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compare matched cold and warm CdS spectra and MaxEnt residuals, with
   literature guides labelled separately from spectral grid maxima.
 
-- Link the worked examples to public Rigi school data and ISIS runs, and show
-  the LiFeAs Sample 1 linewidth from fits to the raw GPS data.
+- Link the worked examples to public Rigi school data and ISIS runs.
+- Reduce LiFeAs Sample 1 detector counts before forming asymmetry, and show
+  the fit limitations alongside its qualitative spectral broadening.
 
 - Use accepted PSI header temperatures in the Data Browser and fit trends.
 - Reproduce the EuO trend from its exported fit series and show how fit range
