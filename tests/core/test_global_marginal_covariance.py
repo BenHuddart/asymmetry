@@ -460,22 +460,27 @@ def test_failed_member_solution_does_not_inherit_outer_covariance(monkeypatch):
         assert any("invalid outer or member solution" in message for message in result.warnings)
 
 
-def test_shared_slope_induces_cross_member_intercept_covariance():
+@pytest.mark.parametrize("slope_min", [-np.inf, 0.7 - 1e-8], ids=["unbounded", "near_bound"])
+def test_shared_slope_induces_cross_member_intercept_covariance(slope_min):
     from asymmetry.core.fitting.engine import _build_coupled_global_problem
     from asymmetry.core.fitting.global_covariance import observed_covariance
     from asymmetry.core.fitting.likelihood import dataset_observations
 
     x = np.linspace(-1, 3, 21)
+    # The shared slope is stationary only after summing the two opposing member gradients.
     datasets = [
         MuonDataset(
             time=x,
-            asymmetry=0.7 * x + run,
+            asymmetry=0.7 * x + run + (-1) ** run * 0.015 * (x - x.mean()),
             error=np.full(len(x), 0.2),
             metadata={"run_number": run},
         )
         for run in (1, 2)
     ]
-    seeds = {run: ParameterSet([Parameter("m", 0.7), Parameter("b", run)]) for run in (1, 2)}
+    seeds = {
+        run: ParameterSet([Parameter("m", 0.7, min=slope_min), Parameter("b", run)])
+        for run in (1, 2)
+    }
     problem = _build_coupled_global_problem(
         datasets=datasets,
         model_fn=lambda t, **p: p["m"] * t + p["b"],
@@ -572,7 +577,7 @@ def test_numerical_information_noise_is_checked_after_marginalisation(monkeypatc
         estimates = information(*args)
         # A 2e-8 relative derivative error is tiny before eliminating the nearly
         # collinear intercept but large relative to the slope's remaining information.
-        estimates[1, 0, 0] *= 1 + 2e-8
+        estimates.fine[0, 0] *= 1 + 2e-8
         return estimates
 
     monkeypatch.setattr(global_covariance, "_member_information", noisy)
@@ -593,7 +598,12 @@ def test_numerical_information_noise_is_checked_after_marginalisation(monkeypatc
     ]
 
 
-def test_bounded_refinement_recovers_a_smooth_neighbourhood_of_a_numerical_grid():
+@pytest.mark.parametrize(
+    "slope_bounds",
+    [(-np.inf, np.inf), (0.5 - 3e-6 - 1e-8, 0.50002)],
+    ids=["unbounded", "narrow"],
+)
+def test_bounded_refinement_recovers_a_smooth_neighbourhood_of_a_numerical_grid(slope_bounds):
     x = np.linspace(-1, 3, 21)
     slope = 0.5 - 3e-6
     datasets = [
@@ -605,7 +615,11 @@ def test_bounded_refinement_recovers_a_smooth_neighbourhood_of_a_numerical_grid(
         )
         for run in (1, 2)
     ]
-    seeds = {run: ParameterSet([Parameter("m", slope), Parameter("b", run)]) for run in (1, 2)}
+    lower, upper = slope_bounds
+    seeds = {
+        run: ParameterSet([Parameter("m", slope, min=lower, max=upper), Parameter("b", run)])
+        for run in (1, 2)
+    }
 
     def model(t, **p):
         # A grid selection can change the numerical model across an otherwise smooth fit.
