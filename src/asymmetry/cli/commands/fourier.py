@@ -208,7 +208,7 @@ _TWIN_COUPLINGS = 4
 
 
 def close_pair(values: dict) -> tuple[float, float] | None:
-    """The first pair of close fitted frequencies, in display coordinates."""
+    """Select nearby fitted coordinates for the audit's fit coverage check."""
     pair = close_frequency_spacing(fitted_frequency_spacings(values))
     if pair is None:
         return None
@@ -216,11 +216,7 @@ def close_pair(values: dict) -> tuple[float, float] | None:
 
 
 def tesla_field_lines(result: dict) -> list[dict]:
-    """Peaks of a plain transform near the Larmor frequency of a field of tesla order.
-
-    A diamagnetic line there can hold two (inequivalent sites, sublattices),
-    unlike a radical's hyperfine line far from the applied field's Larmor value.
-    """
+    """Peaks of a plain transform near the Larmor frequency of a field of tesla order."""
     from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz
 
     if result["axis"] != "frequency" or result["field_gauss"] is None:
@@ -302,9 +298,8 @@ def _render(result: dict) -> str:
         lines.append(
             "NOTE: "
             + "; ".join(f"{low:.6g} and {high:.6g} MHz" for low, high in pairs)
-            + f" lie within {_CLOSE_PEAKS} resolution elements of each other: two lines "
-            "the FFT barely separates. Report both frequencies (a splitting, not one line), "
-            "and fit them in the time domain with two lines started there: asymmetry recipe "
+            + f" lie within {_CLOSE_PEAKS} resolution elements of each other. "
+            "Use the peak frequencies to start a two-component time-domain fit: asymmetry recipe "
             f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
             "Exponential + Oscillatory * Exponential + Constant' --initial "
             f"frequency_1={pairs[0][1]:.6g} --initial frequency_3={pairs[0][0]:.6g}, then "
@@ -316,12 +311,10 @@ def _render(result: dict) -> str:
         line = max(high, key=lambda peak: peak["snr"])
         centre, width = line["frequency_mhz"], line["width_mhz"]
         lines.append(
-            f"NOTE: the line at {centre:.6g} MHz (width {width:.4g} MHz, "
+            f"NOTE: the peak at {centre:.6g} MHz (width {width:.4g} MHz, "
             f"{width / resolution:.1f} resolution elements) sits in a field of tesla order, "
-            f"where inequivalent muon sites or magnetic sublattices split a line by about the "
-            f"resolution, so one FFT peak can hold two. Fit two lines started either side of it "
-            f"and compare chi2 with one before reporting a single line — one peak does not "
-            f"exclude a doublet split by less than the resolution, {resolution:.4g} MHz: asymmetry recipe "
+            f"where inequivalent muon sites or magnetic sublattices can contribute nearby "
+            f"frequencies. Try a two-component time-domain fit started either side of the peak: asymmetry recipe "
             f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
             f"Exponential + Oscillatory * Exponential + Constant' --initial "
             f"frequency_1={centre + width / 2:.6g} --initial frequency_3={centre - width / 2:.6g}"

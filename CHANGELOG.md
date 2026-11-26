@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Report fitted frequency spacings descriptively and require a separate
+  model comparison to assess spectral line multiplicity.
 - Use fitted frequency covariance for CLI line-spacing uncertainties and
   label spacings whose uncertainty is unavailable.
 

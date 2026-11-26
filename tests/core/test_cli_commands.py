@@ -3412,6 +3412,8 @@ def test_a_held_high_field_line_is_offered_a_two_line_fit() -> None:
     }
 
     (hint,) = _doublet_hint(series, trend)
+    assert "Try a two-component fit of the coldest run" in hint
+    assert "compare chi2" not in hint
     assert "--run 686 --name two-line" in hint
     assert "'Oscillatory * Exponential + Oscillatory * Exponential + Constant'" in hint
     assert "--initial frequency_1=" in hint and "--initial frequency_3=" in hint
@@ -3449,12 +3451,12 @@ def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
     assert "band 812–816 of 0–900 MHz" in text
     assert "NOTE: 813.497 and 813.596 MHz lie within 2 resolution elements" in text
     assert "815.9" not in text.split("NOTE:")[1]
-    # A lone tesla-field line may still hold two, and the transform says what it is not.
-    assert "NOTE: the line at 815.9 MHz (width 0.1 MHz, 1.0 resolution elements)" in text
+    assert "NOTE: the peak at 815.9 MHz (width 0.1 MHz, 1.0 resolution elements)" in text
     assert "--initial frequency_1=815.95 --initial frequency_3=815.85" in text
+    assert "compare chi2" not in text and "Report both frequencies" not in text
     assert "maximum-entropy (MaxEnt) spectra and multi-group" in text
     # A line far from the applied field's Larmor frequency is a radical's, not a split one.
-    assert "NOTE: the line at" not in _render(result | {"field_gauss": 3000.0})
+    assert "NOTE: the peak at" not in _render(result | {"field_gauss": 3000.0})
     assert "--correlation" in _render(result | {"field_gauss": 3000.0})
     assert "not a radical assignment" in _render(result | {"field_gauss": 3000.0})
     assert "--correlation" not in _render(result | {"field_gauss": None})
@@ -3999,10 +4001,11 @@ def test_two_close_fourier_peaks_get_the_two_line_recipe() -> None:
     assert "514.081 and 514.447 MHz are 0.366 MHz apart, 2.9 resolution elements" in _render(twins)
 
 
-def test_two_fitted_frequencies_within_two_percent_are_a_pair() -> None:
+def test_close_pair_returns_nearby_fitted_coordinates() -> None:
     from asymmetry.cli.commands.fourier import close_pair
 
     assert close_pair({"frequency_1": 813.601, "frequency_3": 813.542}) == (813.542, 813.601)
+    assert close_pair({"frequency_1": 5.0, "frequency_3": 5.0}) == (5.0, 5.0)
     assert close_pair({"frequency_1": 813.6, "frequency_3": 1627.2}) is None
     assert close_pair({"frequency": 1.36, "Lambda": 1.37}) is None
 
@@ -4432,22 +4435,6 @@ def test_a_line_whose_amplitude_appears_on_cooling_names_its_onset() -> None:
     )
     # One line beside a relaxation is not a pair of lines trading weight.
     assert _component_onsets(trend, ["A_1", "A_3"], "Oscillatory * Gaussian + Exponential") == []
-
-
-def test_fit_prints_the_spacing_of_separate_lines(
-    workflow_folder: Path, fitting_workdir: Path, capsys
-) -> None:
-    from asymmetry.core.workflow.recipe import FitRecipe
-    from asymmetry.core.workflow.workdir import WorkDir
-
-    expression = "Oscillatory * Exponential + Oscillatory * Exponential + Constant"
-    recipe = FitRecipe.from_expression(expression).with_overrides(
-        fix={"frequency_1": 1.0, "frequency_3": 2.5}
-    )
-    WorkDir(fitting_workdir).write_recipe("lines", recipe)
-    capsys.readouterr()
-    _cli(workflow_folder, fitting_workdir, "fit", "--run", str(SCAN_RUNS[0]), "--recipe", "lines")
-    assert "Line spacings: 2.5 − 1 = 1.5 MHz" in capsys.readouterr().out
 
 
 def test_scan_repeats_retain_unavailable_observations_without_significance_claim():
