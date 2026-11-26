@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+title: Asymmetry
+type: software
+authors:
+  - given-names: Benjamin M.
+    family-names: Huddart
+    orcid: https://orcid.org/0000-0001-8584-105X
+    affiliation: Department of Physics, University of Oxford
+abstract: >-
+  A Python library for reducing, fitting, and visualising muon-spin spectroscopy
+  (μSR) data, with desktop and command-line interfaces.
+license: MIT
+repository-code: https://github.com/BenHuddart/asymmetry
+message: If you use Asymmetry in your research, please cite the version used for your analysis.
+version: 0.30.0

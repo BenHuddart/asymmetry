@@ -48,6 +48,12 @@ CHANGELOG = """\
 - Old released content.
 """
 
+CITATION = """\
+cff-version: 1.2.0
+title: Asymmetry
+version: 0.30.0
+"""
+
 
 class TestVersionMath:
     def test_read_current_version(self):
@@ -128,16 +134,26 @@ class TestMain:
     def repo(self, tmp_path: Path) -> Path:
         (tmp_path / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
         (tmp_path / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
+        (tmp_path / "CITATION.cff").write_text(CITATION, encoding="utf-8")
         return tmp_path
 
     def test_end_to_end_bump(self, repo: Path, capsys, monkeypatch):
         output_file = repo / "gh_output"
         monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+        (repo / "CITATION.cff").write_text(CITATION + "...\n", encoding="utf-8")
         rc = release_prep.main(["--bump", "minor", "--date", "2026-07-06", "--root", str(repo)])
         assert rc == 0
         assert 'version = "0.6.0"' in (repo / "pyproject.toml").read_text()
         changelog = (repo / "CHANGELOG.md").read_text()
         assert "## [0.6.0] - 2026-07-06" in changelog
+        citation = (repo / "CITATION.cff").read_text()
+        assert citation.splitlines() == [
+            "cff-version: 1.2.0",
+            "title: Asymmetry",
+            "version: 0.6.0",
+            "date-released: 2026-07-06",
+            "...",
+        ]
         out = capsys.readouterr().out
         assert "0.5.0 -> 0.6.0" in out
         assert "A new feature" in out  # promoted section echoed for CI summary
@@ -150,7 +166,26 @@ class TestMain:
         assert rc == 0
         assert (repo / "pyproject.toml").read_text() == PYPROJECT
         assert (repo / "CHANGELOG.md").read_text() == CHANGELOG
+        assert (repo / "CITATION.cff").read_text() == CITATION
         assert "would release 0.5.0 -> 0.5.1" in capsys.readouterr().out
+
+    def test_updates_previous_release_date(self, repo: Path):
+        path = repo / "CITATION.cff"
+        path.write_text(CITATION + "date-released: 2026-06-21\n", encoding="utf-8")
+        assert (
+            release_prep.main(["--bump", "patch", "--date", "2026-07-06", "--root", str(repo)]) == 0
+        )
+        assert path.read_text().splitlines()[-2:] == ["version: 0.5.1", "date-released: 2026-07-06"]
+
+    def test_rejects_ambiguous_citation_version_before_writing(self, repo: Path, capsys):
+        path = repo / "CITATION.cff"
+        duplicate = CITATION + "version: 0.5.0\n"
+        path.write_text(duplicate, encoding="utf-8")
+        assert release_prep.main(["--bump", "minor", "--root", str(repo)]) == 1
+        assert "CITATION.cff" in capsys.readouterr().err
+        assert path.read_text() == duplicate
+        assert (repo / "pyproject.toml").read_text() == PYPROJECT
+        assert (repo / "CHANGELOG.md").read_text() == CHANGELOG
 
     def test_validation_failure_is_clean_error(self, repo: Path, capsys):
         (repo / "CHANGELOG.md").write_text(

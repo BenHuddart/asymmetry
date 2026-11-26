@@ -2,7 +2,7 @@ name: Cut release
 
 # One-command releases (see RELEASING.md). Manually dispatched with a bump
 # kind (or an explicit version); this workflow bumps pyproject.toml, rolls
-# CHANGELOG.md, commits `release: X.Y.Z` directly to main, and pushes the
+# CHANGELOG.md, stamps CITATION.cff, commits `release: X.Y.Z` to main, and pushes the
 # vX.Y.Z tag. The tag push then fires the existing "Build and Release
 # Executables" and docs-pages workflows exactly as a manual tag would.
 #
@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   cut-release:
-    name: Bump, roll changelog, tag
+    name: Prepare release metadata and tag
     runs-on: ubuntu-latest
     steps:
       - name: Check RELEASE_TOKEN is configured
@@ -74,8 +74,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Bump version and roll changelog
+      - name: Update version, changelog and citation
         id: prep
+        shell: bash
         run: |
           ARGS=()
           if [ -n "${{ inputs.version }}" ]; then
@@ -91,7 +92,7 @@ jobs:
           TAG="${{ steps.prep.outputs.tag }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml CHANGELOG.md
+          git add pyproject.toml CHANGELOG.md CITATION.cff
           git commit -m "release: ${VERSION}"
           git tag -a "${TAG}" -m "Release ${VERSION}"
           # Atomic: either the release commit and its tag both land, or neither

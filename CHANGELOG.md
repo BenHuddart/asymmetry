@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add machine-readable citation metadata for researchers citing Asymmetry.
+
 - Recover marginal errors for coupled global fits with stable curvature at
   strictly interior parameter values near a bound.
 
