@@ -126,9 +126,9 @@ def _field_offsets_calibrated(
 ) -> ArrayLikeFloat | None:
     """Calibrated full-grid or exact orbit samples, with empirical grid RMS."""
     field_tesla = abs(float(B0_gauss)) * GAUSS_TO_TESLA
-    effective_lambda = float(lambda_nm) * (_POWDER_LAMBDA_FACTOR if powder else 1.0)
-    if field_tesla <= 0 or Bc2_tesla <= 0 or lambda_nm <= 0 or field_tesla >= Bc2_tesla:
+    if not 0 < lambda_nm < np.inf or field_tesla <= 0 or Bc2_tesla <= 0 or field_tesla >= Bc2_tesla:
         return None
+    effective_lambda = float(lambda_nm) * (_POWDER_LAMBDA_FACTOR if powder else 1.0)
     offsets = _centered_field_offsets(
         effective_lambda, field_tesla, float(Bc2_tesla), int(n_g), int(n_grid)
     )
@@ -259,14 +259,17 @@ def vortex_lattice_relaxation(
 
     The real signal is ``Re[exp(i*(2*pi*gamma*B0*t+phase))*R(t)]``. The envelope
     uses ``abs(B0)`` and the carrier uses the signed field. Scalar times return
-    a length-one array; other time-array shapes are preserved. Nonpositive
-    lambda/Bc2, zero field or ``abs(B0)>=Bc2`` give unity (no lattice).
+    a length-one array. Other time-array shapes are preserved. A NaN depth gives
+    complex NaNs. Positive infinite depth gives unity (zero lattice width).
+    Nonpositive depth or Bc2, zero field, and fields at or above Bc2 also give unity.
 
     Defaults use reciprocal extent 80, a 384² midpoint grid and 512 field bins
     with fourth-order local moments. Explicit resolution overrides retain their
     meanings but do not inherit accuracy demonstrated for the default settings.
     """
     t = np.atleast_1d(np.asarray(t_us, dtype=float))
+    if np.isnan(lambda_nm):
+        return np.full(t.shape, complex(np.nan, np.nan))
     quadrature = _calibrated_field_moments(
         lambda_nm, B0_gauss, Bc2_tesla, powder, int(n_g), int(n_grid), n_bins
     )

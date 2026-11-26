@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recover marginal errors for coupled global fits with stable curvature at
   strictly interior parameter values near a bound.
 
+- Preserve missing values and return NaN for nonphysical inputs in superconducting
+  linewidth conversions. Zero width and infinite penetration depth convert to each other.
+- Keep missing depths undefined in time-domain vortex-lattice models and give Brandt
+  field fits a positive default lower depth bound.
+
 - Keep the splash responsive while analysis dependencies load in the
   background.
 - Show the splash earlier and open the first project window faster by loading

@@ -43,6 +43,7 @@ BRANDT_COEFFICIENT = 0.0609
 
 # Existing constant is in MHz/T cycles-per-second units, so convert to rad/s/T.
 GAMMA_MU_RAD_S_PER_T = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * 1.0e6
+_BRANDT_UNIT_SCALE_NM2_PER_US = GAMMA_MU_RAD_S_PER_T * MAGNETIC_FLUX_QUANTUM_WB * 1.0e12
 
 
 class GaussianWidth(Enum):
@@ -50,6 +51,14 @@ class GaussianWidth(Enum):
 
     SECOND_MOMENT = 1.0
     GAUSSIAN_COMPONENT = np.sqrt(2.0)
+
+
+def _brandt_root_scale(width: GaussianWidth, brandt_coefficient: float) -> float:
+    # The width times depth squared has units nm²/µs. Take its root before
+    # dividing by the measured value so intermediate overflow cannot mask a finite result.
+    return np.sqrt(
+        float(brandt_coefficient) * _BRANDT_UNIT_SCALE_NM2_PER_US / GaussianWidth(width).value
+    )
 
 
 def sigma_to_lambda_nm(
@@ -64,17 +73,18 @@ def sigma_to_lambda_nm(
     ``width=GaussianWidth.GAUSSIAN_COMPONENT`` takes sigma_G from exp(-sigma_G^2*t^2).
     The conversion first applies sigma_2 = sqrt(2)*sigma_G when needed.
 
-    For sigma <= 0, the returned lambda is +inf.
+    Positive finite widths convert using the London relation. A zero width
+    returns +inf. NaN is preserved, and negative or infinite widths return
+    NaN at their corresponding positions.
     """
     sigma_arr = np.asarray(sigma_us, dtype=float)
-    sigma_s = np.maximum(sigma_arr, 0.0) * GaussianWidth(width).value * 1.0e6
+    root_scale = _brandt_root_scale(width, brandt_coefficient)
+    positive = np.isfinite(sigma_arr) & (sigma_arr > 0.0)
 
-    prefactor = float(brandt_coefficient) * GAMMA_MU_RAD_S_PER_T * MAGNETIC_FLUX_QUANTUM_WB
-    lambda_m = np.full_like(sigma_s, np.inf, dtype=float)
-
-    positive = sigma_s > 0.0
-    lambda_m[positive] = np.sqrt(prefactor / sigma_s[positive])
-    return np.asarray(lambda_m * 1.0e9, dtype=float)
+    lambda_nm = np.full_like(sigma_arr, np.nan)
+    lambda_nm[sigma_arr == 0.0] = np.inf
+    lambda_nm[positive] = root_scale / np.sqrt(sigma_arr[positive])
+    return lambda_nm
 
 
 def lambda_nm_to_sigma_us(
@@ -87,13 +97,18 @@ def lambda_nm_to_sigma_us(
 
     The required ``width`` selects exp(-sigma_2^2*t^2/2) (SECOND_MOMENT) or
     exp(-sigma_G^2*t^2) (GAUSSIAN_COMPONENT), with sigma_G = sigma_2/sqrt(2).
+
+    Positive finite depths convert using the London relation. A depth of
+    +inf returns zero width. NaN is preserved, and zero, negative, and -inf
+    depths return NaN at their corresponding positions. A positive depth with
+    a width beyond the floating-point range returns +inf.
     """
     lam_nm = np.asarray(lambda_nm, dtype=float)
-    lam_m = np.maximum(lam_nm, 0.0) * 1.0e-9
+    root_scale = _brandt_root_scale(width, brandt_coefficient)
+    positive = np.isfinite(lam_nm) & (lam_nm > 0.0)
 
-    prefactor = float(brandt_coefficient) * GAMMA_MU_RAD_S_PER_T * MAGNETIC_FLUX_QUANTUM_WB
-    sigma_s = np.zeros_like(lam_m, dtype=float)
-
-    positive = lam_m > 0.0
-    sigma_s[positive] = prefactor / np.square(lam_m[positive])
-    return np.asarray(sigma_s * 1.0e-6 / GaussianWidth(width).value, dtype=float)
+    sigma_us = np.full_like(lam_nm, np.nan)
+    sigma_us[np.isposinf(lam_nm)] = 0.0
+    with np.errstate(over="ignore", under="ignore"):
+        sigma_us[positive] = np.square(root_scale / lam_nm[positive])
+    return sigma_us

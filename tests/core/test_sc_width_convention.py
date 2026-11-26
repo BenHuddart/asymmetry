@@ -6,6 +6,7 @@ from scipy.integrate import quad
 
 from asymmetry.core.fitting.models import gaussian_relaxation
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+from asymmetry.core.fitting.sc import GaussianWidth
 from asymmetry.core.fitting.sc.constants import lambda_nm_to_sigma_us, sigma_to_lambda_nm
 from asymmetry.core.utils.constants import MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
@@ -17,8 +18,6 @@ def test_width_conversion_requires_an_explicit_convention(function):
 
 
 def test_gaussian_field_distribution_fixes_sqrt2():
-    from asymmetry.core.fitting.sc import GaussianWidth
-
     field_rms_tesla = 0.001
     angular_width = 2 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * field_rms_tesla
     for time in (0.1, 0.4, 1.2):
@@ -40,8 +39,6 @@ def test_gaussian_field_distribution_fixes_sqrt2():
 
 
 def test_workflow_relation_matches_library_after_conversion():
-    from asymmetry.core.fitting.sc import GaussianWidth
-
     sigma_g = 1.164
     gaussian_lambda = sigma_to_lambda_nm(sigma_g, width=GaussianWidth.GAUSSIAN_COMPONENT)
     second_moment_lambda = sigma_to_lambda_nm(sigma_g, width=GaussianWidth.SECOND_MOMENT)
@@ -50,14 +47,69 @@ def test_workflow_relation_matches_library_after_conversion():
     assert second_moment_lambda / gaussian_lambda == pytest.approx(2**0.25, rel=1e-12)
 
 
-@pytest.mark.parametrize("width_name", ["SECOND_MOMENT", "GAUSSIAN_COMPONENT"])
-def test_width_conversion_round_trip(width_name):
-    from asymmetry.core.fitting.sc import GaussianWidth
-
-    width = GaussianWidth[width_name]
+@pytest.mark.parametrize("width", list(GaussianWidth))
+def test_width_conversion_round_trip(width):
     sigma = np.array([0.2, 1.0, 2.0])
     penetration = sigma_to_lambda_nm(sigma, width=width)
     np.testing.assert_allclose(lambda_nm_to_sigma_us(penetration, width=width), sigma, rtol=1e-14)
+
+
+@pytest.mark.parametrize("width", list(GaussianWidth))
+@pytest.mark.parametrize(
+    "convert,positive,limit,expected_limit,invalid",
+    [
+        (sigma_to_lambda_nm, 1.0, 0.0, np.inf, [-1.0, -np.inf, np.inf]),
+        (lambda_nm_to_sigma_us, 200.0, np.inf, 0.0, [0.0, -1.0, -np.inf]),
+    ],
+)
+def test_width_conversion_domain(width, convert, positive, limit, expected_limit, invalid):
+    positive_value = convert(positive, width=width).item()
+    assert 0.0 < positive_value < np.inf
+    values = np.array([[np.nan, positive, limit], invalid])
+    expected = np.array([[np.nan, positive_value, expected_limit], [np.nan] * 3])
+    np.testing.assert_array_equal(convert(values, width=width), expected)
+
+    for value, expected_value in zip(values.flat, expected.flat, strict=True):
+        converted = convert(float(value), width=width)
+        assert converted.shape == ()
+        np.testing.assert_equal(converted, expected_value)
+
+
+@pytest.mark.parametrize("width", list(GaussianWidth))
+def test_brandt_width_scales_as_inverse_depth_squared(width):
+    sigma, sigma_at_double_depth = lambda_nm_to_sigma_us([200.0, 400.0], width=width)
+    assert sigma > 0.0
+    assert sigma_at_double_depth == pytest.approx(sigma / 4.0, rel=1e-14)
+
+
+@pytest.mark.parametrize(
+    "width,width_factor",
+    [(GaussianWidth.SECOND_MOMENT, 1.0), (GaussianWidth.GAUSSIAN_COMPONENT, np.sqrt(2.0))],
+)
+def test_extreme_finite_widths_give_representable_depths(width, width_factor):
+    widths = np.array([1e308, np.finfo(float).smallest_subnormal])
+    # Brandt Eq. (11) with the rounded 0.0609 amplitude gives this scale in nm²/µs.
+    expected_depths = np.sqrt(107244.85533737145 / width_factor) / np.sqrt(widths)
+    with np.errstate(over="raise", invalid="raise", divide="raise"):
+        depths = sigma_to_lambda_nm(widths, width=width)
+        recovered_widths = lambda_nm_to_sigma_us(expected_depths, width=width)
+    np.testing.assert_allclose(depths, expected_depths, rtol=1e-14, atol=0.0)
+    assert recovered_widths[0] == pytest.approx(widths[0], rel=1e-14)
+    assert recovered_widths[1] == widths[1]
+
+
+@pytest.mark.parametrize("width", list(GaussianWidth))
+def test_very_small_positive_depth_can_overflow_the_width(width):
+    with np.errstate(over="raise", invalid="raise", divide="raise"):
+        assert np.isposinf(lambda_nm_to_sigma_us(1e-200, width=width))
+
+
+@pytest.mark.parametrize("width", list(GaussianWidth))
+def test_custom_brandt_coefficient_rescales_both_conversions(width):
+    depth = sigma_to_lambda_nm(1.0, width=width, brandt_coefficient=0.0609)
+    sigma = lambda_nm_to_sigma_us(200.0, width=width, brandt_coefficient=0.0609)
+    assert sigma_to_lambda_nm(1.0, width=width, brandt_coefficient=0.2436) == 2 * depth
+    assert lambda_nm_to_sigma_us(200.0, width=width, brandt_coefficient=0.2436) == 4 * sigma
 
 
 @pytest.mark.parametrize("function", [sigma_to_lambda_nm, lambda_nm_to_sigma_us])

@@ -693,7 +693,7 @@
     "src/asymmetry/core/fitting/global_fit_wizard.py": 11484,
     "src/asymmetry/core/fitting/grouped_time_domain.py": 1985,
     "src/asymmetry/core/fitting/knight_analysis.py": 1374,
-    "src/asymmetry/core/fitting/parameter_models.py": 4399,
+    "src/asymmetry/core/fitting/parameter_models.py": 4395,
     "src/asymmetry/core/fitting/peak_detection.py": 1932,
     "src/asymmetry/core/fourier/fft.py": 1161,
     "src/asymmetry/core/io/nexus.py": 1316,

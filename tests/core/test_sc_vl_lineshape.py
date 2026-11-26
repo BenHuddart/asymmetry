@@ -119,12 +119,31 @@ def test_scalar_time_does_not_crash() -> None:
 
 
 def test_no_lattice_above_bc2_is_undamped() -> None:
-    """B0 >= Bc2 (or non-physical inputs) -> no vortex lattice, R(t) == 1."""
+    """B0 >= Bc2 gives no vortex lattice, R(t) == 1."""
     t = np.linspace(0.0, 8.0, 200)
     assert np.allclose(vortex_lattice_relaxation(t, 195.0, 400.0, 25.0, powder=True)[0], 1.0)
     # 40 T applied field above a 25 T Bc2:
     assert np.allclose(vortex_lattice_relaxation(t, 195.0, 400_000.0, 25.0), 1.0)
-    assert np.allclose(vortex_lattice_relaxation(t, -5.0, 400.0, 25.0), 1.0)  # lambda<=0
+
+
+@pytest.mark.parametrize("powder", [False, True])
+@pytest.mark.parametrize("depth", [0.0, -5.0, np.inf])
+def test_depth_limits_are_undamped_without_warnings(powder: bool, depth: float) -> None:
+    t = np.arange(6.0).reshape(2, 3)
+    with np.errstate(all="raise"):
+        result = vortex_lattice_relaxation(t, depth, 400.0, 25.0, powder=powder)
+    np.testing.assert_array_equal(result, np.ones(t.shape, dtype=complex))
+
+
+@pytest.mark.parametrize("powder", [False, True])
+def test_missing_depth_returns_nan_relaxation_without_warnings(powder: bool) -> None:
+    for t, expected_shape in ((2.0, (1,)), (np.arange(6.0).reshape(2, 3), (2, 3))):
+        with np.errstate(all="raise"):
+            result = vortex_lattice_relaxation(t, np.nan, 400.0, 25.0, powder=powder)
+        assert result.shape == expected_shape
+        assert result.dtype == np.complex128
+        assert np.all(np.isnan(result.real))
+        assert np.all(np.isnan(result.imag))
 
 
 def test_lambda_scaling_of_the_rate() -> None:

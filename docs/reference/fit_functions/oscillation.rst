@@ -548,6 +548,9 @@ The local-moment expansion has a separate compression bound below
 not include field-map discretisation or floating-point transform error.
 The envelope uses :math:`|B|`; the precession carrier uses the signed field.
 Nonuniform, shifted and descending times and both signed carriers are checked.
+An infinite positive depth gives an undamped time envelope, :math:`R(t)=1`.
+The time-domain models also return unity for nonpositive depths. A NaN depth
+gives an undefined time envelope and signal throughout the time array.
 
 Barker *et al.* use the raw Gaussian-cutoff kernel for an isotropic hexagonal
 fit to polycrystalline Re₃Ta; their low-temperature depth scale is
