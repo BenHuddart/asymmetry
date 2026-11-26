@@ -12,16 +12,12 @@ Global fitting across fields: Li⁺ ionic motion in a garnet electrolyte
    temperatures, verify the field units, and decide which parameters can
    physically be shared before fitting them together.
 
-This chapter is the flagship worked example of a **global fit** — a single
-simultaneous fit of several runs that share some parameters and differ in
-others. It takes a real longitudinal-field (LF) decoupling series measured on
-EMU at ISIS and, one temperature at a time, fits a triplet of runs recorded at
-three applied fields with one shared model, then trends the fitted fluctuation
-rate against temperature to recover an activation energy for lithium-ion
-motion. The sample is an aluminium-doped lithium garnet,
-Li₇La₃Zr₂O₁₂ (LLZ), a candidate solid electrolyte for a lithium-ion battery;
-the same runs were published by Amores *et al.*, J. Mater. Chem. A **4**, 1729
-(2016), so the analysis here has a paper-grade target to aim at.
+Fit three longitudinal-field (LF) measurements at a time to resolve the
+fluctuation rate of the local field, then use its temperature dependence to
+estimate an activation energy for lithium-ion motion. The measurements come
+from EMU at ISIS and probe an aluminium-doped lithium garnet (Al-LLZ), a
+candidate solid electrolyte for lithium-ion batteries. Amores *et al.*
+use these measurements to study lithium diffusion within grains [Amores2016]_.
 
 The related demonstration, :doc:`lf_decoupling_dynamics`, uses a magnetic
 longitudinal-field series and works through the static-versus-dynamic
@@ -70,8 +66,7 @@ measured at three longitudinal fields.
      - Role
    * - ``51315``
      - TF 20 G (300 K)
-     - Calibration run — its precession amplitude fixes the detector balance
-       :math:`\alpha` before any science fit.
+     - TF calibration run to estimate the detector balance :math:`\alpha`.
    * - ``51341``–``51379``
      - LF 0 / 5 / 10 G
      - 13 temperatures × 3 fields = 39 science runs. Each temperature's triplet
@@ -98,20 +93,16 @@ it is a single preparatory step.
    :align: center
    :alt: The inline alpha calibration on the Al-LLZ TF 20 G run 51315, showing
       the calibrated draft preview beside its measured coefficient
-      α = 0.876 in the α card.
+      α = 0.858376 in the α card.
 
-   The inline alpha calibration (the Grouping window's **α (detector
-   balance)** card) on the TF 20 G run ``51315``. With the
-   **Diamagnetic** method selected, **Estimate calibration** finds the :math:`\alpha`
-   that makes the transverse-field precession oscillate symmetrically about
-   zero; the α card reports
-   :math:`\alpha = 0.876` for this silver-free garnet run. The spinbox and preview update immediately; **Apply** commits the draft
-   coefficient and captured source context. The precession is clean out to about 20 µs; past ~25 µs
-   the forward/backward counts have run down and the raw asymmetry ratio grows
-   noisy, which is normal for pulsed EMU data and does not affect the estimate.
+   The **Grouping** window on TF run ``51315``. Select **Diamagnetic** and click
+   **Estimate calibration** to minimise the weighted asymmetry power in the
+   calibration window. The α field shows 0.858376 for this run. **Apply**
+   stores the coefficient and its source in the grouping profile.
 
-With :math:`\alpha` calibrated and the grouping profile applied, every LF run of
-the series inherits the same detector balance automatically.
+Use the standard EMU forward and backward groups and the same calibrated
+profile for all LF runs. The example keeps the file timing and good-bin
+settings, with no deadtime or count background correction.
 
 Step 2 — Read the raw field triplet
 -----------------------------------
@@ -150,13 +141,14 @@ function plus a flat background, entered as the composite
 
    A(t): A_1*exp(-Gamma(t; Delta=Delta, nu=nu, B_L=B_L)) + A_bg
 
-The Keren function is the standard analytic model for LF decoupling by a
-fluctuating nuclear-dipolar field: it carries the static field-distribution
-width :math:`\Delta`, the fluctuation rate :math:`\nu`, and the applied field
-:math:`B_L` directly as parameters, and is accurate in the fast/intermediate
-regime that ionic motion occupies. It is the same model Amores *et al.* used on
-this dataset. The flat ``Constant`` term is the background the guide asks for —
-muons that stop outside the sample and do not relax.
+Keren's analytic function describes relaxation in a fluctuating nuclear field.
+Its parameters include the field-distribution width :math:`\Delta`, the
+fluctuation rate :math:`\nu`, and the applied field :math:`B_L`. In this teaching
+model, a fitted constant :math:`A_{bg}` accounts for a flat asymmetry offset
+and is free to vary between temperature triplets. Amores *et al.* subtracted
+a fixed background and multiplied the Keren polarisation by an additional
+relaxation factor whose rate was fixed with temperature for each sample
+[Amores2016]_. Here the constant offset is the only term added to Keren.
 
 .. dropdown:: The Keren relaxation function
 
@@ -171,16 +163,16 @@ muons that stop outside the sample and do not relax.
       -2\nu\omega_0\, e^{-\nu t}\sin\omega_0 t\Big],
 
    where :math:`\omega_0 = \gamma_\mu B_L` is the muon Larmor frequency in the
-   applied longitudinal field. It is a strong-collision result valid when
-   :math:`\nu \gtrsim \Delta` and reduces to the Abragam function at
-   :math:`B_L = 0`. The full derivation and parameter list are on the
+   applied longitudinal field. The approximation is valid in the fast-fluctuation
+   regime (:math:`\Delta/\nu < 1`) or at early times. The model and parameter
+   conventions are on the
    :ref:`Keren reference page <fit-keren>`; where fluctuations are slow
    (:math:`\nu \lesssim \Delta`) the full dynamic Kubo–Toyabe of
    :doc:`lf_decoupling_dynamics` is the better model.
 
-The heart of a global fit is deciding, parameter by parameter, whether a
-quantity is *shared* across the runs or *individual* to each. That decision is
-made in the **Batch** tab's **Parameter classification** table.
+Select the three runs at one temperature in the **Data Browser**. Open the
+**Batch** tab in the **Fit** dock, assemble ``Keren + Constant``, and set the
+**Type** and **Seed** of each parameter in **Parameter Classification**.
 
 .. figure:: /_generated/corpus_screenshots/corpus_llz_global_setup.png
    :width: 100%
@@ -189,165 +181,238 @@ made in the **Batch** tab's **Parameter classification** table.
       to Global and B_L set to File, seeded with the guide's starting values
       over a 12 µs fit range.
 
-   The **Batch** tab set up for the joint fit of the 160 K triplet. The
-   **Parameter classification** table is the whole story of the fit: each row's
-   **Type** decides whether that parameter is shared or per-run. The **Fit
-   range** is capped at 12 µs and the guide's seed values are entered in the
-   **Seed** column, with all three runs selected so **Run series** acts on
-   the loaded triplet.
-
-Walk down the classification table row by row — this is the tying picture that
-makes the fit a global one:
+   The **Batch** tab for the 160 K triplet. In **Parameter Classification**,
+   **Global** shares :math:`\Delta`, :math:`\nu`, and the amplitudes across the
+   three runs. The 7.5 G shown in **Seed** is the mean of the two nonzero
+   fields. **File** holds :math:`B_L` at the three fields from the run headers,
+   0 G, 5 G, and 10 G, respectively. The **Fit range** is 0–12 µs.
 
 .. list-table::
    :header-rows: 1
-   :widths: 16 12 14 58
+   :widths: 16 10 14 16 44
 
    * - Parameter
      - Seed
      - Type
+     - Min / Max
      - Role in the joint fit
    * - ``A_1`` (%)
      - 15
      - **Global**
-     - Sample-signal amplitude. The relaxing garnet signal is the same physical
-       fraction of the asymmetry at every field, so one shared value serves the
-       triplet.
+     - 0 / 40
+     - Common sample asymmetry amplitude within the triplet.
    * - :math:`\Delta` (µs⁻¹)
      - 0.3
      - **Global**
-     - Static field-distribution width. This is a property of the sample at this
-       temperature, not of the applied field — one value, shared. Sharing it
-       across fields is precisely what lifts the :math:`\Delta`–:math:`\nu`
-       degeneracy.
-   * - :math:`\nu` (MHz)
+     - 0 / 2
+     - One field-distribution width for the three fields at this temperature.
+   * - :math:`\nu` (µs⁻¹, displayed in MHz)
      - 0.2
      - **Global**
-     - Fluctuation (hop) rate — the quantity whose temperature dependence gives
-       the activation energy. Also a sample property, hence shared.
+     - 0 / 8
+     - One fluctuation rate for the three fields at this temperature. Its
+       temperature dependence gives the activation energy.
    * - ``B_L`` (G)
-     - 0
+     - —
      - **File**
-     - Applied longitudinal field. This is the one parameter that *differs*
-       between the runs, and it is not fitted at all: **File** fixes it per run
-       to the 0 / 5 / 10 G value read from each run's own header. This is why
-       the loader reading the field from the file matters.
+     - —
+     - The measured longitudinal field from the run header, held at 0 G,
+       5 G, or 10 G in the corresponding run.
    * - ``A_bg`` (%)
      - 5
      - **Global**
-     - Flat background amplitude. Muons stopping outside the sample give the
-       same field-independent background at each field, so it too is shared.
+     - −10 / 20
+     - Common flat asymmetry offset within the triplet.
 
-The **Type** column is the general mechanism: a ``Global`` parameter takes one
-value across every run in the batch; a ``File`` parameter is fixed per run to
-the value stored in that run's metadata; and a per-run free parameter (``Local``
-in the general case) would take an independent fitted value per run. Here only
-:math:`B_L` varies, and it varies in a known way, so the triplet is described by
-just four shared numbers plus three fixed fields — the textbook shape of a
-well-posed global fit.
-
-Two practical settings complete the setup. The **Fit range** is limited to
-:math:`t \le 12` µs: past about 13 µs the forward/backward counts of pulsed EMU
-data have run down and the asymmetry ratio diverges, so restricting the window
-both speeds the fit and keeps the noisy tail out of it. The **Seed** values
-(:math:`A_1 = 15` %, :math:`A_{bg} = 5` %, :math:`\Delta = 0.3`,
-:math:`\nu = 0.2`) are the guide's suggested starting points at 160 K — starting
-values, not results. Warm-starting each higher temperature from the previous
-fit's converged values ("propagate up in temperature") makes the whole series
-converge cleanly.
+Show **Bounds** to enter the **Min** and **Max** values, set **Fit range** to
+0–12 µs, and keep **Bunch** at 1 for the fits. The counts become sparse in the
+tail, where the asymmetry ratio is noisy. Each batch uses three fields at a
+single temperature so that sharing :math:`\nu` still allows it to vary across
+the temperature scan.
 
 Step 4 — Run the joint fit
 --------------------------
 
-With the triplet selected and the parameters classified, **Run series**
-performs the simultaneous fit.
+With the triplet selected and the parameters classified, click **Run series**
+to fit the three runs simultaneously. Check the fitted curve and residuals for
+each field. Repeat at the remaining temperatures in ascending order, using the
+fitted values from one triplet as seeds for the next.
 
 .. figure:: /_generated/corpus_screenshots/corpus_llz_global_result.png
    :width: 100%
-   :alt: The converged global Keren fit of the 160 K triplet, with the red
-      Batch Fit curve overlaid on the zero-field data and the fitted shared
-      Δ = 0.358 µs⁻¹, ν = 0.267 MHz reported in the classification table.
+   :alt: Batch tab reporting the fit of all three runs at 160 K, with the
+      Keren plus Constant fit curve overlaid on the zero-field data.
 
-   The converged joint fit. The red **Batch Fit** curve traces the zero-field
-   run cleanly through the decoupling shoulder, and the classification table now
-   carries the fitted *shared* values: :math:`\Delta = 0.358` µs⁻¹ and
-   :math:`\nu = 0.267` MHz at 160 K, with :math:`A_1 = 14.1` %. The log reports
-   the joint quality, ``average χ²ᵣ = 1.674`` across the three runs — one fit
-   describing all three fields at once.
-
-The fitted :math:`\Delta = 0.358` µs⁻¹ and :math:`\nu = 0.267` MHz sit close to
-the guide's seeds, as expected for the lowest temperature where the ions are
-nearly frozen. Note that the background amplitude fits to a small *negative*
-value here (:math:`A_{bg} \approx -3.6` %) rather than the +5 % seed: with a
-single flat term standing in for the true baseline the fit is free to place it
-below zero, a reminder that the background model is a modelling choice (see
-`Assumptions and limitations`_).
+   The joint fit of the three fields at 160 K. The curve shown is for the 0 G
+   run. The fitted values shared across the triplet are
+   :math:`\Delta=0.357` µs⁻¹, :math:`\nu=0.266` MHz,
+   :math:`A_1=14.0` %, and :math:`A_{bg}=4.02` %. The average reduced
+   :math:`\chi^2` shown for the three runs is 1.67.
 
 Step 5 — Trend ν(T) and extract the activation energy
 -----------------------------------------------------
 
-Repeating the joint fit at all thirteen temperatures builds a
-:math:`\nu(T)` series — the payoff of the whole workflow. Physically we expect
-:math:`\nu` to sit on a low, roughly constant plateau while the lithium ions are
-immobile and then rise steeply once thermally-activated hopping switches on. In
-this reproduction :math:`\nu` is flat near 0.27 MHz up to about 250 K and then
-climbs to roughly 1.1 MHz at the top of the range, matching the paper's
-"plateau, then activated rise above ~290 K". (Over the same series
-:math:`\Delta` decreases smoothly — the width the muon sees narrows as the ions
-mobilise — from 0.358 µs⁻¹ down to about 0.27 µs⁻¹.)
+As lithium ions become mobile, their nuclear moments change the local field at
+an implanted muon more frequently. The fitted :math:`\nu` is close to
+0.27 MHz at the five lowest setpoints and rises to about 1.09 MHz at 404 K.
+The rising part of the rate is the signal used to estimate a hopping barrier.
 
-An activation energy comes from an Arrhenius analysis of the rising branch. In
-the parameter-trending panel this is done natively by transforming the axes so
-that an Arrhenius law becomes a straight line, then fitting a ``Linear`` model
-to it.
+Each Batch fit records one series of three fields. In the **Parameters** dock
+(**View → Show Fit Parameters**), select that series and open **Table** to
+see the shared :math:`\nu` and its fitted standard error under **Global fitting
+parameters**. Choose **⋯ → Export TSV…** to save the entry.
+In the export's header, read the line ``#   nu (MHz) = ... +/- ...``. Record the
+EMU setpoint in kelvin, the rate before ``+/-``, and the standard error after it,
+once per triplet. The command-line ``fit-global --groups`` command can also
+collect the shared parameters along ``--group-order temperature``.
+
+The **Fit Parameters** figure uses a prepared trend series of those thirteen
+summaries. The controls below show how the fit is set up on that series.
+Use `Replay from the fitted rates`_ to calculate the result from the values
+collected in the Batch fits.
+
+Treat the low-temperature plateau as a residual fluctuation rate :math:`c`
+in the teaching law :math:`\nu(T) = c + \nu_0 e^{-E_a/(k_B T)}`. The mean of the
+five rates at 160, 180, 200, 220, and 240 K is 0.273517 MHz. This rate offset
+belongs to the temperature trend. The fitted asymmetry offset :math:`A_{bg}`
+belongs to the time-domain fit and has units of percent.
+
+#. In **Fit Parameters**, choose **𝑇 (K)** on the **x** rail and check
+   :math:`\nu` on the **y** rail. On the x rail's **ƒ** menu choose
+   ``1/x  (reciprocal)``.
+#. On the :math:`\nu` card's **ƒ** menu choose **Custom…** and enter
+   ``log(x - 0.273517)``. The expression uses the natural logarithm of the
+   numerical rate difference in MHz (:math:`\mathrm{\mu s}^{-1}`).
+#. In **Table**, clear **Trend** for the five plateau points. Click **Fit…**
+   on the :math:`\nu` card and use the ``Linear`` model with **Errors** set to
+   **Column** for the eight setpoints from 264 to 404 K, inclusive. Click the
+   **χ²ᵣ** chip to read the slope :math:`m` and its uncertainty in **Fit results**.
 
 .. figure:: /_generated/corpus_screenshots/corpus_llz_nu_arrhenius.png
    :width: 100%
-   :alt: The ν(T) trend rendered as an Arrhenius plot — log(ν − baseline)
-      against 1/T — with a straight Linear fit through the eight activated-branch
-      points and five plateau points excluded.
+   :alt: The Fit Parameters panel plots ln of the plateau-subtracted
+      fluctuation rate against reciprocal setpoint temperature, with a linear
+      fit to eight points from 264 to 404 K and five plateau points excluded.
 
-   The :math:`\nu(T)` trend as a native Arrhenius plot. The abscissa is
-   transformed to :math:`1/T` (reciprocal) via a **Custom** transform on the
-   x rail's ƒ button (reading ``1/x``) and the ordinate to
-   :math:`\log(\nu - 0.274324)` via a **Custom** transform on the card's own
-   ƒ button (reading ``log(y - 0.274324)``). A ``Linear`` model fit
-   (the card's **Fit ✓**) runs on the eight activated-branch points
-   (:math:`T \ge 264` K), whose slope
-   is :math:`-E_a/k_B`. The five plateau points are excluded from the trend
-   (``8/13 members in trend · 5 excluded``): three sit low with large
-   propagated error bars and two fall below the baseline and drop out entirely.
+   Arrhenius fit in **Fit Parameters**. The ordinate is
+   :math:`\ln[(\nu - 0.273517\,\mathrm{MHz})/(1\,\mathrm{MHz})]` and the
+   abscissa is :math:`1/T` in K⁻¹. The line uses the eight setpoints at
+   264, 284, 304, 324, 344, 364, 384, and 404 K. Three of the five excluded
+   plateau points have :math:`\nu > c` and appear with grey outlines.
 
-The reason the transform subtracts a baseline — rather than using the plain
-:math:`\ln` preset — is important, and it is the subtle part of this analysis.
-The hop rate does not vanish on the low-temperature plateau; it saturates at a
-residual value :math:`c \approx 0.274` MHz. A rate of the form
-:math:`\nu(T) = \nu_0\,e^{-E_a/k_BT} + c` is **not** linearised by
-:math:`\ln\nu` against :math:`1/T`, because :math:`\ln(\nu_0 e^{-E_a/k_BT}+c)`
-is not linear in :math:`1/T`; fitting it returns an activation energy biased low
-and, worse, one that depends on where the branch is cut. Subtracting the
-plateau first — the ``Custom`` expression ``log(x - 0.274324)`` with the
-plateau value read off the low-temperature end — makes :math:`\ln(\nu-c)`
-genuinely straight and the slope branch-insensitive. The recipe, and the
-general "Arrhenius on a plateau" caution, are documented under
-:ref:`trend-axis-transforms` in :doc:`/reference/parameter_trending`.
+Checking the slope
+~~~~~~~~~~~~~~~~~~
 
-The slope of the fitted line gives
+Subtracting :math:`c` leaves the activated contribution. Its natural
+logarithm has slope :math:`m=-E_a/k_B` against :math:`1/T`. You can check the
+fit directly from the rate and error columns. For each selected point, take
+:math:`x_i=1/T_i`, :math:`y_i=\ln[(\nu_i-c)/(1\,\mathrm{MHz})]`, and
+:math:`s_i=\sigma_{\nu_i}/(\nu_i-c)`. Use the **Column** weights
+:math:`w_i=1/s_i^2` after flooring :math:`s_i` at half the median selected
+error. The weighted slope is
 
 .. math::
 
-   E_a = 0.222(8)\ \mathrm{eV},
+   m = \frac{\sum_i w_i (x_i-\bar{x}_w)(y_i-\bar{y}_w)}
+            {\sum_i w_i (x_i-\bar{x}_w)^2},
 
-against the paper's µSR value of :math:`0.19(1)` eV from the same data. The two
-agree in magnitude and both describe the same physics — a lithium-ion hopping
-barrier of about 0.2 eV, seen *locally* by the muon. (For contrast, Amores
-*et al.* measured 0.55(3) eV by impedance spectroscopy on the same sample; the
-much larger transport barrier is dominated by inter-grain resistance that the
-local muon probe does not see — one of the paper's central points.) The residual
-~15 % gap between this reproduction and the paper's µSR number is honest and
-attributable: the background model is not uniquely pinned, and there is a known
-factor-of-:math:`2\pi` ambiguity in whether :math:`\Delta` and :math:`\nu` are
-quoted in MHz or in angular µs⁻¹.
+where the bars denote weighted means. This gives :math:`m=-2577(96)` K and
+:math:`E_a=-k_Bm=0.222(8)` eV, using
+:math:`k_B\simeq 8.61733\times10^{-5}\ \mathrm{eV\,K^{-1}}`. The slope error
+holds the plateau fixed.
+
+Multiplying :math:`\nu`, :math:`c`, and :math:`\sigma_\nu` by :math:`2\pi`
+adds :math:`\ln(2\pi)` to every :math:`y_i` and preserves each :math:`s_i`.
+The refit therefore has the same slope and activation energy. Asymmetry's
+Keren fluctuation rate enters the time equation as :math:`\nu t`, with
+:math:`\nu` in inverse microseconds. The :math:`2\pi` rescaling here checks the
+trend arithmetic after the time-domain fit.
+
+Replay from the fitted rates
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Save the thirteen shared rate summaries to ``llz-rates.tsv`` with one row per
+setpoint and three tab-separated columns. Use ``T_K``, ``nu_MHz``, and
+``sigma_nu_MHz`` as the header. Run this calculation on those columns to check
+the energy, conditional fit error, and plateau sensitivity.
+
+.. code-block:: python
+
+   import numpy as np
+
+   from asymmetry.core.utils.constants import BOLTZMANN_CONSTANT_MEV_PER_K
+
+   t, rate, error = np.loadtxt("llz-rates.tsv", delimiter="\t", skiprows=1, unpack=True)
+   cold = t < 264
+   c = float(f"{rate[cold].mean():.6g}")
+   dc = np.linalg.norm(error[cold]) / cold.sum()
+   k_b = BOLTZMANN_CONSTANT_MEV_PER_K / 1000  # eV/K
+
+   def fit_line(lower, plateau, scale=1.0):
+       selected = t >= lower
+       x = 1 / t[selected]
+       excess = scale * (rate[selected] - plateau)
+       if np.any(excess <= 0):
+           raise ValueError("Every selected rate must exceed the plateau")
+       y = np.log(excess)
+       sigma = scale * error[selected] / excess
+       weight = 1 / np.maximum(sigma, np.median(sigma) / 2)**2
+       x_mean = np.average(x, weights=weight)
+       y_mean = np.average(y, weights=weight)
+       spread = np.sum(weight * (x - x_mean)**2)
+       slope = np.sum(weight * (x - x_mean) * (y - y_mean)) / spread
+       return slope, 1 / np.sqrt(spread), y_mean - slope * x_mean
+
+   m, dm, intercept = fit_line(264, c)
+   print(f"{-k_b * m:.4f} ± {k_b * dm:.4f} eV (fixed plateau)")
+   np.testing.assert_allclose(
+       fit_line(264, c, 2 * np.pi), (m, dm, intercept + np.log(2 * np.pi))
+   )
+   for lower in (264, 284, 304):
+       energies = [-k_b * fit_line(lower, offset)[0] for offset in (c - dc, c, c + dc)]
+       print(lower, ", ".join(f"{energy:.4f}" for energy in energies))
+
+Sensitivity to the plateau and temperature interval
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Combining the standard errors of the five separate plateau fits in quadrature
+and dividing by five gives 0.00285 MHz for the error in their mean, conditional
+on the common calibration and the time-domain model. The table refits the line
+at the plateau estimate and at that estimate shifted by this amount in both
+directions. Each shift is applied to every rate in the branch together.
+
+.. list-table:: Activation energy in eV for each fit interval and plateau offset
+   :header-rows: 1
+
+   * - Setpoint interval (K)
+     - :math:`c - 0.00285` MHz
+     - :math:`c`
+     - :math:`c + 0.00285` MHz
+   * - 264–404
+     - 0.2180
+     - 0.2221
+     - 0.2262
+   * - 284–404
+     - 0.2208
+     - 0.2240
+     - 0.2273
+   * - 304–404
+     - 0.2221
+     - 0.2247
+     - 0.2274
+
+For the eight-point branch, the plateau change shifts the energy by about
+0.004 eV in either direction. At the central plateau, dropping the two lowest
+branch temperatures increases it by 0.003 eV. These are sensitivity checks
+separate from the 0.008 eV conditional fit error.
+
+Amores *et al.* report :math:`0.19(1)` eV from the μSR Arrhenius analysis
+(Fig. 7) and :math:`0.55(3)` eV from impedance spectroscopy [Amores2016]_.
+The μSR rate probes local lithium motion within grains, while the impedance
+measurement also samples transport across grain boundaries. The teaching fit
+gives a higher μSR energy than the paper across the tested intervals and
+plateau shifts. The sensitivity checks leave the origin of that difference
+unresolved.
 
 .. dropdown:: From the hop rate to a diffusion coefficient
 
@@ -370,35 +435,11 @@ quoted in MHz or in angular µs⁻¹.
 Assumptions and limitations
 ---------------------------
 
-- **The background model is a choice.** The guide asks for "some choice of
-  background terms" without prescribing one; a single flat ``Constant`` is the
-  simplest, and it can fit slightly negative (as at 160 K above) when it stands
-  in for a baseline the data do not tightly constrain. A different background
-  (an extra relaxing term, a second Keren component) would shift the fitted
-  :math:`\Delta` and :math:`\nu` somewhat, and is part of the residual gap to
-  the paper's :math:`E_a`.
-
-- **Δ and ν units carry a 2π ambiguity.** Field-distribution widths and hop
-  rates in Keren/dynamic-KT parameterisations are variously quoted in MHz or in
-  angular µs⁻¹, which differ by :math:`2\pi`. The seeds are taken as the guide's
-  literal values; do not assume a conversion when comparing numbers across
-  sources.
-
-- **The Keren caveat at low temperature.** The Keren function is a
-  fast-fluctuation result and "does not work for both zero field *and* low
-  fluctuation rate", so at the lowest temperatures the zero-field run can be
-  excluded, fitting only the 5 / 10 G pair. Here all three fields are kept —
-  the joint fits converge with :math:`\chi^2_r \le 1.7` at every temperature —
-  but on data where the ZF run pulls the low-temperature fit, dropping it (or
-  switching to the full dynamic Kubo–Toyabe, which the guide names as the
-  alternative model) is the correct response.
-
-- **The Arrhenius branch and baseline are chosen by eye.** The activated branch
-  (:math:`T \ge 264` K) and the plateau baseline (:math:`c = 0.274` MHz) are
-  read off the trend, not fitted jointly; the extracted :math:`E_a` is
-  reassuringly insensitive to exactly where the branch is cut once the baseline
-  is subtracted, but a different baseline would move it. The alternative is to
-  skip the linearisation and fit an ``Arrhenius`` model in raw coordinates.
+- **The Keren approximation at low temperature.** At 160 K,
+  :math:`\Delta/\nu` exceeds one, outside Keren’s fast-fluctuation regime.
+  All three fields are retained in this teaching fit. If the zero-field
+  curve shows systematic discrepancies, compare a fit using the full dynamic
+  Kubo–Toyabe function, which includes the slow-limit polarisation tail.
 
 - **Setpoint versus measured temperature.** The trend axis uses the nominal
   setpoints (160–404 K); the instrument-recorded sample temperatures run
@@ -408,10 +449,11 @@ Assumptions and limitations
 References
 ----------
 
-- M\. Amores, T. E. Ashton, P. J. Baker, E. J. Cussen, and S. A. Corr, J. Mater.
-  Chem. A **4**, 1729 (2016) — the published analysis of this dataset: EMU LF
-  0/5/10 G decoupling, a simultaneous Keren fit at each temperature, and the
-  Li⁺ activation energy :math:`E_a = 0.19(1)` eV.
+.. [Amores2016] M\. Amores, T. E. Ashton, P. J. Baker, E. J. Cussen, and
+   S. A. Corr, J. Mater. Chem. A **4**, 1729 (2016), section 3.2.2 and
+   Figs. 4–7. `DOI <https://doi.org/10.1039/C5TA08107F>`__.
+   `Author manuscript <https://strathprints.strath.ac.uk/55263/1/Amores_etal_JOMCA_2015_Fast_microwave_assisted_synthesis_of_Li_stuffed_garnets_and_insights_into_Li_diffusion_from_muon.pdf>`__.
+
 - A\. Keren, Phys. Rev. B **50**, 10039 (1994) — the analytic longitudinal-field
   relaxation function used here.
 - R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,

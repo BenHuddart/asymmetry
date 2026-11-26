@@ -16,6 +16,9 @@ from asymmetry.core.fitting.axis_transforms import (
     AxisTransform,
     validate_axis_expression,
 )
+from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, fit_parameter_model
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.utils.constants import BOLTZMANN_CONSTANT_MEV_PER_K
 
 
 class TestApply:
@@ -232,3 +235,28 @@ class TestRedfieldAndArrhenius:
         slope, intercept = np.polyfit(inv_t, ln_rate, 1)
         np.testing.assert_allclose(slope, -ea_over_k)
         np.testing.assert_allclose(intercept, math.log(a))
+
+    @pytest.mark.parametrize("rate_scale", [1.0, 2 * math.pi])
+    def test_baseline_subtracted_arrhenius_fit_recovers_known_barrier(self, rate_scale):
+        temperatures = np.arange(264.0, 405.0, 20.0)
+        barrier_mev = 205.0
+        residual_rate, attempt_rate = 0.3, 420.0  # inverse microseconds
+        activated_rate = attempt_rate * np.exp(
+            -barrier_mev / (BOLTZMANN_CONSTANT_MEV_PER_K * temperatures)
+        )
+        rate = rate_scale * (residual_rate + activated_rate)
+        rate_error = rate_scale * 0.03 * activated_rate
+        inverse_temperature, _ = AxisTransform.preset(RECIPROCAL).apply(temperatures)
+        log_rate, log_error = AxisTransform.custom(
+            f"log(x - {rate_scale * residual_rate:.16g})"
+        ).apply(rate, rate_error)
+
+        model = ParameterCompositeModel(["Linear"])
+        seeds = ParameterSet([Parameter("m", value=-2500.0), Parameter("b", value=5.0)])
+        result = fit_parameter_model(inverse_temperature, log_rate, log_error, model, seeds)
+
+        assert result.success, result.message
+        slope = result.parameters["m"].value
+        assert -slope * BOLTZMANN_CONSTANT_MEV_PER_K == pytest.approx(barrier_mev, abs=0.01)
+        assert result.parameters["b"].value == pytest.approx(math.log(rate_scale * attempt_rate))
+        np.testing.assert_allclose(log_error, 0.03)
