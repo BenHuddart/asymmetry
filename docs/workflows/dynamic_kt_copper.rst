@@ -273,14 +273,38 @@ fixed.
 The hop-rate curve and the mobility minimum
 -------------------------------------------
 
-Fit EMU runs 20886, 20887, and 20901–20917 in temperature order. For
-the displayed series, let ``Delta``, ``nu``, and the constant offset
-vary, keep ``B_L`` fixed at zero, and seed each fit from the previous
-fit's values. Check the sensitivity to ``Delta`` using the fixed-width
-fit above. Open **View → Show Fit Parameters** and plot ``ν (MHz)``
-against ``𝑇 (K)``. On the rate card, use **Fit…** to fit
-``Arrhenius + Constant`` over 90–200 K. Choose **Column (stabilised
-errors)** under **Errors** to reproduce the weighting in the figure.
+Select EMU runs 20886, 20887, and 20901–20917 and choose
+``DynamicGaussianKT + Constant`` in **Fit → Batch**. In **Parameter
+Classification**, set ``B_L`` to 0 G and mark it **Fixed**. Mark the
+remaining parameters **Local** and use **Bounds** to enter their limits.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Parameter
+     - Initial seed
+     - Bounds
+   * - ``A_1`` (%)
+     - 20
+     - 0 to 40
+   * - ``Delta`` (µs⁻¹)
+     - 0.38
+     - 0.1 to 0.8
+   * - ``nu`` (MHz)
+     - 0.05
+     - 0 to 20
+   * - ``A_bg`` (%)
+     - 0
+     - −10 to 20
+
+Under **Seeding**, choose **Chain from previous run** and click **Run
+series** to fit in temperature order. Check the sensitivity to ``Delta``
+using the fixed-width fit above.
+
+Open **View → Show Fit Parameters** and plot ``ν (MHz)`` against
+``𝑇 (K)``. On the rate card, use **Fit…** to fit ``Arrhenius + Constant``
+over 90–200 K, with **Column (stabilised errors)** under **Errors**.
+Read the activation energy from the fitted ``Ea`` parameter in meV.
 
 .. figure:: /_generated/corpus_screenshots/corpus_cu_hop_rate_arrhenius.png
    :width: 90%
@@ -294,26 +318,18 @@ errors)** under **Errors** to reproduce the weighting in the figure.
    toggle on the :math:`\nu` axis enabled so the two-decade span reads in one
    frame. The rate falls from :math:`\approx 0.10` MHz at ~5 K to a **minimum**
    of :math:`\approx 0.02` MHz near 60 K — the mobility minimum — and then climbs
-   steeply to :math:`\approx 2.3` MHz at 200 K. The blue curve is a **Model
-   Fit\*** of an ``Arrhenius + Constant`` model over the thermally activated
-   :math:`T \ge 90` K branch; its slope gives the activation energy.
+   steeply to :math:`\approx 2.3` MHz at 200 K. The blue curve is the
+   ``Arrhenius + Constant`` fit to the rates against temperature over
+   90–200 K. Its fitted ``Ea`` is about 74 meV. The logarithmic y axis
+   is for display.
 
 Two regimes meet at the minimum. Above it, hopping is **thermally activated** —
 the muon climbs over the site-to-site barrier, and the rate follows an Arrhenius
 law :math:`\nu(T) = a\,e^{-E_a/k_B T} + c`. Below it, the rate turns *up* again
-on cooling: this is the low-temperature quantum-diffusion branch seen in the
-5 K vs 40 K contrast above. Fitting the activated branch (:math:`T \ge 90` K)
-with an ``Arrhenius + Constant`` model gives
-
-.. math::
-
-   E_a \approx 74\;\mathrm{meV},
-
-in the expected range for muon diffusion in copper. The value is window-dependent
-— it drifts with where the low-temperature end of the branch is cut — and a
-narrower or wider fit range shifts it by several meV; WiMDA's
-run gave :math:`E_a \approx 62` meV over a slightly different window. Both
-describe the same over-barrier hopping.
+on cooling, as seen in the 5 K and 40 K comparison. The activation
+energy depends on the lower bound of the fitted interval. Moving that
+bound shifts the result by several meV. The WiMDA reference fit gives
+about 62 meV over a slightly different window.
 
 .. warning::
 

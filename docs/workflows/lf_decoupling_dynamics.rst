@@ -208,23 +208,31 @@ static KT signal is not generally a single exponential. Compare the full
 candidate time-domain predictions rather than interpreting exponential rates
 as a universal static-versus-dynamic discriminator.
 
-Step 4 — The Redfield linearisation (headline)
-----------------------------------------------
+Step 4 — The Redfield linearisation
+-----------------------------------
+
+For the Redfield plot, repeat the time-domain fits on a separate series
+with ten runs, 9038–9039 and 9044–9051. This figure uses that selection
+throughout, so runs 9040–9043 are outside the series even though their
+fields lie on the plateau. In **Fit Parameters**, right-click the
+points for 9038 (0.4 T) and 9051 (3.8 T) and choose **Exclude from
+trend** for each. This leaves eight points for the trend fit, from 9039
+and 9044–9050 (0.5–3.5 T).
+
+On the **x** rail, use **ƒ → x²  (square)**, and on the rate card use
+**ƒ → 1/y  (reciprocal)**. Click **Fit…** on that card and choose
+``Linear``. Set **Errors** to **Column (stabilised errors)** to raise
+small propagated reciprocal-rate errors to half the median included
+error when weighting the fit.
 
 .. figure:: /_generated/corpus_screenshots/corpus_plateau_redfield.png
    :alt: Redfield linearisation — 1/lambda against B squared with a linear fit over the plateau
    :width: 100%
 
-   The headline result: :math:`1/\lambda` in μs against :math:`B^2` in G²
-   (compare Fig. 2(b) of Baker *et al.*), built in **Fit Parameters** with the card's **ƒ** button
-   set to ``1/y  (reciprocal)`` (reading ``1/y``) and the x rail's **ƒ**
-   button set to ``x²  (square)`` (reading ``x²``), and a ``Linear`` model
-   fit run on the transformed plateau. The
-   included plateau points fall on a straight line; the provenance line reads
-   ``8/10 members in trend · 2 excluded (0.4 T, 3.8 T)`` and the two excluded
-   points are ringed in grey — the 0.4 T point near the intercept (sub-plateau,
-   steep-drop regime) and the 3.8 T point at high :math:`B^2` (saturated,
-   below the extrapolated line).
+   :math:`1/\lambda` in μs against :math:`B^2` in G² in **Fit Parameters**
+   (compare Fig. 2(b) of Baker *et al.*). The eight included points follow
+   the fitted line. Grey rings mark the 0.4 T point near the intercept
+   and the 3.8 T point below the extrapolated line.
 
 Redfield's equation linearises exactly. Inverting it,
 
@@ -239,20 +247,9 @@ intercept :math:`1/(2\gamma_\mu^2\Delta_B^2\tau)`. No large-field approximation
 is needed for this algebra; its interpretation still requires the Redfield
 assumptions and field-independent parameters over the chosen interval.
 
-This is the flagship demonstration of the parameter-trending **axis
-transforms** on real data. The transform is applied where the panel assembles
-its data, so it governs the plotted points, the propagated error bars (with
-:math:`\sigma_{1/\lambda} = \sigma_\lambda/\lambda^2`), **and** the trend fit
-in one lens: fitting the built-in ``Linear`` model with the Y axis reciprocal
-and the X axis squared *is* the Redfield line. The two off-plateau points are
-left in the series but excluded from the trend (the series'
-``trend_excluded_runs``, toggled with the plot's **Exclude from trend**
-action), so they remain visible and ringed but do not pull the fit — the
-0.4 T point below the plateau and the 3.8 T saturated point. See
-:doc:`/reference/parameter_trending` for the transform presets and the
-model-fit dialog. On the rate card, use **Fit…** and choose ``Linear``.
-Set **Errors** to **Column (stabilised errors)**. This raises small
-propagated reciprocal-rate errors to half the median included error.
+The :doc:`axis transforms </reference/parameter_trending>` set the plotted
+and fitted coordinates. The plotted reciprocal-rate errors propagate as
+:math:`\sigma_{1/\lambda} = \sigma_\lambda/\lambda^2`.
 
 Reading the slope and intercept back through the algebra gives
 :math:`\Delta_B = 41.0\;\mathrm{mT}` and :math:`\tau = 929\;\mathrm{ps}`, against

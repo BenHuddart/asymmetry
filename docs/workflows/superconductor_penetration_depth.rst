@@ -94,7 +94,8 @@ Step 2 — Inspect the frequency-domain line shape
 
 The frequency-domain views show how the distribution of precession
 frequencies changes between the mixed and normal states. Select the
-10 K, 400 G run 1277 and open **FFT**.
+10 K, 400 G run 1277, open **FFT**, and click **Compute FFT**.
+To match the framing below, zoom the frequency axis to 3.5–7.5 MHz.
 
 .. figure:: /_generated/corpus_screenshots/corpus_bscco_vortex_fft.png
    :alt: FFT showing a broad line near 5.4 MHz for BiSCCO at 10 K and 400 G

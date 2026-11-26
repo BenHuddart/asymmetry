@@ -200,9 +200,9 @@ is about 0.076 µs⁻¹ and the dark rate is about 0.090 µs⁻¹.
 In **Fit Parameters**, set **Errors** to **Column (stabilised errors)**
 for the decay fit. This raises small input errors to half the median of
 the included errors for weighting. The plotted bars show the supplied
-standard errors. The rate-only lifetime standard error is 0.21 µs. The decay fit's reduced :math:`\chi^2` is 7.4,
-so the point scatter also exceeds these conditional errors under the
-exponential model.
+standard errors. The rate-only lifetime standard error is 0.21 µs.
+With the stabilised weights, the sum of squared weighted residuals
+per degree of freedom is 7.4.
 
 All delay points share the same calibration. To estimate its effect on the
 lifetime, shift the prefactor :math:`a` and exponent :math:`n` together by
