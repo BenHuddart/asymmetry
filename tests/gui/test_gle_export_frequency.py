@@ -324,6 +324,7 @@ def test_independent_frequency_bands_preserve_overlap_alpha(tmp_path, errors):
         {
             "domain": "frequency",
             "label": str(index),
+            "fits": [],
             "data": {"t": [1.0, 2.0], "y": [0.2, 0.3], "err": [error, error]},
         }
         for index, error in enumerate(errors)

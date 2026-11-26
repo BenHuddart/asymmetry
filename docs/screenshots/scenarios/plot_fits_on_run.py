@@ -125,6 +125,9 @@ class PlotFitsOnRunScenario(Scenario):
         window._plot_panel.set_shown_fits(run_numbers[0], [series_a_id, series_b_id])
         _process_events_for(milliseconds=80)
 
+        (payload,) = window._plot_panel.get_current_plot_export_data()
+        assert {fit["id"] for fit in payload["fits"]} == {series_a_id, series_b_id}
+
         fits_button = window._plot_panel._fits_button
         assert fits_button.text() == "Fits · 2", (
             f"the toolbar's Fits button reads {fits_button.text()!r}, not the two fits this "

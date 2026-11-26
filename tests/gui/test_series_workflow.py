@@ -242,7 +242,7 @@ def test_deleting_a_series_leaves_the_other_series_and_the_single_overlay(mw, mo
     assert panel.has_fits_for_series(first_id)
     # Run 10's own single fit is untouched, in the project and on the plot.
     assert mw._project_model.representation(10, _FB).fit.provenance == "single"
-    assert panel._fit_curve_for_dataset(_dataset(10), fit_id="single") is not None
+    assert "single" in panel.stored_fit_ids(10)
 
 
 def test_active_series_seeds_the_single_tab_form_for_a_member_with_no_slot(mw, monkeypatch):

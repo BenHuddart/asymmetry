@@ -228,6 +228,7 @@ def test_projection_export_preserves_subscripts_and_chi_squared_annotation(tmp_p
     payload = {
         "data": {"t": [0.0, 1.0], "y": [0.2, 0.3], "err": [0.01, 0.01]},
         "label": "one",
+        "fits": [],
         "annotations": [{"x": 0.5, "y": 0.5, "text": "χ² = 1.2"}],
     }
     snapshot = PlotGleSnapshot(axes=((key, [payload], ""),), y_limits={key: (0.0, 1.0)})

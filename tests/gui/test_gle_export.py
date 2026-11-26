@@ -315,11 +315,13 @@ def test_fit_file_offsets_curve_and_records_header(qapp, tmp_path):
         payload = {
             "run_number": 7,
             "label": "trace",
-            "fit": {"t": t_fit, "y": y_fit, "label": "Fit"},
+            "fits": [{"id": "single", "t": t_fit, "y": y_fit, "label": "Fit", "metadata": {}}],
             "waterfall_offset": 2.0,
         }
         fit_path = tmp_path / "trace.fit"
-        panel._write_fit_file(fit_path, payload)
+        panel._plot_export_context().write_text_files(
+            fit_path.with_suffix(""), payload, "fit", None
+        )
         text = fit_path.read_text(encoding="utf-8")
 
         assert "! waterfall offset: 2" in text

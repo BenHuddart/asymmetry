@@ -72,13 +72,21 @@ dropped from the plot.
 Plain-text data export
 ----------------------
 
-The **Export…** button on the plot offers two destinations. *Export to GLE…* writes
-the full ``.gleplot`` package as before. *Export plotted data (text)…* writes just
-the data — no GLE script, no compile — for loading into any other program. Choose:
+The plot's **Export…** menu offers **Export to GLE…** for a ``.gleplot``
+package and **Export plotted data (text)…** for tables to load into other programs.
 
-- **Data only** — time, asymmetry, and error columns;
-- **Data + fit** — the data file plus a ``.fit`` sidecar of the fitted curve;
-- **Fit only** — the fitted curve alone.
+- **Data only** writes one data table per displayed dataset.
+- **Data + fit** writes each data table and a ``.fit`` sidecar for every
+  fit shown on that dataset. A dataset with all fits hidden still exports
+  its data table.
+- **Fit only** writes the shown fit curves. If all fits are hidden,
+  **Nothing written** reports “No files were written because no fit is shown on the plot.”
+
+**Export to GLE…** also includes the fits shown by the plot's **Fits** menu.
+A dataset with one visible fit uses the dataset's filename stem for its
+``.fit`` file. With several visible fits the stems include the curve labels,
+separated by ``__``, for example ``run__model_a.fit``. If labels give the
+same filename, numeric suffixes such as ``_2`` keep the files distinct.
 
 Tick **Limit to current x-range** to export only the window you are looking at. Every
 file carries the same commented provenance header as the GLE sidecars.
