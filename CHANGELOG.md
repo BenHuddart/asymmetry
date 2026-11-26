@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use one silicon rate calibration for the carrier-lifetime figures and show
+  how rate errors and shared calibration uncertainty affect the result.
+
 - Show how to fit the three-field Al-LLZ measurements and check the sensitivity
   of the activation energy to the temperature interval and plateau estimate.
 

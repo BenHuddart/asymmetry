@@ -4,308 +4,243 @@ Photo-μSR in silicon: carrier recombination from period-mode runs
 .. admonition:: Example data
 
    :ref:`Download the Rigi school data <rigi-school-data>` for the
-   two-period HiFi silicon runs.
+   two-period HiFi silicon runs. The school guide supplies the injected
+   densities and laser delays. For another experiment, use its period labels,
+   timing log and density calibration.
 
-   Use your own light-on/light-off measurements and the experiment log that maps
-   periods to laser states, injection density, and timing. The HiFi run numbers below
-   identify the demonstration. Check the labels and period order in your files
-   before assigning ON and OFF, and establish your own calibration between
-   relaxation rate and carrier density.
+In photoexcited μSR, a laser pulse injects electron–hole pairs into silicon.
+These excess carriers interact with the bound electron in muonium and relax
+the muon spin. At fixed field and temperature, the illuminated relaxation
+rate :math:`\lambda` can be calibrated against the excess carrier density
+:math:`\Delta n`. Repeating the measurement at different laser-to-muon delays
+then tracks carrier recombination.
 
-Photoexcited muon-spin spectroscopy turns the muon into a contactless
-probe of excess charge carriers in a semiconductor. A pulsed laser injects
-electron–hole pairs into intrinsic silicon; the implanted μ⁺ captures an
-electron to form muonium (Mu = μ⁺ + e⁻), and the excess carriers relax the
-muon spin through the hyperfine interaction. The relaxation rate
-:math:`\lambda` therefore acts as a yardstick for the excess carrier
-density :math:`\Delta n`, and following :math:`\lambda` as the carriers
-recombine measures the carrier lifetime. This chapter works that analysis
-on the HiFi runs from the Rigi school data. Each **period-mode** file
-holds two histogram sets, one for laser **ON** and one for laser **OFF**.
+The school runs
+---------------
 
-Runs ``HIFI00103277``–``103299``
-(ISIS proposal RB1520457) are the measurements published by
-K\. Yokoyama *et al.*, Phys. Rev. Lett. **119**, 226601 (2017).
+Runs 103277–103299 were taken on HiFi under ISIS proposal RB1520457.
+The recombination data are from an intrinsic silicon wafer at 291 K in a
+longitudinal field of 100 G (10 mT). Yokoyama *et al.* report this experiment
+in `Phys. Rev. Lett. 119, 226601 <https://doi.org/10.1103/PhysRevLett.119.226601>`__.
 
-The data
---------
+- Runs 103277–103286 form the injection calibration. The school run table
+  gives :math:`\Delta n` from :math:`8.9 \times 10^{13}` to
+  :math:`9.3 \times 10^{12}\;\mathrm{cm^{-3}}` at a fixed, near-coincident
+  laser and muon arrival.
+- Runs 103287–103298 form the delay scan. At fixed injection, the muons probe
+  the remaining carriers :math:`\Delta T = 0.1` to 70 µs after the laser pulse.
+- Run 103299 is a transverse-field detector-balance run at 20 G. The figures
+  use the file grouping, timing and good bins with detector balance
+  :math:`\alpha_{\mathrm{det}} = 1`. Use the transverse-field calibration
+  workflow in :doc:`calibration_grouping_emu` to estimate detector balance
+  for your own analysis. Its uncertainty is outside the fit errors reported here.
 
-The example uses 23 two-period HiFi (ISIS pulsed source) runs on
-single-crystal intrinsic silicon (:math:`R > 1000\;\Omega\,\mathrm{cm}`) at
-room temperature (:math:`T = 291\;\mathrm{K}`) in a longitudinal field of
-100 G (10 mT). The runs in the Rigi school *Photo-μSR in silicon* folder serve three roles.
+The NeXus field-state tag for run 103277 reads ``TF``, so Asymmetry displays
+a transverse-grouping advisory. The school guide and Yokoyama *et al.* give
+the 100 G measurements as longitudinal. Keep the file's forward–backward
+grouping for these fits.
 
-- **Calibration set** — runs 103277–103286, laser timing
-  :math:`\Delta T = 0`, injected carrier density stepped from
-  :math:`\Delta n = 8.9 \times 10^{13}` down to
-  :math:`9.3 \times 10^{12}\;\mathrm{cm^{-3}}`. These fix the
-  :math:`\lambda`–:math:`\Delta n` calibration.
-- **Delay scan** — runs 103287–103298, fixed injected density, laser delay
-  :math:`\Delta T` stepped from 0.1 to 70 μs. As the delay grows the
-  carriers recombine before the muons probe them, so :math:`\lambda` falls;
-  the decay gives the lifetime.
-- **α calibration** — run 103299, a transverse-field run at 20 G used to
-  balance the detectors (see :doc:`calibration_grouping_emu`).
+The calibration densities are supplied by the school guide. In the paper they
+come from an optical estimate based on absorption of the 1064 nm light in the
+wafer and the carrier density at its centre. Laser pulse energy controls the
+injection. The school table gives densities in :math:`\mathrm{cm^{-3}}`, with
+no per-run density or timing error estimates.
 
-The laser fires at 25 Hz against the pseudo-50 Hz muon pulse, so the sample
-is illuminated on every other pulse. The data-acquisition electronics sort
-the two cases into **two periods within one** ``.nxs`` **file**: the muon
-pulses that arrived with the laser on, and those that arrived with it off.
-Resolving that structure is the first job of the analysis.
+Select the laser periods
+------------------------
 
-Period-mode data handling: red and green
------------------------------------------
+The 25 Hz laser illuminates the sample on alternating muon pulses. The HiFi
+acquisition stores the illuminated and dark histograms as two periods in each
+NeXus file.
 
-Load a run and open the **Grouping** dialog. Period-mode files add an
-**RG Mode** row with four choices — **Red**, **Green**, **G minus R**, and
-**G plus R** — that select which period (or combination) the reduction
-uses. The names follow the long-standing WiMDA convention that this
-experiment reuses: **Red = laser ON**, **Green = laser OFF**. Each period
-carries its own provenance, including its own good-frame normaliser, so
-dead-time correction and counting statistics stay correct per period.
-**G plus R** forms one asymmetry from their pooled prepared counts with group
-background once; **G minus R** subtracts the independently reduced set
-asymmetries. Both use one explicitly chosen α/β and common observed native
-support, without an extra exposure multiplier or half factor.
+Open run 103277 and choose **Grouping → RG Mode**. Select **Green** for the
+laser-OFF period and apply the grouping. Select **Red** in the same row and
+apply it to inspect the laser-ON period. Check the period assignment against
+the experiment log. With these data, period 1 (**Red**) shows the stronger
+early-time relaxation and period 2 (**Green**) gives the dark spectrum.
+The two fits below use the individually reduced period spectra.
 
-For runs that carry three or more periods the **Map periods…** button opens
-the **Map Periods** dialog, which generalises the two-way choice to summing
-arbitrary subsets of periods into the red and green sets. On the two-period
-silicon run it resolves as the default convention describes:
-
-.. figure:: /_generated/corpus_screenshots/corpus_si_period_mapping.png
-   :alt: The Map Periods dialog for run 103277: period 1 assigned to Red,
-         period 2 assigned to Green, each showing about 14,008 good frames.
+.. figure:: /_generated/corpus_screenshots/corpus_si_grouping_rg.png
+   :alt: The Grouping dialog for HiFi run 103277 showing Red, Green, G minus R
+         and G plus R in the RG Mode row.
    :width: 100%
 
-   The **Map Periods** dialog on run 103277. One row per period, each with
-   its per-period **Good frames** count (≈ 14,008 here) and a three-way
-   **Red** / **Green** / **Ignore** choice; **Ignore** drops a period from
-   both sets. The defaults follow the photo-μSR convention — period 1
-   (laser ON) → **Red**, period 2 (laser OFF) → **Green**. For a plain
-   two-period run the **RG Mode** radios in the grouping dialog already make
-   this Red/Green choice directly; the mapping dialog comes into its own
-   when a run holds more than two periods.
+   **Grouping** on run 103277. The **RG Mode** row selects which period
+   enters the reduction. **G minus R** subtracts the independently reduced
+   asymmetries. **G plus R** pools their counts before computing asymmetry.
+   See :ref:`selecting-periods` for the reduction conventions.
 
-The scriptable API
-------------------
-
-The grouping controls call the same core period-selection API your scripts
-use, so the desktop app and a batch script agree on the per-period spectra.
-For the two-period demonstration file, red is ON and green is OFF. Replace the
-filename and state labels with those verified for your measurement. Pull out
-a single period as an ordinary
-:class:`~asymmetry.core.data.dataset.MuonDataset`:
+To inspect both periods in a script, use :func:`~asymmetry.core.io.periods.select_period`.
+Both returned datasets retain the file timing and the corresponding period's
+good-frame normaliser and dead-time information.
 
 .. code-block:: python
 
-   from asymmetry.core.io import load, select_period, period_count, period_labels
+   from asymmetry.core.io import load, select_period
 
-   run = load("your_period_run.nxs")
-   print(period_count(run))                  # demonstration: 2
-   print(period_labels(run))                 # demonstration: ['red', 'green']
+   run = load("HIFI00103277.nxs")
+   light_on = select_period(run, "red")
+   light_off = select_period(run, "green")
 
-   light_on = select_period(run, "red")      # period 1
-   light_off = select_period(run, "green")   # period 2
-
-   # ...or select a single period at load time:
-   light_off = load(
-       "your_period_run.nxs", period="green",
-   )
-
-Each returned dataset keeps its parent's :math:`t_0`, good-bin window,
-grouping, field, and temperature, plus its **own** per-period
-``good_frames`` and ``dead_time_us``. For files with three or more periods,
-pass a 1-based integer period number instead of a label.
-
-.. note::
-
-   The convention here is **laser-ON = Red** (period 1) and
-   **laser-OFF = Green** (period 2). It is worth confirming against the
-   relaxation for *your* instrument and run before interpreting the
-   difference — on run 103277 the check is unambiguous, since fitting each
-   period gives :math:`\lambda \approx 1.3\;\mathrm{\mu s^{-1}}` (strongly
-   relaxing) for Red against :math:`\approx 0.09\;\mathrm{\mu s^{-1}}`
-   (near-flat) for Green.
-
-Light on versus light off
--------------------------
-
-The photo-μSR signal is the difference between the two periods: the
-laser-OFF period is the dark baseline, and the laser-ON period adds the
-extra relaxation from the photo-excited carriers. Overlaying the two
-asymmetries shows the effect by eye, with no fitting:
+The following figure uses two prepared Data Browser entries, one for each of
+those period datasets. With both entries selected, enable **Overlay** in the
+Time plot toolbar. The **RG Mode** control chooses the current reduction of
+the original file entry.
 
 .. figure:: /_generated/corpus_screenshots/corpus_si_on_off_overlay.png
-   :alt: Time-domain asymmetry of run 103277 with the laser-ON and laser-OFF
-         periods overlaid; the laser-ON trace relaxes strongly while the
-         laser-OFF trace stays nearly flat.
+   :alt: Time-domain asymmetry of run 103277 with the two prepared period
+         entries overlaid. The laser-ON trace relaxes more rapidly.
    :width: 100%
 
-   Laser-ON (**Red** period, lower trace) and laser-OFF (**Green** period,
-   upper trace) asymmetries of run 103277 overlaid over the first 6 μs, with
-   the **Overlay** toolbar option enabled. The laser-OFF spectrum is
-   near-flat — intrinsic silicon has little static relaxation in a small
-   longitudinal field — while the laser-ON spectrum falls away over the
-   first microsecond as the excess carriers depolarise the muonium. That
-   extra relaxation is the observable; its rate :math:`\lambda` is the
-   carrier-density yardstick.
+   In **Overlay**, the dark trace of run 103277 stays nearly flat, while
+   the illuminated trace drops rapidly. The measured observable for this
+   walkthrough is the illuminated relaxation rate.
 
-Extracting λ: the light-ON fit
-------------------------------
+Fit each run’s illuminated relaxation
+--------------------------------------
 
-The guide's recipe fits each period with a single exponential
-:math:`A(t) = A_0\,e^{-\lambda t}`. Fit the laser-OFF period first with the
-amplitude free to obtain the baseline asymmetry :math:`A_0 \approx 15.5\%`;
-then refit the laser-ON period over the **first 1 μs only**, with
-:math:`A_0` held fixed at that value, to read off :math:`\lambda`. The short
-window is deliberate — while the carriers are still present the density is
-essentially constant, so a single rate describes the decay (an assumption
-the lifetime below justifies).
+In **Fit**, choose **Exponential** for the **Green** reduction. Set the time
+fit range to 0–1 µs, with **Bunch** at 1, and fit
+:math:`A(t)=A_1 e^{-\lambda t}` with both parameters free. Record the fitted
+amplitude :math:`A_1`. Switch the same run to **Red**, keep the same fit range
+and model, and set and fix :math:`A_1` at its dark value. Fit
+:math:`\lambda` and record the rate and its symmetric standard error.
+Repeat the paired fits for each calibration and delay run.
+
+This uses each dark period to estimate its own run's initial asymmetry and
+assumes that illumination leaves that amplitude unchanged. The rate errors
+come from the illuminated asymmetry fits, conditional on the fixed dark
+amplitudes. The dark amplitude uncertainty and any common error in detector
+balance are outside those errors.
 
 .. figure:: /_generated/corpus_screenshots/corpus_si_lambda_fit.png
-   :alt: Single-exponential fit to the laser-ON period of run 103277 over
-         the first microsecond, giving lambda about 1.27 per microsecond.
+   :alt: A single-exponential fit of the illuminated period in run 103277
+         over the first microsecond, with its amplitude fixed.
    :width: 100%
 
-   Single-exponential fit to the laser-ON period of the highest-density run
-   103277, restricted to the first 1 μs (shaded) with the amplitude fixed at
-   the laser-OFF value. The rate comes out at
-   :math:`\lambda = 1.27\;\mathrm{\mu s^{-1}}`. The fit is flagged **poor**
-   (:math:`\chi^2/\nu \approx 2.7`) because the spectrum has more
-   structure than a single exponential can describe over 0–1 μs. See :doc:`/reference/fit_functions/relaxation`
-   for the exponential relaxation component and
-   :doc:`/reference/fit_functions/muonium` for the underlying muonium
-   dynamics.
+   Run 103277 gives a dark amplitude of about 15.54% and an illuminated rate
+   of :math:`1.270 \pm 0.021\;\mathrm{\mu s^{-1}}`. The file's good bins in
+   the nominal 0–1 µs window span approximately 0.108–0.988 µs. The
+   illuminated exponential has :math:`\chi^2/\nu \approx 2.68`; the formal
+   rate error does not cover departures from the exponential.
 
-Repeating this fit across the calibration set gives one
-:math:`(\Delta n, \lambda)` pair per run; across the delay scan it gives one
-:math:`(\Delta T, \lambda)` pair per run. The two trends that follow are
-built from those parameters.
+The paper also fits the first microsecond and excludes the first 100 ns
+because of the muon pulse. A single rate in that window approximates the
+carrier density as constant. A lifetime of about 10 µs implies about a 9%
+density drop over 1 µs, so the fit yields an effective early-time rate.
+The rate can also approach the dark relaxation when the carrier density is low.
 
-Calibrating λ against Δn
-------------------------
+Fit and invert the rate calibration
+------------------------------------
 
-For the calibration set the injected density :math:`\Delta n` is known
-(it is the laser power the run was taken at), so plotting the fitted
-:math:`\lambda` against :math:`\Delta n` calibrates the yardstick. On
-log–log axes the relation is a power law,
+Use the school injection densities to pair each calibration rate with its
+density. The prepared **Fit Parameters** series below uses
+:math:`x=\Delta n/\Delta n_0`, where
+:math:`\Delta n_0=8.9 \times 10^{13}\;\mathrm{cm^{-3}}` is a fixed
+reference density. Fit **PowerLaw** :math:`\lambda=a x^n+c`, with
+:math:`c=0` fixed as in Yokoyama *et al.*, Fig. 1(d). The fit uses rates in
+:math:`\mathrm{\mu s^{-1}}` and their standard errors on the original
+scale. The log axes are for display.
+
+.. figure:: /_generated/corpus_screenshots/corpus_si_lambda_vs_dn.png
+   :alt: Illuminated relaxation rate versus normalised injected density on
+         log axes, with the weighted zero-offset power law and rate errors.
+   :width: 100%
+
+   The calibration gives :math:`a=1.316\;\mathrm{\mu s^{-1}}` and
+   :math:`n=0.674`. The paper reports :math:`\beta=1.46(4)\;\mathrm{\mu s^{-1}}`
+   and :math:`\alpha=0.68(4)` in its notation. The vertical bars come from
+   the fixed-amplitude rate fits. The injected-density errors are unavailable.
+   The reduced :math:`\chi^2` is 5.98, indicating scatter beyond these rate
+   errors under the power law.
+
+Use the fitted :math:`a`, :math:`n` and :math:`c` to invert each delay rate.
+Propagation of its rate standard error :math:`\sigma_\lambda`, with the
+calibration held fixed, gives
 
 .. math::
 
-   \lambda = \beta \left(\frac{\Delta n}{\Delta n_0}\right)^{\alpha},
+   \Delta n = \Delta n_0 \left(\frac{\lambda-c}{a}\right)^{1/n},
+   \qquad
+   \sigma_{\Delta n\mid a,n,c}
+     = \frac{\Delta n}{n(\lambda-c)}\,\sigma_\lambda.
 
-which appears as a straight line whose slope is the exponent
-:math:`\alpha`:
+This inversion requires :math:`\lambda > c`. A positive inferred density can
+still fall outside the supported calibration range. Long delays bring the
+illuminated rate close to the dark rate, where extrapolating the zero-offset
+curve also maps dark relaxation to a positive density.
 
-.. figure:: /_generated/corpus_screenshots/corpus_si_lambda_vs_dn.png
-   :alt: Log-log plot of relaxation rate lambda against excess carrier
-         density delta n for the ten calibration runs, with a straight
-         power-law fit through the points.
-   :width: 100%
+Fit the carrier lifetime
+------------------------
 
-   The **Fit Parameters** trending panel with :math:`\lambda` on the y-axis
-   against :math:`\Delta n` on the x-axis, both on **log** scales, across
-   the ten calibration runs (103277–103286). The power-law **Fit ✓**
-   overlay is a straight line on these axes. The fitted exponent is
-   :math:`\alpha = 0.65`, against the paper's :math:`0.68(4)` — within one
-   standard deviation; the prefactor :math:`\beta = 1.30\;\mathrm{\mu s^{-1}}`
-   sits below the paper's :math:`1.46(4)`.
-
-Inverting this calibration turns any measured :math:`\lambda` back into a
-carrier density, which is exactly what the delay scan needs.
-
-.. dropdown:: Inverting the calibration to recover Δn
-
-   Solving the power law for the density gives
-
-   .. math::
-
-      \Delta n = \Delta n_0 \left(\frac{\lambda}{\beta}\right)^{1/\alpha},
-
-   with :math:`\alpha` and :math:`\beta` taken from the calibration fit and
-   :math:`\Delta n_0 = 8.9 \times 10^{13}\;\mathrm{cm^{-3}}` the reference
-   density. Applying it to each delay-scan :math:`\lambda` produces the
-   :math:`\Delta n(\Delta T)` points fitted in the next step. The reference
-   density :math:`\Delta n_0` is degenerate with :math:`\beta` — only the
-   product is determined — so its absolute value is a matter of
-   parameterisation, not a measured quantity.
-
-The headline: carrier lifetime τ₀
----------------------------------
-
-For the delay scan the injected density is fixed but the laser fires a delay
-:math:`\Delta T` before the muon pulse, giving the carriers time to
-recombine. Fitting each run's laser-ON :math:`\lambda`, inverting the
-calibration to a density, and plotting :math:`\Delta n` against
-:math:`\Delta T` traces the recombination directly. A single exponential
-:math:`\Delta n(\Delta T) = \Delta n(0)\,e^{-\Delta T / \tau_0}` fits it,
-and :math:`\tau_0` is the carrier recombination lifetime — the whole
-experiment's primary deliverable:
+Fit **ExponentialDecay** with :math:`c=0` fixed to the inferred densities
+over 0.1–20 µs. The model
+:math:`\Delta n(\Delta T)=\Delta n(0)e^{-\Delta T/\tau}` gives the carrier
+lifetime :math:`\tau`. At 0.1 µs the inferred density is about 0.9% above
+the highest calibration density. This short-delay point is retained in the
+main fit. All points from 25 µs onward fall below the calibration range and
+are displayed as extrapolations outside the fit. At 70 µs the illuminated rate
+is about 0.076 µs⁻¹ and the dark rate is about 0.090 µs⁻¹.
 
 .. figure:: /_generated/corpus_screenshots/corpus_si_tau_decay.png
-   :alt: Excess carrier density delta n against laser delay delta T across
-         the delay-scan runs, fitted with a single exponential decay giving
-         a lifetime near 11 microseconds.
+   :alt: Inferred excess carrier density in units of 10¹³ per cubic centimetre
+         versus laser delay in microseconds. The exponential curve fits the
+         first six points through 20 microseconds.
    :width: 100%
 
-   Excess carrier density :math:`\Delta n` against laser delay
-   :math:`\Delta T` across the delay scan (runs 103287–103298), with the
-   single-exponential **Fit ✓** overlay. The recovered lifetime is
-   :math:`\tau_0 = 10.75\;\mathrm{\mu s}`, against the published
-   :math:`11.1(9)\;\mathrm{\mu s}` — agreement to within one standard
-   deviation — and the fitted intercept
-   :math:`\Delta n(0) \approx 9.8 \times 10^{13}\;\mathrm{cm^{-3}}` matches
-   the paper's :math:`9.4(4) \times 10^{13}`. Because
-   :math:`\tau_0 \gg 1\;\mathrm{\mu s}`, the density barely changes across
-   the 1 μs fit window used for each :math:`\lambda`, which retrospectively
-   justifies the constant-density assumption made when extracting the rates.
+   The prepared **Fit Parameters** series shows all twelve delay points.
+   The bars propagate each illuminated rate error with the calibration
+   held fixed. The curve through 20 µs gives :math:`\tau=10.42\;\mathrm{\mu s}`
+   and :math:`\Delta n(0)=9.85 \times 10^{13}\;\mathrm{cm^{-3}}`.
+   The red fit curve stops at 20 µs, before the labelled late-delay
+   extrapolations.
 
-Assumptions and limitations
----------------------------
+The rate-only lifetime standard error is 0.21 µs. **Fit Parameters** floors
+the input errors used for weighting at half their median. The plotted bars
+show the input standard errors. The decay fit's reduced :math:`\chi^2` is 7.4,
+so the point scatter also exceeds these conditional errors under the
+exponential model.
 
-The analysis leans on a few deliberate simplifications, worth stating
-because they set the accuracy of the recovered numbers:
+All delay points share the same calibration. To estimate its effect on the
+lifetime, shift the prefactor :math:`a` and exponent :math:`n` together by
+one standard deviation in both directions along each principal direction of
+their fitted covariance, in coordinate order :math:`(a,n)`. Invert all rates
+and refit :math:`\tau` after each shift. Half of each paired difference,
+combined in quadrature, gives a separate calibration sensitivity of 0.17 µs.
+This calculation keeps the offset fixed and treats the nominal injection
+densities as given.
 
-- **Single-exponential model, no baseline.** Both the laser-OFF and
-  laser-ON periods are fitted with a pure exponential and no constant term.
-  This is the guide's prescription and keeps the parameter count minimal,
-  but the real laser-ON spectrum carries more structure than one exponential
-  over 0–1 μs — hence the **poor** :math:`\chi^2/\nu \approx 2.7` on the
-  individual fit.
-- **Amplitude fixed for the laser-ON fits.** Holding :math:`A_0` at the
-  laser-OFF value removes a degeneracy between amplitude and rate in the
-  short 1 μs window; it assumes the initial asymmetry is unchanged by the
-  illumination.
-- **Sensitivity to the calibration.** A single exponential can be a poor
-  description of the time spectrum at low carrier density, where the relaxing
-  signal is weaker. The prefactor sets the scale of :math:`\Delta n`. The
-  calibration exponent affects the shape of the inferred decay and can
-  therefore affect the fitted lifetime.
-- **Default detector balance.** The trends here use the loader's default
-  reduction (:math:`\alpha = 1`); the transverse-field α calibration from
-  run 103299 refines the absolute asymmetry but not the relaxation-rate
-  ratios that drive the result. See :doc:`calibration_grouping_emu` for the
-  α-calibration workflow.
+Fitting only 3–20 µs gives 9.60 µs, a change of about 0.8 µs when the first point
+is omitted. The main estimate is 0.68 µs below the paper's
+:math:`11.1(9)\;\mathrm{\mu s}` in Fig. 1(e). The endpoint sensitivity,
+short-window approximation, fixed dark amplitude and unavailable injection
+errors limit the precision of that comparison.
 
-.. rubric:: References
+Replay from the exported rates
+--------------------------------
 
-- K\. Yokoyama, J. S. Lord, J. Miao, P. Murahari, and A. J. Drew, Phys. Rev.
-  Lett. **119**, `226601 (2017) <https://doi.org/10.1103/PhysRevLett.119.226601>`__ — the photoexcited-μSR carrier-lifetime
-  method; the source of the calibration exponent :math:`\alpha = 0.68(4)`
-  and the lifetime :math:`\tau_0 = 11.1(9)\;\mathrm{\mu s}` used as targets
-  above. This example's runs (RB1520457) are the same measurement.
+Use **Analysis → Export fit report…** after fitting the illuminated periods. Collect the
+value and symmetric error on the ``Lambda = ... +/- ...`` line for each
+illuminated run. Save those in ``school-rates.tsv`` with one row per run
+103277–103298 and the tab-separated header columns ``run``,
+``lambda_per_us`` and ``sigma_lambda_per_us``. If a rate has no reported
+standard error, resolve the fit before including it.
+
+The **Fit Parameters** figures use prepared series. Run the
+:download:`silicon lifetime example script <silicon_lifetime.py>` to build the
+density and delay coordinates from the school run table, fit the calibration,
+and reproduce the delay points and lifetime from the exported rates. The script
+prints the fitted calibration covariance and both lifetime sensitivity checks.
+It uses the installed Asymmetry Python package.
+
+.. code-block:: console
+
+   python silicon_lifetime.py school-rates.tsv
 
 See also
 --------
 
-- :ref:`selecting-periods` — period-selection reference, including
-  ``period_count`` and ``period_labels``.
-- :doc:`/reference/loading_data` — supported formats and period-mode files.
-- :doc:`calibration_grouping_emu` — grouping and :math:`\alpha` setup,
-  applied per period.
-- :doc:`/reference/parameter_trending` — the trending panel used for the
-  :math:`\lambda`–:math:`\Delta n` and :math:`\Delta n`–:math:`\Delta T`
-  trends.
-- :doc:`/reference/fit_functions/muonium` — muonium formation and hyperfine
-  dynamics in semiconductors.
+- :doc:`/reference/detector_grouping` for detector grouping and timing.
+- :doc:`/reference/parameter_trending` for fitting and viewing parameter trends.
+- :doc:`/reference/fit_functions/relaxation` for the exponential model.
+- :doc:`/reference/fit_functions/muonium` for muonium dynamics.
