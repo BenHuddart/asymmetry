@@ -285,17 +285,15 @@ detector receives, so an unreasonable value is visible immediately.
 .. figure:: /_generated/corpus_screenshots/corpus_basics_deadtime.png
    :width: 100%
    :alt: Forward/backward asymmetry of silver run emu00034998 with dead-time
-      correction Off (grey) and loaded From file (blue); the corrected
-      curve sits about five percent higher.
+      correction Off (grey) and From file (blue). The curves are furthest
+      apart at the first plotted point.
 
-   The muon-school "show the effect" plot on the high-rate silver run
-   ``emu00034998``: the forward/backward asymmetry with dead-time **Off**
-   (grey, near 17.8 %) and with the per-detector silver-derived correction
-   loaded **From file** (blue, near 23 %). On this deliberately high-rate
-   run the correction is a visible ≈ 5.2 % early-time shift, not a
-   sub-percent tweak — which is exactly why silver at a high rate is the run
-   the exercise uses to make dead-time visible. On a well-behaved
-   low-rate histogram the same correction is far smaller.
+   Forward/backward asymmetry of the high-rate silver run ``emu00034998``
+   with dead-time **Off** (grey) and with the per-detector correction applied
+   **From file** (blue). Both reductions use :math:`\alpha = 1`, background
+   correction off, and 25 native bins per point (0.400 µs). Over the plotted
+   interval through 12 µs, the largest difference is about 0.3 percentage
+   points at the first point, where the count rate is highest.
 
 Step 6 — Timing: t0 and the good-data window
 ----------------------------------------------

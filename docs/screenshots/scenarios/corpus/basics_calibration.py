@@ -157,7 +157,7 @@ class BasicsDeadtimeScenario(CorpusScenario):
     name = "corpus_basics_deadtime"
     description = (
         "Dead-time correction on the silver run emu00034998: forward/backward "
-        "asymmetry with correction Off vs Auto-Load (file, silver-derived)."
+        "asymmetry with correction Off and From file (silver-derived)."
     )
     example = "Basics"
     size = (1000, 560)
@@ -165,27 +165,36 @@ class BasicsDeadtimeScenario(CorpusScenario):
     def capture(self, ctx) -> Path:  # noqa: D401
         import numpy as np
 
+        from asymmetry.core.transform.corrections import CorrectionStatus
+        from asymmetry.core.transform.grouping import effective_group_indices
+        from asymmetry.core.transform.rebin import BinningSpec
         from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
         from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
         run = load_corpus_datasets([_EMU_DEADTIME])[0].run
-        grouping = dict(run.grouping)
-        groups = {int(k): [int(i) for i in v] for k, v in grouping["groups"].items()}
-        forward_idx = groups[int(grouping["forward_group"])]
-        backward_idx = groups[int(grouping["backward_group"])]
-        # A modest bunching keeps the two overlaid curves legible on the fine
-        # (~16 ns) EMU time base without changing the reduction.
-        grouping["bunching_factor"] = 25
+        grouping = run.grouping
+        forward_idx, backward_idx = (
+            effective_group_indices(grouping, grouping[key], n_histograms=len(run.histograms))
+            for key in ("forward_group", "backward_group")
+        )
         common = dict(
             histograms=run.histograms,
             grouping=grouping,
+            binning=BinningSpec(factor=25),
             forward_idx=forward_idx,
             backward_idx=backward_idx,
             alpha=1.0,
             use_background=False,
+            metadata=run.metadata,
         )
         off = reduce_grouped_asymmetry(use_deadtime=False, deadtime_mode="off", **common)
-        on = reduce_grouped_asymmetry(use_deadtime=True, deadtime_mode="file", **common)
+        on = reduce_grouped_asymmetry(use_deadtime=True, deadtime_mode="from_file", **common)
+        if on.corrections.deadtime.status is not CorrectionStatus.APPLIED:
+            raise RuntimeError(
+                f"File dead-time correction was not applied: {on.corrections.deadtime.reason}"
+            )
+        if not np.array_equal(off.time, on.time):
+            raise RuntimeError("Dead-time comparison requires identical time grids")
 
         figure, canvas = create_canvas(layout="tight")
         axes = figure.add_subplot(111)
@@ -201,22 +210,18 @@ class BasicsDeadtimeScenario(CorpusScenario):
             on.asymmetry,
             color=tokens.ACCENT,
             linewidth=1.5,
-            label="Dead-time: Auto-Load (file)",
+            label="Dead-time: From file",
         )
         axes.set_xlabel("Time (µs)")
         axes.set_ylabel("Asymmetry (%)")
         axes.set_title("Silver emu00034998 — per-detector silver-derived dead-time correction")
-        # Focus on the early time where the high-rate correction bites hardest,
-        # and on the asymmetry band the two curves occupy (silver ZF sits near a
-        # constant ~18–23 %) so the Off↔Auto-Load gap fills the panel. Scale the
-        # y-range and the Δ annotation from the *displayed* window only — the
-        # late-time tail (counts → 0) is numerically unstable and would otherwise
-        # dominate both the limits and the quoted correction size.
+        # The dead-time effect is largest at early times, when the rate is highest.
         x_max = 12.0
         axes.set_xlim(float(off.time.min()), x_max)
         window = off.time <= x_max
-        lo = float(np.nanmin(off.asymmetry[window]))
-        hi = float(np.nanmax(on.asymmetry[window]))
+        plotted = np.stack((off.asymmetry[window], on.asymmetry[window]))
+        lo = float(np.nanmin(plotted))
+        hi = float(np.nanmax(plotted))
         pad = 0.5 * (hi - lo)
         axes.set_ylim(lo - pad, hi + pad)
         peak = float(np.nanmax(np.abs((on.asymmetry - off.asymmetry)[window])))
@@ -224,7 +229,7 @@ class BasicsDeadtimeScenario(CorpusScenario):
         axes.text(
             0.98,
             0.04,
-            f"peak Δasymmetry ≈ {peak:.1f}%",
+            f"Peak difference: {peak:.1f} percentage points",
             transform=axes.transAxes,
             ha="right",
             va="bottom",

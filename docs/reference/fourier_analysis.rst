@@ -1996,50 +1996,48 @@ above.
 High-field FFT and MaxEnt on HAL data
 -------------------------------------
 
-The same comparison plays out on real high-field data. The organic
-antiferromagnet κ-(BEDT-TTF)\ :sub:`2`\ Cu[N(CN)\ :sub:`2`]Cl was measured in
-transverse fields of 6 and 8 T on the HAL9500 spectrometer at PSI [10]_. At 6 T
-the diamagnetic Larmor line sits at 813 MHz (:math:`\gamma_\mu \cdot 6\,\text{T}`),
-and the raw HAL ``.mdu`` histograms are binned finely enough — about 0.02 ns —
-that the transform reaches it directly, with no rotating reference frame. Find the raw HAL runs in the
-:ref:`Rigi school data <rigi-school-data>`.
+The organic antiferromagnet κ-(BEDT-TTF)\ :sub:`2`\ Cu[N(CN)\ :sub:`2`]Cl was
+measured in transverse fields of 6 and 8 T on the HAL9500 spectrometer at
+PSI [10]_. At 6 T the diamagnetic Larmor frequency is about 813 MHz, well
+below the Nyquist frequency for the 0.0244 ns HAL ``.mdu`` bins. You can
+analyse the precession directly in the laboratory frame. Find the raw HAL
+runs in the :ref:`Rigi school data <rigi-school-data>`.
+
+The files used here export the forward-ring channels F1–F8 and the auxiliary
+MV channel. In **Grouping**, assign F1–F8 to one group each and leave MV
+out. Choose F1 as **Forward Group** and F5 as **Backward Group**. The FFT
+uses this pair's **F−B asymmetry**, and MaxEnt uses all eight forward groups.
+Keep the file timing and good-bin limits. For the FFT overlay, set the
+time-domain fit range to 0–8 µs, within both runs' usable count statistics.
 
 .. figure:: /_generated/corpus_screenshots/corpus_kappacl_tf_fft.png
-   :alt: Multi-run FFT overlay of two κ-Cl 6 T runs at 813 MHz — a sharp
-      paramagnetic line at 50.66 K and a broadened, depleted ordered line at
-      3.24 K
+   :alt: FFT overlay of two κ-Cl 6 T runs near 813.6 MHz. The central peak
+      is lower at 3.24 K than at 50.66 K.
    :width: 100%
 
-   Two 6 T runs overlaid on the **Frequency Domain** tab through the
-   `GUI Fourier workflow`_ multi-run overlay, with the plot's ``Label`` combo
-   set to ``Temperature (K)`` so the legend reads the temperatures directly.
-   The paramagnetic run (50.66 K, above the transition) shows a sharp
-   diamagnetic line at 813.5 MHz; the ordered run (3.24 K, below it) is visibly
-   **broadened and depleted** — the antiferromagnetic order moves spectral
-   weight out of the sharp central peak into the wings. The narrow 6 T line
-   (~13 G wide at 813 MHz) is framed around its centre automatically, since on
-   a from-zero axis it would be sub-pixel.
+   Two 6 T runs overlaid with **Label** set to **Temperature (K)**. Both
+   transforms use 0–8 µs, **F−B asymmetry**, **(Power)^1/2**, and
+   **Lorentzian** apodisation with a 3 µs time constant. The peaks sit near 813.6 MHz, and
+   the ordered run (3.24 K) has the lower central peak. The view is zoomed
+   to the line so the two traces can be compared on the same scale.
 
-MaxEnt reconstructs the same line straight off the raw ``.mdu`` file. Its
-≈ 389 000 time bins would make an unsteered reconstruction enormous, but with
-``Auto workload steering`` (see `Workload steering and the large-calculation
-warning`_) the engine sizes the settings you leave unset to the run — here
-raising ``Binning`` to 10 and capping the end time near 2 μs — and records what
-it chose in the result's ``auto_steer_applied`` metadata.
+In **MaxEnt**, choose **General (multi-group)** with all eight groups enabled,
+set **Spectrum points** to 256, and enable **Auto window from field**. With
+**Auto workload steering** enabled, leave **End** and **Binning** at their
+defaults so the engine chooses the time range and binning for this run. The
+result's ``auto_steer_applied`` metadata records those choices. See
+`Workload steering and the large-calculation warning`_.
 
 .. figure:: /_generated/corpus_screenshots/corpus_kappacl_maxent.png
-   :alt: Auto-steered MaxEnt reconstruction of the base-temperature κ-Cl 6 T
-      run 686, showing the internal-field line at 813.56 MHz just above the
-      applied-field marker
+   :alt: MaxEnt spectrum of the ordered κ-Cl 6 T run 686, with its main
+      peak near 813.6 MHz to the right of the applied-field marker.
    :width: 100%
 
-   The base-temperature ordered run (686, 6 T, 3.24 K) reconstructed by MaxEnt
-   from the raw HAL histograms with binning and end-time chosen automatically.
-   The internal-field line lands at 813.56 MHz, just above the
-   :math:`\gamma_\mu \cdot B` applied-field marker at 813.3 MHz, and the
-   calculation converges in eight cycles. The field-referenced ΔB axis the
-   original study works in is one selector away through **X Units** and
-   **Axis:** (`Shift axes`_).
+   Run 686 (6 T, 3.24 K) reconstructed from the forward-ring histograms. The
+   dominant peak lies near 813.6 MHz, above the :math:`\gamma_\mu \cdot B`
+   marker. The illustrated reconstruction converges in eight cycles. To view
+   the offset from the applied field, select **X Units** and **Axis:** as
+   described in `Shift axes`_.
 
 Practical example
 -----------------

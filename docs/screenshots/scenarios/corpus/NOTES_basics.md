@@ -14,7 +14,7 @@ steering deliverable which exercises the fit-table + manual-column trend.
 |---|---|---|---|---|
 | `corpus_basics_grouping` | MUSR00044989 | Grouping window: 64 detectors → 2 groups (32 each), Forward/Backward assignment, t0 "From file", live F/B asymmetry preview | A3 | Detector-grouping reference / "how to set F/B groups" |
 | `corpus_basics_alpha` | EMU00018854 (Ag TF 100 G) | Alpha calibration dialog: Estimate → α = 0.885, before (α=1, grey) vs after (α̂, blue) asymmetry balanced about zero | A4 | α-calibration reference / "estimating detector balance" |
-| `corpus_basics_deadtime` | emu00034998 (Ag, high rate) | F/B asymmetry, dead-time Off vs Auto-Load (file, silver-derived); ~5 % early-time correction | A2 | Dead-time correction concept ("create a plot to show the effect") |
+| `corpus_basics_deadtime` | emu00034998 (Ag, high rate) | F/B asymmetry with dead-time Off and From file, with a maximum shift of about 0.3 percentage points through 12 µs | A2 | Dead-time correction concept ("create a plot to show the effect") |
 | `corpus_basics_t0` | EMU00018850 (Ag TF, pulsed EMU) | Raw summed counts show the muon pulse; t0 (mid-pulse, 0.224 µs) and tgood (0.336 µs) marked from the file, ~112 ns tgood offset shaded | A1 / B3 | t0 / tgood concept ("timing origin & good-data window") |
 | `corpus_basics_steering` | EMU 44989–44997 | Fit Parameters trending panel: Ag-mask a₀ (a-relaxin) vs steering current (**manual column**) with the fitted polynomial (**Model Fit** `Cubic`) overlaid — curve minimum at **I = −0.060 A**, the beam-centred current | B1 | Fit-table + manual-column trend + Model Fit; steering-curve worked example |
 
@@ -35,9 +35,11 @@ steering deliverable which exercises the fit-table + manual-column trend.
 - **Dead-time (A2, GT §A2/§C).** The guide asks to load the silver run, view the
   asymmetry with correction **Off**, then **Auto Load** and "create a plot to
   show the effect." Implemented exactly that as a before/after overlay via the
-  real `reduce_grouped_asymmetry` pipeline (`use_deadtime=False, mode="off"` vs
-  `use_deadtime=True, mode="file"`). "Auto Load" ≡ file mode: emu00034998 carries
-  per-detector silver-derived `dead_time_us` (96 values) in its NeXus header.
+  real `reduce_grouped_asymmetry` pipeline (`deadtime_mode="off"` and
+  `deadtime_mode="from_file"`). Use α = 1, background correction off, and
+  25 native bins per point (0.400 µs). The file contains the 96 silver-derived
+  coefficients, while the longitudinal grouping selects channels 1–48 and
+  49–96 for the two sides.
 - **t0 / tgood (A1, GT §A1/§A0/§B3).** Plotted the summed raw counts near the
   pulse for EMU00018850 with markers at the stored `t0_bin`/`first_good_bin`.
   Values match GT §A0: t0_bin 14 → 0.224 µs, first_good 21 → 0.336 µs, offset
@@ -62,7 +64,7 @@ steering deliverable which exercises the fit-table + manual-column trend.
 |---|---|---|---|
 | Grouping groups | 2 groups, 32 detectors each (1–32 / 33–64) | 2 groups × 32 detectors | ✓ (assignment order note below) |
 | α (any TF cal run) | no printed target ("note the value") | α = 0.8849, diamagnetic, run 18854 | ✓ (qualitatively balances about 0) |
-| Dead-time | no printed value; Off→Auto-Load "changes the plot" | visible ~5.2 % early-time shift (Off ≈ 17.8 %, Auto ≈ 23 %) | ✓ |
+| Dead-time | no printed value; Off→Auto-Load "changes the plot" | maximum shift ≈ 0.3 percentage points through 12 µs | ✓ |
 | t0 / tgood (EMU 18850) | t0_bin 15 / first_good 22 (§A0, 1-based); offset ≈ 0.1 µs | t0 0.224 µs (bin 14, 0-based), tgood 0.336 µs (bin 21), offset ≈ 112 ns | ✓ |
 | B1 a₀(I) curve | parabola, min a₀ = 5.18 at I = −0.06 A; ≈7–8 at ±1 A | plotted points = steering_curve.dat exactly (min ≈5.17–5.19 near 0 A, 6.98/7.96 at ∓1/+1 A) | ✓ |
 | B1 curve minimum (beam-centred current) | I = −0.06 A, min a₀ = 5.18 | fitted `Cubic` minimum **I = −0.060 A**, a₀(min) = 5.12 (fit c0=5.133, c1=0.280, c2=2.354, c3=0.233; χ²ᵣ = 0.31) | ✓ current exact; a₀(min) −0.06 low (weighting differences vs WiMDA) |
