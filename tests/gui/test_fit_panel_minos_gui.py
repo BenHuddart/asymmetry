@@ -7,7 +7,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab, _ValueUncertaintyDelegate
@@ -20,6 +20,26 @@ def _dataset() -> MuonDataset:
     err = np.full_like(t, 0.01)
     y = 0.2 * np.exp(-0.5 * t)
     return MuonDataset(time=t, asymmetry=y, error=err, metadata={"run_number": 1})
+
+
+def test_zero_dof_fit_shows_raw_chi_squared_without_verdict(qapp: QApplication) -> None:
+    tab = SingleFitTab()
+    tab.set_dataset(_dataset())
+    result = FitEngine().fit_arrays(
+        [0.0],
+        [5.0],
+        [0.1],
+        lambda t, c: np.full_like(t, c),
+        ParameterSet([Parameter("c", 0.5, min=0, max=1)]),
+    )
+    assert result.success
+
+    tab._record_fit_verdict(result)
+
+    assert "unavailable" in tab._chi2_chip.text()
+    tooltip = tab._chi2_chip.toolTip()
+    assert "positive residual degrees of freedom" in tooltip
+    assert "poor" not in tooltip and "target band" not in tooltip
 
 
 def test_single_fit_minos_toggle_threads_and_populates_role(qapp: QApplication) -> None:

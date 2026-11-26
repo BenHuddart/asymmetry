@@ -40,7 +40,6 @@ from asymmetry.core.fitting.experiment_design import (
     suggest_discriminating_point,
     suggest_next_point,
 )
-from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.parameter_carry import carry_parameter_set
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
@@ -48,6 +47,7 @@ from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
+    ParameterModelFitResult,
     apply_error_mode,
     carve_window_gap,
     component_names_for_x,
@@ -81,6 +81,7 @@ from asymmetry.gui.styles.widgets import (
     warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.formatting import format_fit_statistic
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.function_builder.dialog import (
     FunctionBuilderDialog,
@@ -537,13 +538,14 @@ class ModelFitDialog(QDialog):
         x_key: str,
         x_values: np.ndarray,
         y_values: np.ndarray,
-        y_errors: np.ndarray,
+        y_errors: np.ndarray | None,
         existing_fit: ParameterModelFit | None = None,
         parent: QWidget | None = None,
         x_errors: np.ndarray | None = None,
         x_label: str | None = None,
         model_memory: dict[str, str] | None = None,
         width_context: TrendWidthContext | None = None,
+        y_errors_estimated: np.ndarray | None = None,
     ) -> None:
         super().__init__(parent)
 
@@ -562,7 +564,10 @@ class ModelFitDialog(QDialog):
         self._component_pool = _component_pool_for_context(x_key, parameter_name)
         self._x = np.asarray(x_values, dtype=float)
         self._y = np.asarray(y_values, dtype=float)
-        self._yerr = np.asarray(y_errors, dtype=float)
+        self._yerr = None if y_errors is None else np.array(y_errors, dtype=float)
+        self._yerr_estimated = (
+            None if y_errors_estimated is None else np.array(y_errors_estimated, dtype=bool)
+        )
         self._width_context = width_context
         self._xerr = None if x_errors is None else np.asarray(x_errors, dtype=float)
         self._removed = False
@@ -918,6 +923,7 @@ class ModelFitDialog(QDialog):
 
         self._quality_label = QLabel("")
         self._quality_label.setTextFormat(Qt.TextFormat.RichText)
+        self._quality_label.setWordWrap(True)
         self._quality_label.setToolTip(_QUALITY_TOOLTIP)
         result_box_layout.addWidget(self._quality_label)
 
@@ -1098,7 +1104,7 @@ class ModelFitDialog(QDialog):
                 label="data",
                 x=np.asarray(self._x, dtype=float),
                 y=np.asarray(self._y, dtype=float),
-                yerr=np.asarray(self._yerr, dtype=float),
+                yerr=self._yerr,
                 xerr=xerr,
             )
         ]
@@ -1457,13 +1463,7 @@ class ModelFitDialog(QDialog):
             self._select_range(max(0, min(previous_idx, len(self._fit.ranges) - 1)))
 
     def _range_card_view(self, idx: int, *, show_run: bool) -> RangeCardView:
-        """Assemble the plain render payload for range *idx*'s card.
-
-        Bounds text uses the ``∪`` union formatting from ``_range_bounds_text``;
-        the status chip reuses the same verdict path (``assess_fit_quality`` /
-        ``fit_quality_chip_html``) the details pane uses, so card and result box
-        never disagree.
-        """
+        """Assemble range status and statistics for the card."""
         fit_range = self._fit.ranges[idx]
         result = self._result_for_range(idx)
 
@@ -1472,16 +1472,14 @@ class ModelFitDialog(QDialog):
         tooltip = ""
         if result is None:
             status = "not_run"
-        elif getattr(result, "success", False):
+        elif result.success:
             status = "success"
             chip_html = self._range_status_chip_html(fit_range, result)
-            chi2 = getattr(result, "chi_squared", None)
-            rchi2 = getattr(result, "reduced_chi_squared", None)
-            if chi2 is not None and rchi2 is not None:
-                tooltip = f"chi2 = {float(chi2):.6g}, reduced chi2 = {float(rchi2):.6g}"
+            reduced = format_fit_statistic(result.reduced_chi_squared, ".6g")
+            tooltip = f"chi2 = {result.chi_squared:.6g}, reduced chi2 = {reduced}"
         else:
             status = "failed"
-            tooltip = getattr(result, "message", "") or "No convergence"
+            tooltip = result.message or "No convergence"
 
         return RangeCardView(
             idx=idx,
@@ -1518,22 +1516,12 @@ class ModelFitDialog(QDialog):
         x_max = fit_range.x_max if fit_range.x_max is not None else float("nan")
         return f"[{x_min:.6g}–{x_max:.6g}]{suffix}"
 
-    def _range_status_chip_html(self, fit_range: ModelFitRange, result: object) -> str:
-        """Verdict chip for a successful range, via the shared quality path.
-
-        Returns "" when no verdict applies (unit/scatter weights, ν < 1, or a
-        result without a point count — e.g. a cross-group/legacy bridge result).
-        """
-        if getattr(result, "error_mode", None) in (ErrorMode.NONE.value, ErrorMode.SCATTER.value):
-            return ""
-        n_points = getattr(result, "n_points", 0)
-        if not n_points or n_points <= 0:
-            return ""
-        n_free = len(fit_range.parameters.free_parameters)
-        quality = assess_fit_quality(
-            result.chi_squared, n_points - n_free, fit_quality_confidence()
-        )
-        if quality.verdict is None:
+    def _range_status_chip_html(
+        self, fit_range: ModelFitRange, result: ParameterModelFitResult
+    ) -> str:
+        """Show a verdict chip when the fit supports a χ² reference band."""
+        quality = result.assess_quality(fit_quality_confidence())
+        if quality is None:
             return ""
         quality_dict = {
             "verdict": quality.verdict,
@@ -1542,8 +1530,7 @@ class ModelFitDialog(QDialog):
             "confidence": float(quality.confidence),
             "dof": int(quality.dof),
         }
-        params_at_bound = list(getattr(result, "params_at_bound", ()) or [])
-        return fit_quality_chip_html(quality_dict, params_at_bound)
+        return fit_quality_chip_html(quality_dict, list(result.params_at_bound))
 
     def _post_rebuild_ranges_ui(self) -> None:
         """Hook for subclasses to adjust freshly rebuilt range rows."""
@@ -1777,22 +1764,9 @@ class ModelFitDialog(QDialog):
         result = fit_range.result
         if result is None or not result.success:
             return ""
-        if result.error_mode in (ErrorMode.NONE.value, ErrorMode.SCATTER.value):
-            return info_html(
-                "No χ² quality verdict: with unit-weight or scatter-estimated "
-                "errors χ²ᵣ carries no goodness information."
-            )
-        if result.n_points <= 0:
-            # Results built outside fit_parameter_model (cross-group bridge,
-            # legacy saved state) do not carry a point count — say nothing
-            # rather than implying the fit had no degrees of freedom.
-            return ""
-        n_free = len(fit_range.parameters.free_parameters)
-        quality = assess_fit_quality(
-            result.chi_squared, result.n_points - n_free, fit_quality_confidence()
-        )
-        if quality.verdict is None:
-            return info_html("No χ² quality verdict (no degrees of freedom).")
+        quality = result.assess_quality(fit_quality_confidence())
+        if quality is None:
+            return info_html(result.quality_reason or "No χ² quality verdict is available.")
         # Reuse the shared verdict→colour map (good=green, poor=error,
         # overdone=accent) instead of re-rolling one here.
         color = _FIT_VERDICT_COLOURS.get(quality.verdict, tokens.TEXT_MUTED)
@@ -2032,13 +2006,13 @@ class ModelFitDialog(QDialog):
         # leaves fewer than two points to estimate from.
         x_full = np.asarray(self._x, dtype=float).copy()
         y_full = np.asarray(self._y, dtype=float).copy()
-        yerr_full = np.asarray(self._yerr, dtype=float).copy()
+        yerr_full = self._yerr
         windows = list(fit_range.windows) if fit_range.windows else None
         mask = windows_mask(x_full, windows, fit_range.x_min, fit_range.x_max)
         if mask.size == x_full.size and int(np.count_nonzero(mask)) >= 2:
             x_masked = x_full[mask]
             y_masked = y_full[mask]
-            yerr_masked = yerr_full[mask]
+            yerr_masked = None if yerr_full is None else yerr_full[mask]
         else:
             x_masked, y_masked, yerr_masked = x_full, y_full, yerr_full
         # The fixed rows are the values this range holds (RFResonanceMuP needs a
@@ -2160,7 +2134,7 @@ class ModelFitDialog(QDialog):
         )
         x_vals = np.asarray(self._x, dtype=float).copy()
         y_vals = np.asarray(self._y, dtype=float).copy()
-        y_errs = np.asarray(self._yerr, dtype=float).copy()
+        y_errs, yerr_estimated = self._yerr, self._yerr_estimated
         width_context = self._width_context
         x_min = fit_range.x_min
         x_max = fit_range.x_max
@@ -2180,6 +2154,7 @@ class ModelFitDialog(QDialog):
                 x=x_vals,
                 y=y_vals,
                 yerr=y_errs,
+                yerr_estimated=yerr_estimated,
                 width_context=width_context,
                 model=model_snapshot,
                 parameters=params_snapshot,
@@ -3066,7 +3041,7 @@ class ModelFitDialog(QDialog):
         )
         x_vals = np.asarray(self._x, dtype=float).copy()
         y_vals = np.asarray(self._y, dtype=float).copy()
-        y_errs = np.asarray(self._yerr, dtype=float).copy()
+        y_errs, yerr_estimated = self._yerr, self._yerr_estimated
         width_context = self._width_context
         x_min = fit_range.x_min
         x_max = fit_range.x_max
@@ -3080,6 +3055,7 @@ class ModelFitDialog(QDialog):
                 x=x_vals,
                 y=y_vals,
                 yerr=y_errs,
+                yerr_estimated=yerr_estimated,
                 width_context=width_context,
                 model=model_snapshot,
                 parameters=params_snapshot,
@@ -3326,12 +3302,10 @@ class ModelFitDialog(QDialog):
         if result is None:
             return info_html("Fitting not yet run for selected range")
         if result.success:
+            reduced = format_fit_statistic(result.reduced_chi_squared, ".6g")
             return success_html(
                 "Fit successful",
-                detail=(
-                    f"chi2 = {result.chi_squared:.6g}, "
-                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
-                ),
+                detail=f"chi2 = {result.chi_squared:.6g}, reduced chi2 = {reduced}",
             )
         return error_html(f"Fit failed: {result.message or 'No convergence'}")
 

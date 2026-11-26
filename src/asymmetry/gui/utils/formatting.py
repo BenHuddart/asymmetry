@@ -70,3 +70,8 @@ def format_reduced_chi_squared(value: float) -> str:
     if not math.isfinite(value):
         return "—"
     return f"{value:.0f}" if value >= 100 else f"{value:.2f}"
+
+
+def format_fit_statistic(value: float | None, spec: str = ".4g") -> str:
+    """Format a fit statistic with an explicit label for unavailable values."""
+    return format(value, spec) if value is not None and math.isfinite(value) else "unavailable"

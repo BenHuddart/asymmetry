@@ -298,7 +298,7 @@ def test_fits_restored_from_a_project_are_not_what_a_ladder_starts_from(hopping)
     restored = replace(
         screening_row,
         fit_results_by_run={
-            run: replace(result, dof=0, covariance=None)
+            run: replace(result, dof=None, covariance=None)
             for run, result in anchor.fit_results_by_run.items()
         },
     )

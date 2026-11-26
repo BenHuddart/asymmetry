@@ -83,6 +83,7 @@ from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.cross_group import CrossGroupFitRun, run_cross_group_fit_from_config
 from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_count
+from asymmetry.core.fitting.fit_quality import recorded_statistic
 from asymmetry.core.fitting.input_attribution import saved_fit_matches
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
@@ -100,6 +101,7 @@ from asymmetry.core.fitting.sc.trend_width import (
     fitted_width_sources,
     model_width_sources,
 )
+from asymmetry.core.fitting.trend_result import reduced_chi_squared_parameter, trend_fit_statistics
 from asymmetry.core.fitting.wizard_scope import (
     restore_user_field_direction,
     set_user_field_direction,
@@ -321,6 +323,7 @@ from asymmetry.gui.ui_manager import (
     UIManager,
 )
 from asymmetry.gui.utils import app_data
+from asymmetry.gui.utils.formatting import format_fit_statistic
 from asymmetry.gui.utils.joint_publication import joint_source_publication
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
@@ -485,12 +488,10 @@ def _safe_float(value: object) -> float | None:
 
 
 def _phase_reduced_chi_squared_text(assessment) -> str:
-    """``"χ²ᵣ 1.03"`` for one phase's coupled fit, pooled over its runs.
-
-    A coupled fit is one problem across the phase's datasets, so the honest
-    single number is the pooled Σχ² / Σdof rather than a mean of per-run ratios.
-    """
+    """Pool Σχ² / Σν over the phase's coupled runs when their ν are known."""
     results = list(assessment.fit_results_by_run.values())
+    if any(result.dof is None for result in results):
+        return "χ²ᵣ n/a"
     total_chi2 = sum(float(result.chi_squared) for result in results)
     total_dof = sum(int(result.dof) for result in results)
     if total_dof <= 0:
@@ -10069,7 +10070,9 @@ class MainWindow(QMainWindow):
         self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
         self._set_status_chi2(self._last_fit_chi2)
         self._record_single_fit_slot(fit_result)
-        self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}", tag="fit")
+        self._log_panel.log(
+            f"Fit completed: χ²ᵣ = {format_fit_statistic(self._last_fit_chi2, '.4f')}", tag="fit"
+        )
 
     def _active_representation_type(self) -> RepresentationType | None:
         """Map the active workspace view to its representation type."""
@@ -10174,9 +10177,7 @@ class MainWindow(QMainWindow):
         recording paths produce identically shaped ``results_by_run`` entries,
         then stamps the additive provenance keys (``model_name``, ``fit_range``,
         ``timestamp``, ``provenance``, ``npar``, ``ndof``) for series recording.
-        ``npar`` uses the fitted parameter set's free columns,
-        independent of error availability. ``ndof`` comes from the χ² quality
-        block and is omitted when unavailable.
+        ``npar`` uses the fitted parameter set's free columns.
 
         ``extra_flags`` threads engine-only member-quality flags (notably
         ``spurious_reseeded``, which needs the scan trend) into the stored
@@ -10187,8 +10188,6 @@ class MainWindow(QMainWindow):
             confidence=fit_quality_confidence(self._settings),
             extra_flags=extra_flags,
         )
-        quality = summary.get("quality") or {}
-        ndof = quality.get("dof") if isinstance(quality, dict) else None
         enrich_summary_provenance(
             summary,
             model_name=model_name,
@@ -10196,7 +10195,6 @@ class MainWindow(QMainWindow):
             timestamp=timestamp,
             provenance=provenance,
             npar=len(fit_result.parameters.free_parameters),
-            ndof=ndof,
         )
         return summary
 
@@ -11372,7 +11370,13 @@ class MainWindow(QMainWindow):
         if slot is not None:
             ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else {}
             if ui_state:
-                return copy.deepcopy(ui_state)
+                restored = copy.deepcopy(ui_state)
+                result = slot.result or {}
+                if "result_html" not in restored and "historical_reduced_chi_squared" in result:
+                    restored["result_html"] = self._fit_panel._result_html_from_slot_result(
+                        result, source="Saved fit"
+                    )
+                return restored
         if not hasattr(self._fit_panel, "build_single_fit_payload_from_slot"):
             return None
         # No persisted form payload. Rebuild one from the slot's own stored data
@@ -13193,7 +13197,7 @@ class MainWindow(QMainWindow):
         self._last_fit_chi2 = float(avg_chi2r)
         self._set_status_chi2(self._last_fit_chi2)
         self._log_panel.log(
-            f"Batch fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
+            f"Batch fit completed: {n_datasets} datasets, average χ²ᵣ = {format_fit_statistic(avg_chi2r, '.3f')}",
             tag="fit",
         )
         self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
@@ -14301,9 +14305,10 @@ class MainWindow(QMainWindow):
             ),
             "chi_squared": float(result.chi_squared),
             "dof": int(result.dof),
-            "reduced_chi_squared": float(result.reduced_chi_squared),
+            "reduced_chi_squared": recorded_statistic(result.reduced_chi_squared),
             "series_reduced_chi_squared": {
-                str(key): float(value) for key, value in result.series_reduced_chi_squared.items()
+                str(key): recorded_statistic(value)
+                for key, value in result.series_reduced_chi_squared.items()
             },
             "fitted_at": timestamp,
         }
@@ -14316,7 +14321,7 @@ class MainWindow(QMainWindow):
         self._rebuild_joint_fits_menu()
         self._log_panel.log(
             f"Joint fit completed: {len(launch.member_batch_ids)} series, "
-            f"χ²ᵣ = {result.reduced_chi_squared:.3f}",
+            f"χ²ᵣ = {format_fit_statistic(result.reduced_chi_squared, '.3f')}",
             tag="fit",
         )
 
@@ -14515,17 +14520,13 @@ class MainWindow(QMainWindow):
 
         global_vals = {p.name: float(p.value) for p in fit_result.global_parameters}
         global_unc = {k: float(v) for k, v in fit_result.global_uncertainties.items()}
+        statistics = trend_fit_statistics(fit_result)
 
         # The axis the panel trends against (the orthogonal coordinate): for a
         # field fit, local parameters trend vs temperature, and vice versa —
         # mirroring _group_variable_value_for_rows.
         trend_axis = "field" if x_key == "temperature" else "temperature"
         other_axis = "temperature" if trend_axis == "field" else "field"
-
-        def _coordinate_fields(coord: float) -> dict[str, float | None]:
-            # _safe_float stores a non-finite coordinate as None (JSON null);
-            # allow_nan=False would otherwise reject the persisted series.
-            return {trend_axis: _safe_float(coord), other_axis: 0.0}
 
         base_key = -1_000_000_000
         member_run_numbers: list[int] = []
@@ -14540,30 +14541,24 @@ class MainWindow(QMainWindow):
             }
             member_key = base_key - idx - 1
             member_run_numbers.append(member_key)
-            summary = {
-                "success": True,
-                "computation_revision": fit_result.computation_revision,
+            results_by_run[member_key] = {
+                **statistics,
                 "parameters": {**global_vals, **local_vals},
                 "parameter_sources": cross_group_width_sources(output.model, fit_result, gid),
                 "uncertainties": {**global_unc, **local_unc},
-                "chi_squared": float(fit_result.chi_squared),
-                "reduced_chi_squared": float(fit_result.reduced_chi_squared),
                 "run_label": str(getattr(group, "group_name", f"group {idx + 1}")),
+                trend_axis: _safe_float(group.group_variable_value),
+                other_axis: 0.0,
             }
-            summary.update(_coordinate_fields(float(getattr(group, "group_variable_value", 0.0))))
-            results_by_run[member_key] = summary
 
         # Global-summary member: shared parameters + χ²ᵣ, off the trend axis.
         global_member = base_key
         member_run_numbers.append(global_member)
         results_by_run[global_member] = {
-            "success": True,
-            "computation_revision": fit_result.computation_revision,
-            "parameters": {**global_vals, "chi2_r": float(fit_result.reduced_chi_squared)},
+            **statistics,
+            "parameters": global_vals | reduced_chi_squared_parameter(statistics),
             "parameter_sources": cross_group_width_sources(output.model, fit_result),
             "uncertainties": dict(global_unc),
-            "chi_squared": float(fit_result.chi_squared),
-            "reduced_chi_squared": float(fit_result.reduced_chi_squared),
             "run_label": "globals",
             # Off the trend axis (None → NaN coordinate, excluded from the trend
             # line but kept in the table); the other axis stays numeric so x-axis
@@ -14601,7 +14596,7 @@ class MainWindow(QMainWindow):
             digest=digest,
             global_vals=global_vals,
             global_unc=global_unc,
-            fit_result=fit_result,
+            statistics=statistics,
             parameter_sources=cross_group_width_sources(output.model, fit_result),
         )
         self._refresh_trend_panel()
@@ -14615,7 +14610,7 @@ class MainWindow(QMainWindow):
         digest: str,
         global_vals: dict,
         global_unc: dict,
-        fit_result: object,
+        statistics: dict,
         parameter_sources: dict | None = None,
     ) -> None:
         """Upsert captured global outputs under the stable fit digest; physical coordinates remain absent."""
@@ -14648,16 +14643,11 @@ class MainWindow(QMainWindow):
             member_run_numbers.append(member_key)
 
         results_by_run[member_key] = {
-            "success": True,
-            "computation_revision": fit_result.computation_revision,
-            "parameters": {
-                **global_vals,
-                "chi2_r": float(fit_result.reduced_chi_squared),
-                "fit_index": float(fit_index),
-            },
+            **statistics,
+            "parameters": global_vals
+            | reduced_chi_squared_parameter(statistics)
+            | {"fit_index": fit_index},
             "uncertainties": dict(global_unc),
-            "chi_squared": float(fit_result.chi_squared),
-            "reduced_chi_squared": float(fit_result.reduced_chi_squared),
             "run_label": f"{parameter_name} vs {x_key}",
             "parameter_sources": parameter_sources or {},
             # Off both physical axes (None → NaN coordinate): a successive-fit
@@ -14786,19 +14776,14 @@ class MainWindow(QMainWindow):
             return
 
         meta = combined_dataset.metadata if isinstance(combined_dataset.metadata, dict) else {}
-        values = {p.name: float(p.value) for p in result.parameters}
-        values["chi2_r"] = float(result.reduced_chi_squared)
         summary = {
-            "success": True,
-            "parameters": values,
-            "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
-            "chi_squared": float(result.chi_squared),
-            "reduced_chi_squared": float(result.reduced_chi_squared),
+            **self._fit_result_summary(result),
             "run_label": label,
             "field": _safe_float(meta.get("field")),
             "temperature": _safe_float(meta.get("temperature")),
             "combined_from": list(runs),
         }
+        summary["parameters"].update(reduced_chi_squared_parameter(summary))
         batch_id = self._refit_coadded_batch_id(model, runs)
         self._add_results_series(
             batch_id,
@@ -14810,9 +14795,9 @@ class MainWindow(QMainWindow):
         )
         self._mark_dirty()  # recorded a new fit result (P0-2)
         self._refresh_trend_panel()
-        chi = float(result.reduced_chi_squared)
-        self.statusBar().showMessage(f"Recorded co-added re-fit of {label} (χ²ᵣ = {chi:.3f}).")
-        self._log_panel.log(f"Re-fit co-added runs {label}: χ²ᵣ = {chi:.3f}")
+        chi = format_fit_statistic(summary["reduced_chi_squared"], ".3f")
+        self.statusBar().showMessage(f"Recorded co-added re-fit of {label} (χ²ᵣ = {chi}).")
+        self._log_panel.log(f"Re-fit co-added runs {label}: χ²ᵣ = {chi}")
 
     def _on_refit_coadded_error(self, message) -> None:
         self._refit_coadded_worker = None
@@ -14853,11 +14838,9 @@ class MainWindow(QMainWindow):
         self._record_single_model_fit_results_series(parameter_name, x_key, fit)
         self._refresh_trend_panel()
 
-    def _record_single_model_fit_results_series(
-        self, parameter_name: str, x_key: str, fit: object
-    ) -> None:
+    def _record_single_model_fit_results_series(self, parameter_name: str, x_key: str, fit) -> None:
         """Record each successful range at its fitted-window centre, retaining captured width context."""
-        ranges = list(getattr(fit, "ranges", []) or [])
+        ranges = fit.ranges
         if not ranges:
             return
         rep_type = self._active_representation_type()
@@ -14872,8 +14855,8 @@ class MainWindow(QMainWindow):
         member_run_numbers: list[int] = []
         results_by_run: dict[int, dict] = {}
         for idx, fit_range in enumerate(ranges):
-            result = getattr(fit_range, "result", None)
-            if result is None or not getattr(result, "success", False):
+            result = fit_range.result
+            if result is None or not result.success:
                 continue
             try:
                 lo, hi = effective_range_bounds(fit_range)
@@ -14890,18 +14873,16 @@ class MainWindow(QMainWindow):
             member_key = -(2_000_000_000 + idx)
             member_run_numbers.append(member_key)
             values = {p.name: float(p.value) for p in result.parameters}
-            values["chi2_r"] = float(result.reduced_chi_squared)
+            statistics = trend_fit_statistics(result)
+            values.update(reduced_chi_squared_parameter(statistics))
             values["range_center"] = float(center)
             summary = {
-                "success": True,
+                **statistics,
                 "parameters": values,
                 "parameter_sources": fitted_width_sources(
                     fit_range.model, result.input_width_context
                 ),
-                "computation_revision": result.computation_revision,
                 "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
-                "chi_squared": float(result.chi_squared),
-                "reduced_chi_squared": float(result.reduced_chi_squared),
                 "run_label": f"range {idx + 1}: {label_range}",
                 # Off the physical axes unless the x-key is one of them.
                 "field": float(center) if axis_slot == "field" else None,
@@ -15161,7 +15142,7 @@ class MainWindow(QMainWindow):
         label = getattr(self, "_status_chi2_label", None)
         if label is None:
             return
-        label.setText("" if value is None else f"χ²/ν = {value:.2f}")
+        label.setText("" if value is None else f"χ²/ν = {format_fit_statistic(value, '.2f')}")
 
     def _set_status_state(self, text: str) -> None:
         """Update the status-bar state dot (● Idle / ● Computing …)."""

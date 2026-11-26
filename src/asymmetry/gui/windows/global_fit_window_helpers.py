@@ -312,8 +312,3 @@ def _correlation_color(value: float) -> QColor:
     g = int(round(255 * (1.0 - mag) + 90 * mag))
     b = int(round(255 * (1.0 - mag) + 70 * mag))
     return QColor(r, g, b)
-
-
-def _label_indicates_no_verdict(error_mode: str) -> bool:
-    """Return ``True`` when χ²ᵣ carries no goodness verdict for *error_mode*."""
-    return str(error_mode).lower() in {"none", "scatter"}

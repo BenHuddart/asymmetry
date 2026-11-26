@@ -269,7 +269,9 @@ def test_snapshot_takes_its_verdict_and_colours_from_the_fit_summary() -> None:
 def test_snapshot_reads_no_verdict_when_the_fit_supports_none() -> None:
     solved = _snapshot(_fit_result(chi_squared=0.0, dof=0)).ranges[0]
 
-    assert solved.verdict == "no verdict"
+    assert solved.chi_squared == "χ²ᵣ unavailable"
+    assert "requires positive residual degrees of freedom" in solved.verdict
+    assert "χ² = 0" in solved.verdict
     assert solved.colours == NEUTRAL_CHIP_COLOURS
 
 

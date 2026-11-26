@@ -103,6 +103,10 @@ class FitLog:
         if record.get("success") is False:
             lines.append("Status: fit did not converge")
 
+        statistic = record.get("chi_squared")
+        if statistic is not None:
+            label = reduced_statistic_label(record.get("objective"), ascii=True).removesuffix("/nu")
+            lines.append(f"{label} = {_fmt(statistic, self._value_format)}")
         chi_line = self._chi_line(record)
         if chi_line:
             lines.append(chi_line)
@@ -141,15 +145,20 @@ class FitLog:
 
     def _chi_line(self, record: Mapping[str, Any]) -> str:
         reduced = record.get("reduced_chi_squared")
-        if reduced is None:
+        if "reduced_chi_squared" not in record:
             return ""
         objective = record.get("objective")
         quality = (record.get("quality") or {}) if objective is not None else {}
-        dof = quality.get("dof") if isinstance(quality, Mapping) else None
-        if dof is None:
-            dof = record.get("ndof")
+        dof = record.get("ndof")
+        if dof is None and isinstance(quality, Mapping):
+            dof = quality.get("dof")
         label = reduced_statistic_label(objective, ascii=True)
-        line = f"{label} = {_fmt(reduced, '.4f')}"
+        value = (
+            "unavailable"
+            if reduced is None or not math.isfinite(float(reduced))
+            else _fmt(reduced, ".4f")
+        )
+        line = f"{label} = {value}"
         if dof is not None:
             line += f"  (nu={int(dof)})"
         verdict = quality.get("verdict") if isinstance(quality, Mapping) else None

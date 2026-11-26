@@ -82,7 +82,7 @@ def test_stored_layout_choices_have_historical_namespace_and_revision(
     before = copy.deepcopy(original)
     migrated = migrate_to_current(original)
     entry = migrated["datasets"][0]
-    assert migrated["schema_version"] == 41 == CURRENT_SCHEMA_VERSION
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
     assert entry["instrument_choice"]["selection"] == {
         "profile_key": key,
         "acquisition": acquisition,
@@ -335,7 +335,7 @@ def test_v11_profile_conversion_uses_released_fingerprint_shape_before_canonical
         "combined_datasets": [],
     }
     migrated = migrate_to_current(original)
-    assert migrated["schema_version"] == 41
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
     profile = migrated["grouping_profiles"][0]
     assert profile["name"] == "Default (EMU)"
     assert profile["fingerprint"] == {

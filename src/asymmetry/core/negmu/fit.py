@@ -32,6 +32,7 @@ from asymmetry.core.fitting.engine import (
     _minuit_status_message,
     drive_minuit,
 )
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainFitResult,
     build_count_group,
@@ -340,7 +341,7 @@ def fit_capture_histogram(
 
     n_data = len(time_arr)
     n_free = len(free_names)
-    dof = max(n_data - n_free, 1)
+    dof = n_data - n_free
     chi2 = float(m.fval)
     residuals = counts_arr - model_values
 
@@ -348,7 +349,7 @@ def fit_capture_histogram(
         objective=Objective(cost),
         success=bool(m.valid),
         chi_squared=chi2,
-        reduced_chi_squared=chi2 / dof,
+        reduced_chi_squared=reduced_statistic(chi2, dof),
         parameters=result_params,
         uncertainties=uncertainties,
         covariance=covariance,
@@ -592,9 +593,9 @@ def fit_capture_fb_alpha(
     # count proportionally by data-point count so dof_f + dof_b = true joint DOF.
     n_f = len(time_f)
     n_b = len(time_b)
-    dof_total = max(n_f + n_b - n_free_params, 1)
-    dof_f = max(round(dof_total * n_f / (n_f + n_b)), 1)
-    dof_b = max(dof_total - dof_f, 1)
+    dof_total = n_f + n_b - n_free_params
+    dof_f = round(dof_total * n_f / (n_f + n_b))
+    dof_b = dof_total - dof_f
     n_calls = int(getattr(m, "nfcn", 0) or 0)
     cov_accurate = getattr(m, "accurate", False)
     is_valid = bool(m.valid)
@@ -640,7 +641,7 @@ def fit_capture_fb_alpha(
             objective=Objective(cost),
             success=is_valid,
             chi_squared=chi2,
-            reduced_chi_squared=chi2 / dof_g,
+            reduced_chi_squared=reduced_statistic(chi2, dof_g),
             parameters=side_params,
             uncertainties=side_unc,
             covariance=side_cov,

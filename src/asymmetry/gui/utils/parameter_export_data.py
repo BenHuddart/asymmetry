@@ -23,6 +23,7 @@ from asymmetry.core.fitting.sc.trend_width import TrendWidthContext
 from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.tasks import TaskCancelledError
 from asymmetry.gui.utils import gle_export
+from asymmetry.gui.utils.formatting import format_fit_statistic
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -319,7 +320,20 @@ class ParameterExportData:
                     f.write(f"! x_max: {fit_range.x_max}\n")
                 f.write(f"! model_function: {fit_range.model.formula_string()}\n")
                 f.write(f"! chi_squared: {result.chi_squared:.8g}\n")
-                f.write(f"! reduced_chi_squared: {result.reduced_chi_squared:.8g}\n")
+                f.write(
+                    f"! reduced_chi_squared: {format_fit_statistic(result.reduced_chi_squared, '.8g')}\n"
+                )
+                f.write(
+                    f"! residual_degrees_of_freedom: {result.dof if result.dof is not None else 'unknown'}\n"
+                )
+                f.write(f"! requested_error_mode: {result.error_mode}\n")
+                f.write(f"! effective_y_error_mode: {result.effective_error_mode or 'unknown'}\n")
+                if result.column_error_source is not None:
+                    f.write(f"! column_error_source: {result.column_error_source.value}\n")
+                if result.uses_effective_variance is not None:
+                    f.write(f"! uses_effective_variance: {result.uses_effective_variance}\n")
+                if result.quality_reason:
+                    f.write(f"! quality_reason: {result.quality_reason}\n")
                 f.write("! fitted_parameters:\n")
                 for p in result.parameters:
                     self.check_cancelled()

@@ -136,9 +136,8 @@ def _effective_delta_chi_squared(
     about.
     """
     dof = fit_result.dof
-    if dof <= 0:
-        free = len(fit_result.parameters.free_parameters)
-        dof = int(n_points) - free
+    if dof is None:
+        dof = n_points - len(fit_result.parameters.free_parameters)
     if dof <= 0 or not math.isfinite(fit_result.chi_squared):
         return delta_chi_squared
     reduced = float(fit_result.chi_squared) / float(dof)

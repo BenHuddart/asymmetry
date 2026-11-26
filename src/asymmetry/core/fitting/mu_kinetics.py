@@ -24,6 +24,7 @@ import numpy as np
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.asymmetry_global import GlobalFitResult, fit_global
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.fit_quality import reduced_statistic
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.utils.constants import MOLAR_GAS_CONSTANT_J_PER_MOL_K
 
@@ -354,7 +355,7 @@ def _weighted_linear_fit(
     model = intercept + slope * x
     if weighted:
         chi2 = float(np.sum(weights * (y - model) ** 2))
-        reduced = chi2 / max(n - 2, 1)
+        reduced = reduced_statistic(chi2, n - 2)
     else:
         reduced = math.nan
     return slope, intercept, slope_err, intercept_err, reduced

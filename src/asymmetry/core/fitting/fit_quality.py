@@ -23,15 +23,49 @@ it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
-
-from scipy.special import chdtr, gammaincinv
 
 _CONFIDENCE_MIN = 0.5
 _CONFIDENCE_MAX = 0.999
 
 FitVerdict = Literal["good", "poor", "overdone"]
+
+
+def reduced_statistic(statistic: float, dof: int | None) -> float:
+    """Return the objective per residual degree of freedom, or NaN when undefined."""
+    return float(statistic) / dof if dof is not None and dof > 0 else math.nan
+
+
+def recorded_statistic(statistic: float) -> float | None:
+    """Encode an unavailable numeric statistic as JSON null."""
+    return float(statistic) if math.isfinite(statistic) else None
+
+
+def infer_historical_dof(statistic: float, reduced: float) -> int | None:
+    """Recover ν only when the stored statistic establishes it uniquely."""
+    if not (math.isfinite(statistic) and math.isfinite(reduced) and statistic > 0 and reduced > 0):
+        return None
+    ratio = statistic / reduced
+    if not math.isfinite(ratio):
+        return None
+    rounded = round(ratio)
+    # Dividing by max(ν, 1) discarded the distinction between ν = 1 and ν ≤ 0.
+    return rounded if rounded > 1 and math.isclose(ratio, rounded) else None
+
+
+def quality_inapplicability_reason(
+    dof: int | None, observation_reason: str | None = None
+) -> str | None:
+    """Explain when the χ² reference law does not apply to a fit."""
+    if dof is not None and dof <= 0:
+        return "A χ² quality verdict requires positive residual degrees of freedom."
+    if observation_reason is not None:
+        return observation_reason
+    if dof is None:
+        return "Residual degrees of freedom are unknown."
+    return None
 
 
 @dataclass(frozen=True)
@@ -69,7 +103,7 @@ def assess_fit_quality(
 
     chi2_value = float(chi_squared)
     nu = int(dof)
-    if nu < 1 or not (chi2_value >= 0.0):
+    if nu < 1 or not math.isfinite(chi2_value) or chi2_value < 0.0:
         return FitQuality(
             verdict=None,
             chi2_reduced=float("nan"),
@@ -78,6 +112,8 @@ def assess_fit_quality(
             confidence=confidence,
             dof=nu,
         )
+
+    from scipy.special import chdtr, gammaincinv
 
     cdf = float(chdtr(nu, chi2_value))
     if cdf < alpha / 2.0:

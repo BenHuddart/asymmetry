@@ -48,6 +48,7 @@ from asymmetry.gui.panels.fit.tab_base import _sample_fit_curve
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.formatting import format_fit_statistic
 from asymmetry.gui.widgets.fit_results_card import FitCardSummary, FitResultsCard
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -980,7 +981,7 @@ class JointFitWindow(QMainWindow):
         row = QWidget(self._series_results)
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        text = label if chi2r is None else f"{label} — χ²ᵣ = {chi2r:.4g}"
+        text = f"{label} — χ²ᵣ = {format_fit_statistic(chi2r)}"
         row_layout.addWidget(QLabel(text), 1)
         button = QPushButton("Open in Batch tab")
         button.clicked.connect(
@@ -1001,12 +1002,10 @@ class JointFitWindow(QMainWindow):
                 tone="ok",
                 headline=f"{len(launch.member_batch_ids)} series",
                 meta=f"ndof {result.dof}",
-                detail_html=f"χ²ᵣ = {result.reduced_chi_squared:.4g} · {shared_text}",
+                detail_html=f"χ²ᵣ = {format_fit_statistic(result.reduced_chi_squared)} · {shared_text}",
             )
         )
         self._clear_series_results()
-        # The members that were *fitted*, off the frozen launch — the tick state
-        # may already have moved on while the fit ran.
         for batch_id in launch.member_batch_ids:
             entry = self._entry(batch_id)
             self._add_series_result_row(
@@ -1028,17 +1027,11 @@ class JointFitWindow(QMainWindow):
             f"{name} = {float(value):.5g} ± {float(uncertainties.get(name, float('nan'))):.3g}"
             for name, value in shared_values.items()
         )
-        self._results_card.set_message(
-            f"χ²ᵣ = {float(summary.get('reduced_chi_squared', float('nan'))):.4g} · {shared_text}",
-            tag="Joint ✓",
-            tone="ok",
-        )
+        reduced = format_fit_statistic(summary.get("reduced_chi_squared"))
+        self._results_card.set_message(f"χ²ᵣ = {reduced} · {shared_text}", tag="Joint ✓", tone="ok")
         per_series = summary.get("series_reduced_chi_squared") or {}
         for entry in self.checked_series():
-            value = per_series.get(entry.batch_id)
-            self._add_series_result_row(
-                entry.batch_id, entry.label, None if value is None else float(value)
-            )
+            self._add_series_result_row(entry.batch_id, entry.label, per_series.get(entry.batch_id))
 
     # ── Staleness (D9) ──────────────────────────────────────────────────────
 

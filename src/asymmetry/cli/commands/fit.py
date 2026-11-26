@@ -98,13 +98,11 @@ def run(args: argparse.Namespace) -> None:
 
     pair = close_pair(result["parameters"]) if result["success"] else None
     if pair is not None:
-        # An exact fit has chi2_red 0 and no degrees of freedom to quote.
+        dof = result["ndof"]
         weight = (
-            f" — on {result['chi_squared'] / result['reduced_chi_squared']:.0f} degrees of "
-            f"freedom a chi2_red lower by 0.001 is a chi2 lower by "
-            f"{result['chi_squared'] / result['reduced_chi_squared'] * 0.001:.0f}, far more than "
-            f"the few extra parameters cost —"
-            if result["reduced_chi_squared"] > 0.0
+            f" — on {dof} degrees of freedom a chi2_red lower by 0.001 is a chi2 lower by "
+            f"{dof * 0.001:.0f}, far more than the few extra parameters cost —"
+            if dof is not None and dof > 0
             else ""
         )
         errors = [
@@ -176,7 +174,10 @@ def _render(result: dict[str, Any], recipe, plot_path: Path | None = None) -> st
         )
 
     quality = result["quality"]
-    verdict = "unknown" if quality is None else quality["verdict"]
+    reduced = result["reduced_chi_squared"]
+    statistic = "unavailable" if reduced is None else format_number(reduced, 4)
+    if quality is not None:
+        statistic += f"  ({quality['verdict']})"
     flags = result["quality_flags"]
     at_bound = result["params_at_bound"]
     lines = [
@@ -184,9 +185,12 @@ def _render(result: dict[str, Any], recipe, plot_path: Path | None = None) -> st
         "",
         render_table(headers, rows),
         "",
-        f"chi2_red : {format_number(result['reduced_chi_squared'], 4)}  ({verdict})",
+        f"chi2     : {result['chi_squared']:.6g}",
+        f"chi2_red : {statistic}",
         f"converged: {'yes' if result['success'] else 'NO'}",
     ]
+    if result["quality_reason"]:
+        lines.append(result["quality_reason"])
     if at_bound:
         lines.append(f"at bound : {', '.join(at_bound)}")
     lines.append(f"flags    : {', '.join(flags) if flags else 'none'}")

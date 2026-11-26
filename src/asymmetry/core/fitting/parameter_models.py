@@ -7,7 +7,6 @@ import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from enum import Enum
 from functools import cache, partial
 from itertools import product
 
@@ -24,6 +23,11 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
 from asymmetry.core.fitting.engine import _minuit_status_message
+from asymmetry.core.fitting.fit_quality import (
+    quality_inapplicability_reason,
+    recorded_statistic,
+    reduced_statistic,
+)
 from asymmetry.core.fitting.latex_preview import (
     LatexTerm,
     fallback_function_latex,
@@ -44,6 +48,13 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.fitting.sc import models as sc_models
 from asymmetry.core.fitting.sc.trend_width import TrendWidthContext
+from asymmetry.core.fitting.trend_result import (
+    ColumnErrorSource,
+    column_error_source,
+    trend_weighting_reason,
+)
+from asymmetry.core.fitting.trend_result import ErrorMode as ErrorMode
+from asymmetry.core.fitting.trend_result import ParameterModelFitResult as ParameterModelFitResult
 from asymmetry.core.utils.constants import (
     BOLTZMANN_CONSTANT_MEV_PER_K,
     ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G,
@@ -2837,25 +2848,6 @@ def suggest_model_seeds(
     return seeds
 
 
-class ErrorMode(str, Enum):
-    """How per-point σ values are assigned when weighting a model fit.
-
-    ``COLUMN`` uses the propagated errors of the trended parameter (the
-    default and the only mode where the stabilisation floor applies);
-    ``PERCENT`` sets σᵢ = (value/100)·|yᵢ|; ``ABSOLUTE`` a constant σ =
-    value; ``NONE`` unit weights; ``SCATTER`` fits with unit weights and
-    rescales the parameter errors by √(χ²/ν) afterwards — the standard
-    estimate of errors from the scatter of the points (and the fixed point
-    of WiMDA's iterated Estimate mode).
-    """
-
-    COLUMN = "column"
-    PERCENT = "percent"
-    ABSOLUTE = "absolute"
-    NONE = "none"
-    SCATTER = "scatter"
-
-
 def apply_error_mode(
     y: NDArray,
     yerr: NDArray | None,
@@ -2889,39 +2881,6 @@ def apply_error_mode(
     # NONE and SCATTER both weight uniformly; SCATTER additionally rescales
     # the resulting parameter errors after the fit.
     return np.ones_like(yy)
-
-
-@dataclass
-class ParameterModelFitResult:
-    """Result of fitting a parameter-vs-x model."""
-
-    success: bool
-    chi_squared: float = 0.0
-    reduced_chi_squared: float = 0.0
-    parameters: ParameterSet = field(default_factory=ParameterSet)
-    uncertainties: dict[str, float] = field(default_factory=dict)
-    message: str = ""
-    #: Error mode the fit was run with (χ²ᵣ carries no goodness information
-    #: for ``"none"``/``"scatter"`` — quality verdicts should be suppressed).
-    error_mode: str = ErrorMode.COLUMN.value
-    #: Number of points that entered the fit (0 when unknown/legacy).
-    n_points: int = 0
-    #: How many initial-value candidates the multi-start machinery actually
-    #: tried (1 for the default single-start path; more with ``extra_starts``).
-    n_starts_tried: int = 0
-    #: ``True`` iff the winning fit came from a *non-user* start (a data-aware or
-    #: perturbed seed beat the user's provided parameters). Advisory only.
-    seed_beat_user_start: bool = False
-    #: Names of free parameters whose fitted value sits within tolerance of a
-    #: finite ``min``/``max`` bound — a sign the data did not determine them.
-    params_at_bound: tuple[str, ...] = ()
-    #: ``(names, matrix)`` of the free-parameter covariance from Minuit, in
-    #: the same order as ``names`` (free parameters only, fixed parameters
-    #: excluded). ``None`` when unavailable: the fit failed/invalid or Minuit
-    #: produced no covariance (e.g. HESSE did not run/converge).
-    covariance: tuple[list[str], list[list[float]]] | None = None
-    computation_revision: str | None = None
-    input_width_context: dict | None = None
 
 
 @dataclass
@@ -3177,13 +3136,14 @@ class ParameterGroupData:
     group_name: str
     x: NDArray[np.float64]
     y: NDArray[np.float64]
-    yerr: NDArray[np.float64]
+    yerr: NDArray[np.float64] | None
     group_variable_value: float
     #: Optional per-point x-uncertainty (aligned to ``x``), used only for an
     #: effective-variance fit when the abscissa is itself a fitted parameter.
     xerr: NDArray[np.float64] | None = None
     input_computation_revisions: tuple[str | None, ...] = ()
     width_context: TrendWidthContext | None = None
+    yerr_estimated: NDArray[np.bool_] | None = None
 
     def to_dict(self) -> dict:
         """Canonical, JSON-safe serialization (numpy arrays -> lists)."""
@@ -3194,7 +3154,8 @@ class ParameterGroupData:
             "group_name": self.group_name,
             "x": np.asarray(self.x, dtype=float).tolist(),
             "y": np.asarray(self.y, dtype=float).tolist(),
-            "yerr": np.asarray(self.yerr, dtype=float).tolist(),
+            "yerr": None if self.yerr is None else np.asarray(self.yerr, dtype=float).tolist(),
+            "yerr_estimated": None if self.yerr_estimated is None else self.yerr_estimated.tolist(),
             "group_variable_value": float(self.group_variable_value),
             "xerr": (None if self.xerr is None else np.asarray(self.xerr, dtype=float).tolist()),
         }
@@ -3203,7 +3164,8 @@ class ParameterGroupData:
     def from_dict(cls, data: Mapping[str, object]) -> ParameterGroupData:
         """Tolerant deserialization: missing arrays default to empty."""
         raw_xerr = data.get("xerr")
-        xerr = None if raw_xerr is None else np.asarray(raw_xerr, dtype=float)
+        raw_yerr = data.get("yerr")
+        estimated = data.get("yerr_estimated")
         return cls(
             group_id=str(data.get("group_id", "")),
             input_computation_revisions=tuple(data.get("input_computation_revisions", ())),
@@ -3211,9 +3173,10 @@ class ParameterGroupData:
             group_name=str(data.get("group_name", "")),
             x=np.asarray(data.get("x", []), dtype=float),
             y=np.asarray(data.get("y", []), dtype=float),
-            yerr=np.asarray(data.get("yerr", []), dtype=float),
+            yerr=None if raw_yerr is None else np.asarray(raw_yerr, dtype=float),
             group_variable_value=float(data.get("group_variable_value", 0.0)),
-            xerr=xerr,
+            xerr=None if raw_xerr is None else np.asarray(raw_xerr, dtype=float),
+            yerr_estimated=None if estimated is None else np.asarray(estimated, dtype=bool),
         )
 
 
@@ -3284,10 +3247,9 @@ class CrossGroupFitResult:
     global_uncertainties: dict[str, float] = field(default_factory=dict)
     local_uncertainties: dict[str, dict[str, float]] = field(default_factory=dict)
     message: str = ""
-    #: Error mode the fit was run with (χ²ᵣ carries no goodness information for
-    #: ``"none"``/``"scatter"`` — quality verdicts should be suppressed).
+    #: Requested error mode, retained for refitting.
     error_mode: str = ErrorMode.COLUMN.value
-    #: Number of points that entered the fit across all groups (0 if unknown).
+    #: Number of fitted points across all groups (0 if unknown).
     n_points: int = 0
     uses_effective_variance: bool = False
     #: Per-group costs use the same mask and weighting as the joint objective.
@@ -3302,6 +3264,30 @@ class CrossGroupFitResult:
     global_correlations: tuple[list[str], list[list[float]]] | None = None
     input_width_contexts: dict[str, dict] = field(default_factory=dict)
     computation_revision: str | None = None
+    column_error_sources: dict[str, ColumnErrorSource] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        dof = self.dof
+        if dof is not None and dof <= 0:
+            self.reduced_chi_squared = float("nan")
+
+    @property
+    def dof(self) -> int | None:
+        """Joint residual count after shared and all local fit parameters."""
+        if not self.n_points:
+            return None
+        n_free = len(self.global_parameters.free_parameters) + sum(
+            len(pset.free_parameters) for pset in self.local_parameters.values()
+        )
+        return self.n_points - n_free
+
+    @property
+    def quality_reason(self) -> str | None:
+        """Why the joint result lacks a χ² reference law, when applicable."""
+        reason = trend_weighting_reason(
+            self.error_mode, tuple(self.column_error_sources.values()), self.uses_effective_variance
+        )
+        return quality_inapplicability_reason(self.dof, reason)
 
     def to_dict(self) -> dict:
         """Canonical, JSON-safe serialization.
@@ -3315,7 +3301,8 @@ class CrossGroupFitResult:
             "success": bool(self.success),
             "computation_revision": self.computation_revision,
             "chi_squared": float(self.chi_squared),
-            "reduced_chi_squared": float(self.reduced_chi_squared),
+            "reduced_chi_squared": recorded_statistic(self.reduced_chi_squared),
+            "column_error_sources": dict(self.column_error_sources),
             "global_parameters": _parameter_set_to_dicts(self.global_parameters),
             "local_parameters": {
                 gid: _parameter_set_to_dicts(pset) for gid, pset in self.local_parameters.items()
@@ -3417,8 +3404,9 @@ class CrossGroupFitResult:
             chi_squared = float(data.get("chi_squared", 0.0))
         except (TypeError, ValueError):
             chi_squared = 0.0
+        reduced = data.get("reduced_chi_squared", 0.0)
         try:
-            reduced_chi_squared = float(data.get("reduced_chi_squared", 0.0))
+            reduced_chi_squared = float("nan") if reduced is None else float(reduced)
         except (TypeError, ValueError):
             reduced_chi_squared = 0.0
         try:
@@ -3430,6 +3418,10 @@ class CrossGroupFitResult:
             input_width_contexts=dict(data.get("input_width_contexts", {})),
             success=success,
             computation_revision=data.get("computation_revision"),
+            column_error_sources={
+                str(group): ColumnErrorSource(source)
+                for group, source in dict(data.get("column_error_sources", {})).items()
+            },
             chi_squared=chi_squared,
             reduced_chi_squared=reduced_chi_squared,
             global_parameters=_parameter_set_from_dicts(data.get("global_parameters", [])),
@@ -3778,12 +3770,12 @@ def _run_parameter_model_minuit(
             if np.all(np.isfinite(cov_sub)):
                 covariance = (list(param_names), cov_sub.tolist())
 
-    ndof = max(len(x_fit) - len(free), 1)
     return (
         ParameterModelFitResult(
             success=bool(m.valid),
             chi_squared=float(m.fval),
-            reduced_chi_squared=float(m.fval) / ndof,
+            reduced_chi_squared=reduced_statistic(m.fval, len(x_fit) - len(free)),
+            n_points=len(x_fit),
             parameters=result_params,
             uncertainties=uncertainties,
             message=_minuit_status_message(
@@ -3859,6 +3851,7 @@ def fit_parameter_model(
     seed: int = 0,
     cancel_check: Callable[[], None] | None = None,
     width_context: TrendWidthContext | None = None,
+    yerr_estimated: NDArray[np.bool_] | None = None,
 ) -> ParameterModelFitResult:
     """Fit parameter-vs-x observations with optional captured width context.
 
@@ -3989,7 +3982,9 @@ def fit_parameter_model(
         )
 
     best_result.error_mode = error_mode.value
-    best_result.n_points = int(len(x_fit))
+    if error_mode is ErrorMode.COLUMN:
+        best_result.column_error_source = column_error_source(yerr, yerr_estimated, mask)
+    best_result.uses_effective_variance = xerr_fit is not None
     best_result.n_starts_tried = len(initial_candidates)
     best_result.seed_beat_user_start = best_provenance not in {"user", "transport"}
     best_result.params_at_bound = tuple(parameters_at_bound(best_result.parameters))
@@ -4119,7 +4114,6 @@ def global_fit_parameter_model(
             computation_revision=computation.COMPUTATION_REVISION,
         )
 
-    # Build Minuit parameter vector with deterministic names.
     fit_param_names: list[str] = []
     fit_init_values: list[float] = []
     fit_limits: dict[str, tuple[float, float]] = {}
@@ -4149,11 +4143,7 @@ def global_fit_parameter_model(
             kwargs[pname] = float(arg_map[f"l__{gidx}__{pname}"])
         return kwargs
 
-    # Precompute per-group fit arrays once: the window mask, finite mask and the
-    # per-point σ under the chosen error mode are all data-only (independent of
-    # the fitted parameters), so they need not be rebuilt every cost call. When
-    # x-uncertainty is active a group also carries its σ_x² and the finite
-    # -difference step (None → ordinary least squares for that group).
+    # Only the model derivative in the effective variance depends on the parameters.
     group_fit_arrays: list[
         tuple[
             NDArray[np.float64],
@@ -4165,6 +4155,7 @@ def global_fit_parameter_model(
     ] = []
     total_points = 0
     input_width_contexts = {}
+    column_error_sources = {}
     for group in groups:
         x = np.asarray(group.x, dtype=float)
         y = np.asarray(group.y, dtype=float)
@@ -4183,6 +4174,10 @@ def global_fit_parameter_model(
                 computation_revision=computation.COMPUTATION_REVISION,
             )
         mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0) & window_sel
+        if error_mode is ErrorMode.COLUMN and np.any(mask):
+            column_error_sources[group.group_id] = column_error_source(
+                group.yerr, group.yerr_estimated, mask
+            )
         if group.width_context is not None:
             selected_width = group.width_context.select(mask)
             selected_width.validate(model)
@@ -4230,7 +4225,7 @@ def global_fit_parameter_model(
     else:
         m.migrad()
 
-    ndof = max(total_points - len(fit_param_names), 1)
+    ndof = total_points - len(fit_param_names)
 
     # Per-group χ²: the same masked/windowed residual (incl. the xerr
     # effective-variance term when active) that `cost_function` sums over all
@@ -4326,13 +4321,12 @@ def global_fit_parameter_model(
         # Estimate errors from the scatter of the points: rescale *all* (global
         # and local) parameter errors by √(χ²/ν), the fixed point of WiMDA's
         # iterated Estimate mode. χ²ᵣ then carries no goodness information.
-        ndof_free = total_points - len(fit_param_names)
-        if ndof_free < 1:
+        if ndof < 1:
             global_unc = {}
             local_unc = {gid: {} for gid in local_unc}
             message += "; no degrees of freedom to estimate errors from scatter"
         else:
-            scale = float(np.sqrt(float(m.fval) / ndof_free))
+            scale = float(np.sqrt(float(m.fval) / ndof))
             if np.isfinite(scale) and scale > 0.0:
                 global_unc = {name: err * scale for name, err in global_unc.items()}
                 local_unc = {
@@ -4343,7 +4337,7 @@ def global_fit_parameter_model(
     return CrossGroupFitResult(
         success=bool(m.valid),
         chi_squared=float(m.fval),
-        reduced_chi_squared=float(m.fval) / float(ndof),
+        reduced_chi_squared=reduced_statistic(m.fval, ndof),
         global_parameters=global_parameter_set,
         local_parameters=local_parameter_sets,
         fixed_parameters=fixed_parameter_set,
@@ -4357,6 +4351,7 @@ def global_fit_parameter_model(
         per_group_n_points=per_group_n_points,
         global_correlations=global_correlations,
         input_width_contexts=input_width_contexts,
+        column_error_sources=column_error_sources,
         computation_revision=computation.COMPUTATION_REVISION,
     )
 

@@ -71,7 +71,6 @@ from asymmetry.core.fitting.composite_parameters import (
     CompositeParameterDefinition,
 )
 from asymmetry.core.fitting.engine import FitResult
-from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_APPLIED_FIELD,
     KnightShiftConfig,
@@ -109,6 +108,7 @@ from asymmetry.core.fitting.sc.trend_width import (
     TrendWidthContext,
     derived_width_source,
 )
+from asymmetry.core.fitting.trend_result import estimate_missing_trend_errors
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
@@ -126,7 +126,11 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils import gle_export
-from asymmetry.gui.utils.formatting import format_param_label, format_value_uncertainty
+from asymmetry.gui.utils.formatting import (
+    format_fit_statistic,
+    format_param_label,
+    format_value_uncertainty,
+)
 from asymmetry.gui.utils.parameter_export_data import (
     _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
     _UNSET,
@@ -3971,17 +3975,10 @@ class FitParametersPanel(QWidget):
         (and ν < 1) return the neutral "no verdict" chip.
         """
         result = fit_range.result
-        chi_squared = f"χ²ᵣ {result.reduced_chi_squared:.3g}"
-        quality = assess_fit_quality(
-            result.chi_squared,
-            result.n_points - len(fit_range.parameters.free_parameters),
-            fit_quality_confidence(),
-        )
-        if quality.verdict is None or result.error_mode in (
-            ErrorMode.NONE.value,
-            ErrorMode.SCATTER.value,
-        ):
-            return chi_squared, "no verdict", NEUTRAL_CHIP_COLOURS
+        chi_squared = f"χ²ᵣ {format_fit_statistic(result.reduced_chi_squared, '.3g')}"
+        quality = result.assess_quality(fit_quality_confidence())
+        if quality is None:
+            return chi_squared, result.quality_reason or "no verdict", NEUTRAL_CHIP_COLOURS
         band = f"{quality.band_low:.2g}–{quality.band_high:.2g}"
         return (
             chi_squared,
@@ -4006,7 +4003,7 @@ class FitParametersPanel(QWidget):
                     verdict=verdict,
                     colours=colours,
                     bounds=f"{_bound_text(low)} – {_bound_text(high)}",
-                    error_mode=fit_range.result.error_mode,
+                    error_mode=fit_range.result.effective_error_mode or "unknown",
                     parameters=_parameter_rows(fit_range),
                 )
             )
@@ -4324,12 +4321,7 @@ class FitParametersPanel(QWidget):
         )
         y_vals, y_err = self._series_y_arrays(rows, param_name)
 
-        invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
-        if np.any(invalid_err):
-            finite = np.abs(y_vals[np.isfinite(y_vals)])
-            fallback = max(float(np.nanmedian(finite)) * 0.02, 1e-9) if finite.size else 1e-3
-            y_err = y_err.copy()
-            y_err[invalid_err] = fallback
+        y_err, estimated = estimate_missing_trend_errors(y_vals, y_err)
 
         dialog = ModelFitDialog(
             parameter_name=param_name,
@@ -4337,6 +4329,7 @@ class FitParametersPanel(QWidget):
             x_values=x_vals,
             y_values=y_vals,
             y_errors=y_err,
+            y_errors_estimated=estimated,
             existing_fit=self._model_fits.get(param_name),
             parent=self,
             x_errors=x_err,
@@ -4433,12 +4426,7 @@ class FitParametersPanel(QWidget):
             y_vals, y_err = self._series_y_arrays(rows, param_name)
             if np.count_nonzero(np.isfinite(y_vals)) < 2:
                 continue
-            invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
-            if np.any(invalid_err):
-                finite = np.abs(y_vals[np.isfinite(y_vals)])
-                fallback = max(float(np.nanmedian(finite)) * 0.02, 1e-9) if finite.size else 1e-3
-                y_err = y_err.copy()
-                y_err[invalid_err] = fallback
+            y_err, estimated = estimate_missing_trend_errors(y_vals, y_err)
             if group.group_id in overrides:
                 gv_value = float(overrides[group.group_id])
             else:
@@ -4454,6 +4442,7 @@ class FitParametersPanel(QWidget):
                     x=x_vals,
                     y=y_vals,
                     yerr=y_err,
+                    yerr_estimated=estimated,
                     group_variable_value=gv_value,
                     # Per-point x-uncertainty for the effective-variance option —
                     # only present (non-None) when the abscissa is a fitted param.
@@ -5002,66 +4991,9 @@ class FitParametersPanel(QWidget):
             if isinstance(payload.get("config"), dict)
             else {},
             "config_key": str(payload.get("config_key", "")),
-            "groups": [
-                {
-                    "group_id": g.group_id,
-                    "input_computation_revisions": list(g.input_computation_revisions),
-                    "width_context": g.width_context.to_dict() if g.width_context else None,
-                    "group_name": g.group_name,
-                    "x": np.asarray(g.x, dtype=float).tolist(),
-                    "y": np.asarray(g.y, dtype=float).tolist(),
-                    "yerr": np.asarray(g.yerr, dtype=float).tolist(),
-                    "group_variable_value": float(g.group_variable_value),
-                }
-                for g in groups
-                if isinstance(g, ParameterGroupData)
-            ],
+            "groups": [g.to_dict() for g in groups if isinstance(g, ParameterGroupData)],
             "model": model.to_dict(),
-            "fit_result": {
-                "computation_revision": fit_result.computation_revision,
-                "input_width_contexts": dict(fit_result.input_width_contexts),
-                "success": bool(fit_result.success),
-                "chi_squared": float(fit_result.chi_squared),
-                "reduced_chi_squared": float(fit_result.reduced_chi_squared),
-                "message": str(fit_result.message),
-                "global_parameters": [
-                    {
-                        "name": p.name,
-                        "value": p.value,
-                        "min": p.min,
-                        "max": p.max,
-                        "fixed": p.fixed,
-                    }
-                    for p in fit_result.global_parameters
-                ],
-                "global_uncertainties": dict(fit_result.global_uncertainties),
-                "local_parameters": {
-                    gid: [
-                        {
-                            "name": p.name,
-                            "value": p.value,
-                            "min": p.min,
-                            "max": p.max,
-                            "fixed": p.fixed,
-                        }
-                        for p in pset
-                    ]
-                    for gid, pset in fit_result.local_parameters.items()
-                },
-                "fixed_parameters": [
-                    {
-                        "name": p.name,
-                        "value": p.value,
-                        "min": p.min,
-                        "max": p.max,
-                        "fixed": p.fixed,
-                    }
-                    for p in fit_result.fixed_parameters
-                ],
-                "local_uncertainties": {
-                    gid: dict(vals) for gid, vals in fit_result.local_uncertainties.items()
-                },
-            },
+            "fit_result": fit_result.to_dict(),
         }
 
     def _deserialize_last_cross_group_fit(self, state: object) -> dict[str, object] | None:
@@ -5082,83 +5014,10 @@ class FitParametersPanel(QWidget):
         except Exception:
             return None
 
-        groups: list[ParameterGroupData] = []
-        for entry in groups_state:
-            if not isinstance(entry, dict):
-                continue
-            groups.append(
-                ParameterGroupData(
-                    group_id=str(entry.get("group_id", "")),
-                    input_computation_revisions=tuple(entry.get("input_computation_revisions", ())),
-                    width_context=TrendWidthContext.from_dict(entry.get("width_context")),
-                    group_name=str(entry.get("group_name", "")),
-                    x=np.asarray(entry.get("x", []), dtype=float),
-                    y=np.asarray(entry.get("y", []), dtype=float),
-                    yerr=np.asarray(entry.get("yerr", []), dtype=float),
-                    group_variable_value=float(entry.get("group_variable_value", 0.0)),
-                )
-            )
-
-        global_params = ParameterSet()
-        for p in fit_state.get("global_parameters", []):
-            if isinstance(p, dict):
-                global_params.add(
-                    Parameter(
-                        name=str(p.get("name", "")),
-                        value=float(p.get("value", 0.0)),
-                        min=float(p.get("min", -float("inf"))),
-                        max=float(p.get("max", float("inf"))),
-                        fixed=bool(p.get("fixed", False)),
-                    )
-                )
-
-        local_params: dict[str, ParameterSet] = {}
-        for gid, plist in dict(fit_state.get("local_parameters", {})).items():
-            pset = ParameterSet()
-            for p in plist:
-                if isinstance(p, dict):
-                    pset.add(
-                        Parameter(
-                            name=str(p.get("name", "")),
-                            value=float(p.get("value", 0.0)),
-                            min=float(p.get("min", -float("inf"))),
-                            max=float(p.get("max", float("inf"))),
-                            fixed=bool(p.get("fixed", False)),
-                        )
-                    )
-            local_params[str(gid)] = pset
-
-        fixed_params = ParameterSet()
-        for p in fit_state.get("fixed_parameters", []):
-            if isinstance(p, dict):
-                fixed_params.add(
-                    Parameter(
-                        name=str(p.get("name", "")),
-                        value=float(p.get("value", 0.0)),
-                        min=float(p.get("min", -float("inf"))),
-                        max=float(p.get("max", float("inf"))),
-                        fixed=bool(p.get("fixed", True)),
-                    )
-                )
-
-        fit_result = CrossGroupFitResult(
-            success=bool(fit_state.get("success", False)),
-            computation_revision=fit_state.get("computation_revision"),
-            input_width_contexts=dict(fit_state.get("input_width_contexts", {})),
-            chi_squared=float(fit_state.get("chi_squared", 0.0)),
-            reduced_chi_squared=float(fit_state.get("reduced_chi_squared", 0.0)),
-            global_parameters=global_params,
-            local_parameters=local_params,
-            fixed_parameters=fixed_params,
-            global_uncertainties={
-                str(k): float(v) for k, v in dict(fit_state.get("global_uncertainties", {})).items()
-            },
-            local_uncertainties={
-                str(gid): {str(k): float(v) for k, v in dict(vals).items()}
-                for gid, vals in dict(fit_state.get("local_uncertainties", {})).items()
-            },
-            message=str(fit_state.get("message", "")),
-        )
+        groups = [
+            ParameterGroupData.from_dict(entry) for entry in groups_state if isinstance(entry, dict)
+        ]
+        fit_result = CrossGroupFitResult.from_dict(fit_state)
 
         return {
             "parameter_name": str(state.get("parameter_name", "")),
@@ -6565,34 +6424,7 @@ class FitParametersPanel(QWidget):
                     ],
                 }
                 if fit_range.result is not None:
-                    range_item["result"] = {
-                        "success": fit_range.result.success,
-                        "computation_revision": fit_range.result.computation_revision,
-                        "input_width_context": fit_range.result.input_width_context,
-                        "chi_squared": fit_range.result.chi_squared,
-                        "reduced_chi_squared": fit_range.result.reduced_chi_squared,
-                        "message": fit_range.result.message,
-                        "error_mode": fit_range.result.error_mode,
-                        "n_points": fit_range.result.n_points,
-                        "parameters": [
-                            {
-                                "name": p.name,
-                                "value": p.value,
-                                "min": p.min,
-                                "max": p.max,
-                                "fixed": p.fixed,
-                            }
-                            for p in fit_range.result.parameters
-                        ],
-                        "uncertainties": dict(fit_range.result.uncertainties),
-                        "params_at_bound": list(fit_range.result.params_at_bound),
-                    }
-                    if fit_range.result.covariance is not None:
-                        cov_names, cov_matrix = fit_range.result.covariance
-                        range_item["result"]["covariance"] = {
-                            "names": list(cov_names),
-                            "matrix": [[float(v) for v in row] for row in cov_matrix],
-                        }
+                    range_item["result"] = fit_range.result.to_dict()
                 ranges_data.append(range_item)
 
             payload[param_name] = {
@@ -6659,61 +6491,8 @@ class FitParametersPanel(QWidget):
                 result_obj = None
                 result_state = range_state.get("result")
                 if isinstance(result_state, dict):
-                    result_params = ParameterSet()
-                    for p in result_state.get("parameters", []):
-                        if not isinstance(p, dict):
-                            continue
-                        try:
-                            pname = str(p.get("name", ""))
-                            if uses_diffusion_component and pname == "C":
-                                pname = "A"
-                            result_params.add(
-                                Parameter(
-                                    name=pname,
-                                    value=float(p.get("value", 0.0)),
-                                    min=float(p.get("min", -float("inf"))),
-                                    max=float(p.get("max", float("inf"))),
-                                    fixed=bool(p.get("fixed", False)),
-                                )
-                            )
-                        except Exception:
-                            continue
-                    params_at_bound: tuple[str, ...] = ()
-                    raw_params_at_bound = result_state.get("params_at_bound")
-                    if isinstance(raw_params_at_bound, (list, tuple)):
-                        params_at_bound = tuple(str(name) for name in raw_params_at_bound)
-
-                    covariance: tuple[list[str], list[list[float]]] | None = None
-                    raw_covariance = result_state.get("covariance")
-                    if isinstance(raw_covariance, dict):
-                        raw_names = raw_covariance.get("names")
-                        raw_matrix = raw_covariance.get("matrix")
-                        if isinstance(raw_names, (list, tuple)) and isinstance(
-                            raw_matrix, (list, tuple)
-                        ):
-                            try:
-                                cov_names = [str(name) for name in raw_names]
-                                cov_matrix = [[float(v) for v in row] for row in raw_matrix]
-                                covariance = (cov_names, cov_matrix)
-                            except (TypeError, ValueError):
-                                covariance = None
-
-                    result_obj = ParameterModelFitResult(
-                        success=bool(result_state.get("success", False)),
-                        computation_revision=result_state.get("computation_revision"),
-                        input_width_context=result_state.get("input_width_context"),
-                        chi_squared=float(result_state.get("chi_squared", 0.0)),
-                        reduced_chi_squared=float(result_state.get("reduced_chi_squared", 0.0)),
-                        parameters=result_params,
-                        uncertainties={
-                            str(k): float(v)
-                            for k, v in dict(result_state.get("uncertainties", {})).items()
-                        },
-                        message=str(result_state.get("message", "")),
-                        error_mode=str(result_state.get("error_mode", "column")),
-                        n_points=int(result_state.get("n_points", 0)),
-                        params_at_bound=params_at_bound,
-                        covariance=covariance,
+                    result_obj = ParameterModelFitResult.from_dict(
+                        result_state, legacy_diffusion_name=uses_diffusion_component
                     )
 
                 ranges.append(

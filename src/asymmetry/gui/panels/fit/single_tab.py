@@ -65,7 +65,7 @@ from asymmetry.gui.styles.widgets import (
     verdict_chip_qss,
 )
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.utils.formatting import format_value_uncertainty
+from asymmetry.gui.utils.formatting import format_fit_statistic, format_value_uncertainty
 from asymmetry.gui.widgets.fit_results_card import FitCardSummary, FitResultsCard
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -564,15 +564,13 @@ class SingleFitTab(FitTabBase):
     ) -> None:
         """Render a solved fit on the results card: stats, verdict and warnings."""
         npar = len(result.parameters.free_parameters)
-        ndof = (
-            round(result.chi_squared / result.reduced_chi_squared)
-            if result.reduced_chi_squared > 0
-            else 0
-        )
-        detail = f"χ²/ν {result.reduced_chi_squared:.4f}"
+        summary = _fit_summary(result)
+        ndof = summary["ndof"] if summary["ndof"] is not None else "unknown"
+        detail = f"χ²/ν {format_fit_statistic(summary['reduced_chi_squared'], '.4f')}"
+        if summary["reduced_chi_squared"] is None:
+            detail += f" · χ² {result.chi_squared:.6g}"
         if result.edm is not None:
             detail += f" · Δ‖p‖ {result.edm:.2e}"
-        summary = _fit_summary(result)
         detail += fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
         self._results_card.set_summary(
             FitCardSummary(

@@ -211,6 +211,8 @@ def compute_group_input_digest(groups: list[ParameterGroupData]) -> str:
         hasher.update(_round_array_bytes(group.x))
         hasher.update(_round_array_bytes(group.y))
         hasher.update(_round_array_bytes(group.yerr))
+        if group.yerr_estimated is not None:
+            hasher.update(group.yerr_estimated.tobytes())
         if group.xerr is not None:
             hasher.update(_round_array_bytes(group.xerr))
         hasher.update(_round_array_bytes(np.asarray([group.group_variable_value])))

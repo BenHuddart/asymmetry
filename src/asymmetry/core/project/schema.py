@@ -14,6 +14,10 @@ from copy import deepcopy
 from numbers import Integral, Real
 from pathlib import Path
 
+from asymmetry.core.project.fit_statistic_migration import (
+    migrate_fit_objectives,
+    migrate_fit_statistic_applicability,
+)
 from asymmetry.core.project.instrument_migration import (
     LegacyProfileFingerprint,
     legacy_histogram_count,
@@ -22,7 +26,7 @@ from asymmetry.core.project.instrument_migration import (
 from asymmetry.core.project.json_values import encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 41
+CURRENT_SCHEMA_VERSION: int = 42
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -108,7 +112,7 @@ def migrate_to_current(data: dict) -> dict:
         (24, _migrate_v24_to_v25),
         (25, _migrate_v25_to_v26),
         (26, _migrate_v26_to_v27),
-        (27, _migrate_v27_to_v28),
+        (27, migrate_fit_objectives),
         (28, _migrate_v28_to_v29),
     ):
         if version == prior:
@@ -166,6 +170,10 @@ def migrate_to_current(data: dict) -> dict:
         version = 40
     if version == 40:
         migrated = migrate_instrument_identities(migrated) | {"schema_version": 41}
+        version = 41
+    if version == 41:
+        migrate_fit_statistic_applicability(migrated)
+        migrated["schema_version"] = 42
     return migrated
 
 
@@ -213,36 +221,6 @@ def _migrate_v28_to_v29(data: dict) -> dict:
         ],
     )
     return migrated
-
-
-def _migrate_v27_to_v28(data: dict) -> dict:
-    """Record known Gaussian producers and retain unknown grouped objectives explicitly."""
-
-    def summary(value, objective):
-        result = dict(value) | {"objective": objective, "minimum_expected_count": None}
-        if objective is None:
-            result.update(quality=None, quality_reason="Fit objective was not recorded.")
-        return result
-
-    def walk(value):
-        if isinstance(value, list):
-            return [walk(item) for item in value]
-        if not isinstance(value, dict):
-            return value
-        result = {key: walk(item) for key, item in value.items()}
-        if {"parameters", "provenance", "result"} <= value.keys() and isinstance(
-            value["result"], dict
-        ):
-            result["result"] = summary(value["result"], "gaussian")
-        if "member_kind" in value and isinstance(value.get("results_by_run"), dict):
-            objective = "gaussian" if value["member_kind"] == "runs" else None
-            result["results_by_run"] = {
-                key: summary(item, objective) if isinstance(item, dict) else item
-                for key, item in value["results_by_run"].items()
-            }
-        return result
-
-    return walk(data) | {"schema_version": 28}
 
 
 def _wizard_sample_count(row: dict, recorded: int | None) -> int | None:

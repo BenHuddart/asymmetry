@@ -15,6 +15,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.gui.tasks import TaskCancelledError
+from asymmetry.gui.utils.formatting import format_fit_statistic
 from asymmetry.gui.utils.gle_export import (
     safe_file_token,
 )
@@ -276,9 +277,17 @@ class GlobalExportData:
             lines.extend(self._global_parameter_table_lines(result))
             if np.isfinite(result.chi_squared):
                 lines.append(f"! chi_squared: {float(result.chi_squared):.8g}")
-            if np.isfinite(result.reduced_chi_squared):
-                lines.append(f"! reduced_chi_squared: {float(result.reduced_chi_squared):.8g}")
+            lines.append(
+                f"! reduced_chi_squared: {format_fit_statistic(result.reduced_chi_squared, '.8g')}"
+            )
+            if result.dof is not None:
+                lines.append(f"! residual_degrees_of_freedom: {result.dof}")
             lines.append(f"! error_mode: {result.error_mode}")
+            lines.append(f"! uses_effective_variance: {result.uses_effective_variance}")
+            for group, source in sorted(result.column_error_sources.items()):
+                lines.append(f"! column_error_source[{group}]: {source.value}")
+            if result.quality_reason:
+                lines.append(f"! quality_reason: {result.quality_reason}")
             if result.n_points:
                 lines.append(f"! n_points: {int(result.n_points)}")
             if result.per_group_chi_squared:

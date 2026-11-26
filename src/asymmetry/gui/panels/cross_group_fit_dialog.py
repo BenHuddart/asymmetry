@@ -49,6 +49,7 @@ from asymmetry.gui.panels.model_fit_dialog import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import error_html, info_html, success_html
+from asymmetry.gui.utils.formatting import format_fit_statistic
 from asymmetry.gui.widgets.trend_preview import PreviewSeries
 
 
@@ -99,7 +100,14 @@ class CrossGroupFitDialog(ModelFitDialog):
             else np.array([], dtype=float)
         )
         all_e = (
-            np.concatenate([np.asarray(group.yerr, dtype=float) for group in groups])
+            np.concatenate(
+                [
+                    group.yerr
+                    if group.yerr is not None
+                    else np.full_like(group.y, np.nan, dtype=float)
+                    for group in groups
+                ]
+            )
             if groups
             else np.array([], dtype=float)
         )
@@ -206,7 +214,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                     label=group.group_name,
                     x=np.asarray(group.x, dtype=float),
                     y=np.asarray(group.y, dtype=float),
-                    yerr=np.asarray(group.yerr, dtype=float),
+                    yerr=group.yerr,
                     xerr=None if xerr is None else np.asarray(xerr, dtype=float),
                 )
             )
@@ -323,13 +331,10 @@ class CrossGroupFitDialog(ModelFitDialog):
                 width_context=g.width_context,
                 x=np.asarray(g.x, dtype=float).copy(),
                 y=np.asarray(g.y, dtype=float).copy(),
-                yerr=np.asarray(g.yerr, dtype=float).copy(),
+                yerr=None if g.yerr is None else np.asarray(g.yerr, dtype=float).copy(),
+                yerr_estimated=None if g.yerr_estimated is None else g.yerr_estimated.copy(),
                 group_variable_value=float(g.group_variable_value),
-                xerr=(
-                    None
-                    if getattr(g, "xerr", None) is None
-                    else np.asarray(g.xerr, dtype=float).copy()
-                ),
+                xerr=None if g.xerr is None else np.asarray(g.xerr, dtype=float).copy(),
             )
             for g in self._groups
         ]
@@ -680,18 +685,16 @@ class CrossGroupFitDialog(ModelFitDialog):
         if result is None:
             return info_html("Fitting not yet run for selected range")
         if result.success:
+            reduced = format_fit_statistic(result.reduced_chi_squared, ".6g")
             return success_html(
                 "Cross-group fit successful",
-                detail=(
-                    f"chi2 = {result.chi_squared:.6g}, "
-                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
-                ),
+                detail=f"chi2 = {result.chi_squared:.6g}, reduced chi2 = {reduced}",
             )
         return error_html(f"Cross-group fit failed: {result.message or 'No convergence'}")
 
     def _quality_status_text(self, fit_range, result: object | None) -> str:
-        # CrossGroupFitResult does not carry the per-range χ²/dof shape the
-        # single-fit quality verdict needs, so cross-group mode shows none.
+        if isinstance(result, CrossGroupFitResult) and result.success and result.quality_reason:
+            return info_html(result.quality_reason)
         return ""
 
     def _range_status_chip_html(self, fit_range, result: object) -> str:
