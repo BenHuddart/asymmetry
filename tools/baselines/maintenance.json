@@ -772,6 +772,6 @@
     "tests/io/test_simulate.py": 1384,
     "tests/tools/test_harness.py": 1015,
     "tools/global_wizard_harness.py": 1465,
-    "tools/harness.py": 1373
+    "tools/harness.py": 1364
   }
 }

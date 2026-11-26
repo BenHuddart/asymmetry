@@ -145,8 +145,8 @@ jobs:
           GH_TOKEN: ${{ secrets.CORPUS_REPO_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "CORPUS_REPO_TOKEN not available; corpus renders will be stubs."
-            exit 0
+            echo "::error::CORPUS_REPO_TOKEN is required for Pages publication"
+            exit 1
           fi
           archive="wimda-corpus-${CORPUS_VERSION}.tar.zst"
           download_dir=$(mktemp -d "$RUNNER_TEMP/wimda-download.XXXXXX")
@@ -172,49 +172,30 @@ jobs:
         run: python -m docs.screenshots.capture --out docs/_generated/screenshots
 
       - name: Generate corpus screenshots
-        continue-on-error: true
-        # One capture process per scenario module keeps every process well
-        # inside the in-process watchdog; a wedged module loses only its own
-        # renders (the stubs pass below fills any hole). Skipped modules are
-        # visible in the log. Falls back to stubs-only when the corpus was not
-        # provisioned because no token was available.
+        # Each module gets its own watchdog. The Pages gate checks every
+        # referenced PNG and receipt after the remaining modules have run.
         timeout-minutes: 45
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          corpus_root="$RUNNER_TEMP/wimda-corpus"
-          if [ ! -d "$corpus_root/Basics" ]; then
-            echo "Corpus not provisioned; writing stub renders only."
-          else
-            export ASYMMETRY_CORPUS_ROOT="$corpus_root"
-            for module in $(python -m docs.screenshots.capture_corpus --list-modules); do
-              echo "::group::corpus module ${module}"
-              python -m docs.screenshots.capture_corpus --module "${module}" || \
-                echo "::warning::corpus module ${module} failed; stubs will fill its renders"
-              echo "::endgroup::"
-            done
+          export ASYMMETRY_CORPUS_ROOT="$RUNNER_TEMP/wimda-corpus"
+          if [ ! -d "$ASYMMETRY_CORPUS_ROOT/Basics" ]; then
+            echo "::error::The pinned corpus snapshot was not extracted"
+            exit 1
           fi
-          # Fill any missing render (failed module, or no corpus at all) with a
-          # labelled placeholder so the built pages are image-complete. Existing
-          # real renders are never overwritten. When the corpus WAS provisioned,
-          # any stub means a scenario silently failed — surface that loudly as a
-          # workflow warning + step summary instead of a quietly green job.
-          STUB_LOG=$(python -m docs.screenshots.capture_corpus --stubs-missing)
-          echo "$STUB_LOG"
-          if [ -d "$corpus_root/Basics" ] && echo "$STUB_LOG" | grep -q "] stub "; then
-            COUNT=$(echo "$STUB_LOG" | grep -c "] stub ")
-            echo "::warning::${COUNT} corpus render(s) fell back to stubs despite the corpus being provisioned — see the step summary"
-            {
-              echo "## Corpus renders stubbed despite provisioned corpus (${COUNT})"
-              echo "$STUB_LOG" | grep "] stub " | sed -E 's#.*/([^/]+)\.png#- \1#'
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          modules=$(python -m docs.screenshots.capture_corpus --list-modules --published)
+          for module in $modules; do
+            echo "::group::corpus module ${module}"
+            if ! python -m docs.screenshots.capture_corpus --module "$module" --published; then
+              echo "::warning::corpus module ${module} failed"
+            fi
+            echo "::endgroup::"
+          done
 
       - name: Verify GUI screenshot completeness
         # Capture steps tolerate individual failures. Ordinary GUI assets must
-        # be complete before building or uploading; corpus assets may use the
-        # labelled fallback written above. The shared publishing gate repeats
-        # this same static completeness contract for local callers.
+        # be complete before building or uploading. The Pages gate repeats
+        # this ordinary asset check and validates referenced corpus captures.
         run: |
           if ! OUTPUT=$(python -m docs.screenshots.capture --check-complete --out docs/_generated/screenshots 2>&1); then
             echo "$OUTPUT"
@@ -225,7 +206,7 @@ jobs:
           echo "$OUTPUT"
 
       - name: Build HTML docs
-        run: python3 tools/harness.py docs --mode publish
+        run: python3 tools/harness.py docs --mode pages
 
       - name: Disable Jekyll processing
         run: touch docs/_build/html/.nojekyll

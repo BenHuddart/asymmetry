@@ -265,18 +265,24 @@ def test_docs_modes_share_gate_and_failed_build_cannot_upload() -> None:
     assert "secrets." not in str(smoke)
     smoke_runs = [step.get("run", "") for step in smoke["steps"]]
     assert "python3 tools/harness.py docs --mode source" in smoke_runs
+    assert "python -m docs.screenshots.capture_corpus --stubs-missing" in smoke_runs
     assert all("--out docs/_generated/screenshots" not in run for run in smoke_runs)
     steps = workflow["jobs"]["build-docs"]["steps"]
     gate_index = next(
         i
         for i, step in enumerate(steps)
-        if step.get("run") == "python3 tools/harness.py docs --mode publish"
+        if step.get("run") == "python3 tools/harness.py docs --mode pages"
     )
     upload_index = next(
         i
         for i, step in enumerate(steps)
         if step.get("uses", "").startswith("actions/upload-pages-artifact@")
     )
+    assert not any("--stubs" in step.get("run", "") for step in steps)
+    provision = next(step for step in steps if step["name"] == "Download muon-school corpus")
+    assert 'if [ -z "$GH_TOKEN" ]; then' in provision["run"]
+    assert "exit 1" in provision["run"]
+    assert not provision.get("continue-on-error", False)
     assert gate_index < upload_index
     assert not steps[gate_index].get("continue-on-error", False)
     assert "if" not in steps[upload_index]  # GitHub's default success() applies.

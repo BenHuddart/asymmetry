@@ -1,4 +1,4 @@
-"""Sphinx policy for source/offline and publishing builds."""
+"""Sphinx policy for source, preview, and Pages builds."""
 
 import os
 from pathlib import Path
@@ -13,12 +13,12 @@ from docs.screenshots.capture import (
     missing_screenshots,
     scenario_names_from_source,
 )
-from docs.screenshots.capture_corpus import _static_scenarios_by_module
+from docs.screenshots.capture_corpus import _static_scenarios_by_module, corpus_capture_problem
 
 logger = logging.getLogger(__name__)
 
 
-# No inventories are acquired during either mode. These authored external
+# No inventories are acquired during any mode. These authored external
 # objects retain their readable names without links; local targets stay strict.
 OFFLINE_EXTERNAL_REFERENCES = (
     ("py:class", "numpy.random.Generator"),
@@ -40,7 +40,7 @@ OFFLINE_EXTERNAL_REFERENCES = (
 
 
 def configure(app, config):
-    if config.docs_build_mode not in ("source", "publish"):
+    if config.docs_build_mode not in ("source", "publish", "pages"):
         raise ConfigError(f"Unknown docs_build_mode: {config.docs_build_mode!r}")
     config.intersphinx_mapping = {}
     if version_info >= (7, 3):
@@ -53,7 +53,7 @@ def configure(app, config):
     docs = Path(app.srcdir)
     scenarios = docs / "screenshots/scenarios"
     problems = check_screenshot_references(docs, scenarios)
-    if config.docs_build_mode == "publish":
+    if config.docs_build_mode != "source":
         problems.extend(
             f"missing screenshot: {n}"
             for n in missing_screenshots(docs / "_generated/screenshots", scenarios)
@@ -83,6 +83,7 @@ def generated_images(app, doctree):
         for names in _static_scenarios_by_module(scenarios / "corpus").values()
         for name in names
     )
+    mode = app.config.docs_build_mode
     omitted = []
     for node in images:
         uri = node["uri"]
@@ -105,7 +106,11 @@ def generated_images(app, doctree):
                 type="docs",
                 subtype="asset",
             )
-        if app.config.docs_build_mode == "source" and path in registered and not path.is_file():
+        if mode == "pages" and path in registered and path.is_relative_to(corpus_dir):
+            problem = corpus_capture_problem(path)
+            if problem:
+                logger.warning(problem, location=node, type="docs", subtype="asset")
+        if mode == "source" and path in registered and not path.is_file():
             notice = nodes.admonition(classes=["note"])
             notice += nodes.title(text="Optional generated screenshot")
             notice += nodes.paragraph(

@@ -40,11 +40,6 @@ GENERATED_SCREENSHOTS_DIR = DOCS_DIR / "_generated" / "screenshots"
 # beyond the usual (1280, 800)).
 SCREENSHOT_SIZE_BUDGET_BYTES = 600 * 1024
 
-# A screenshot reference in the .rst sources: `/_generated/screenshots/<name>.png`
-# inside an `image::`/`figure::` directive (matching the path token alone keeps
-# the scan robust to directive style and indentation).
-_SCREENSHOT_REF_RE = re.compile(r"/_generated/screenshots/([A-Za-z0-9_-]+)\.png")
-
 
 def scenario_names_from_source(scenarios_dir: Path = SCENARIOS_DIR) -> set[str]:
     """Return every scenario ``name`` declared in the scenario modules.
@@ -83,14 +78,17 @@ def scenario_names_from_source(scenarios_dir: Path = SCENARIOS_DIR) -> set[str]:
     return names
 
 
-def referenced_screenshot_names(docs_dir: Path = DOCS_DIR) -> dict[str, list[str]]:
-    """Map each screenshot name referenced from the .rst sources to its locations."""
+def referenced_screenshot_names(
+    docs_dir: Path = DOCS_DIR, *, namespace: str = "screenshots"
+) -> dict[str, list[str]]:
+    """Map screenshot names in .rst source path tokens to their locations."""
+    pattern = re.compile(rf"\b_generated/{re.escape(namespace)}/([A-Za-z0-9_-]+)\.png\b")
     references: dict[str, list[str]] = {}
     for path in sorted(docs_dir.rglob("*.rst")):
         if "_build" in path.parts or "_generated" in path.parts:
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            for match in _SCREENSHOT_REF_RE.finditer(line):
+            for match in pattern.finditer(line):
                 references.setdefault(match.group(1), []).append(f"{path}:{lineno}")
     return references
 
@@ -168,26 +166,9 @@ def run_reference_check() -> int:
 def missing_screenshots(out_dir: Path, scenarios_dir: Path = SCENARIOS_DIR) -> list[str]:
     """Return every registered GUI scenario name with no PNG under *out_dir*.
 
-    Pure filesystem/AST check (scenario names come from
-    :func:`scenario_names_from_source`, same as ``--check-refs``) — no Qt
-    import and no scenario execution, so it runs in milliseconds with no
-    display server. This is the guard for the failure mode that shipped ~50
-    broken figures for two weeks undetected: ``capture.py`` catches a
-    per-scenario exception and still exits non-zero (see ``main``), but with
-    ``continue-on-error: true`` on the workflow step that exit code was never
-    checked, so a capture that *hung* partway (rather than raising) silently
-    left every not-yet-captured PNG missing.
-
-    ``scenarios_dir`` defaults to the top-level GUI scenario package
-    (``scenarios/*.py``, non-recursive, so ``scenarios/corpus/`` is excluded
-    automatically). That exclusion is deliberate, not incidental: corpus
-    scenarios are captured and published by the separate
-    ``capture_corpus.py`` pipeline, which already guarantees a PNG per
-    registered corpus scenario via its ``--stubs-missing`` placeholder
-    fallback — a corpus render can never actually be *missing* by the time
-    this check runs, only a labelled stub, which is a different (already
-    warning-surfaced) problem. Scoping this check to GUI scenarios keeps it
-    a hard gate without duplicating that existing corpus guard.
+    The default scanner is non-recursive, so this checks the ordinary GUI
+    scenarios without importing Qt. The Pages Sphinx gate checks each corpus
+    image reference against its capture receipt.
     """
     scenario_names = scenario_names_from_source(scenarios_dir)
     present = {path.stem for path in out_dir.glob("*.png")} if out_dir.is_dir() else set()

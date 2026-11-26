@@ -19,15 +19,20 @@ from __future__ import annotations
 
 import sys
 import time
+from hashlib import sha256
+from importlib import import_module
+from io import BytesIO
 from pathlib import Path
 
 from .capture import (
+    DOCS_DIR,
     SCREENSHOT_SIZE_BUDGET_BYTES,
     _boot_qapplication,
     _ensure_offscreen_default,
     _oversized_paths,
     _parse_args,
     _start_watchdog,
+    referenced_screenshot_names,
 )
 
 CORPUS_SCREENSHOTS_DIR = Path(__file__).resolve().parents[1] / "_generated" / "corpus_screenshots"
@@ -36,6 +41,44 @@ CORPUS_SCREENSHOTS_DIR = Path(__file__).resolve().parents[1] / "_generated" / "c
 STUB_SIZE = (600, 380)
 STUB_BACKGROUND = (232, 232, 232)  # light grey
 STUB_TEXT_COLOUR = (96, 96, 96)
+_PNG_END = b"\x00\x00\x00\x00IEND\xae\x42\x60\x82"
+
+
+def _capture_receipt(path: Path) -> Path:
+    return path.with_suffix(".sha256")
+
+
+def write_capture_receipt(path: Path) -> None:
+    """Record the bytes of a completed corpus capture for the Pages gate."""
+    _capture_receipt(path).write_text(
+        sha256(path.read_bytes()).hexdigest() + "\n", encoding="ascii"
+    )
+
+
+def corpus_capture_problem(path: Path) -> str | None:
+    """Return the reason a referenced corpus PNG cannot be published."""
+    from PIL import Image
+
+    if not path.is_file():
+        return f"Missing corpus capture: {path.name}"
+    receipt = _capture_receipt(path)
+    if not receipt.is_file():
+        return f"No completed corpus capture: {path.name}"
+    if path.stat().st_size > SCREENSHOT_SIZE_BUDGET_BYTES:
+        return f"Corpus capture exceeds PNG size budget: {path.name}"
+    content = path.read_bytes()
+    if receipt.read_bytes().strip() != sha256(content).hexdigest().encode("ascii"):
+        return f"Corpus capture checksum mismatch: {path.name}"
+    if not content.endswith(_PNG_END):
+        return f"Invalid corpus capture PNG: {path.name}"
+    try:
+        with Image.open(BytesIO(content), formats=["PNG"]) as image:
+            image.verify()
+        with Image.open(BytesIO(content), formats=["PNG"]) as image:
+            image.load()
+    except (OSError, SyntaxError, Image.DecompressionBombError):
+        return f"Invalid corpus capture PNG: {path.name}"
+    return None
 
 
 def _write_stub_png(path: Path, name: str) -> None:
@@ -79,19 +122,18 @@ def _write_stubs(scenario_names: list[str], out_dir: Path) -> int:
     return 0
 
 
-def _import_corpus_scenarios() -> dict:
-    """Import and return the registered ``corpus_*`` scenarios (Qt required)."""
-    from . import scenarios as _scenarios_pkg  # noqa: F401  (registers _base)
-    from .scenarios import corpus as corpus_pkg
+def _import_corpus_scenarios(modules: list[str]) -> dict:
+    """Import and return the scenarios registered by the selected modules."""
     from .scenarios._base import registered_scenarios
 
-    corpus_pkg.import_all_scenario_modules()
-    return {name: s for name, s in registered_scenarios().items() if name.startswith("corpus_")}
-
-
-def _module_of(scenario) -> str:
-    """Return the scenario's defining module basename (e.g. ``euo_ordering``)."""
-    return type(scenario).__module__.rsplit(".", 1)[-1]
+    imported = {
+        import_module(f"{__package__}.scenarios.corpus.{module}").__name__ for module in modules
+    }
+    return {
+        name: scenario
+        for name, scenario in registered_scenarios().items()
+        if name.startswith("corpus_") and type(scenario).__module__ in imported
+    }
 
 
 CORPUS_SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios" / "corpus"
@@ -137,12 +179,11 @@ def _static_scenarios_by_module(
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    # ``--stubs``, ``--stubs-missing``, ``--list-modules`` and ``--module`` are
-    # corpus-capture-only, so they are handled here rather than in the shared
-    # ``_parse_args``.
+    # The shared parser owns the options common to both capture drivers.
     stubs = "--stubs" in raw_argv
     stubs_missing = "--stubs-missing" in raw_argv
     list_modules = "--list-modules" in raw_argv
+    published = "--published" in raw_argv
     module_filter: str | None = None
     parsed_argv: list[str] = []
     skip_next = False
@@ -150,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         if skip_next:
             skip_next = False
             continue
-        if arg in ("--stubs", "--stubs-missing", "--list-modules"):
+        if arg in ("--stubs", "--stubs-missing", "--list-modules", "--published"):
             continue
         if arg == "--module":
             if i + 1 >= len(raw_argv):
@@ -162,15 +203,21 @@ def main(argv: list[str] | None = None) -> int:
         parsed_argv.append(arg)
 
     args = _parse_args(parsed_argv)
-
+    by_module = _static_scenarios_by_module()
+    required = (
+        referenced_screenshot_names(DOCS_DIR, namespace="corpus_screenshots") if published else None
+    )
+    modules = [
+        module
+        for module, names in by_module.items()
+        if required is None or any(name in required for name in names)
+    ]
     if list_modules:
-        # One module name per line — CI iterates these to keep each capture
-        # process inside the watchdog budget. Static scan: no imports, no Qt.
-        for module in sorted(_static_scenarios_by_module()):
+        for module in modules:
             print(module)
         return 0
     if args.check_refs:
-        print("capture_corpus has no --check-refs (corpus scenarios are unpublished).")
+        print("Use the Sphinx documentation gate to check corpus screenshot references.")
         return 2
     if args.out == Path("docs/_generated/screenshots"):
         args.out = Path("docs/_generated/corpus_screenshots")
@@ -181,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         # import PySide6 at module level, which the PR smoke cannot satisfy).
         # ``--stubs-missing`` writes placeholders only where no PNG exists,
         # so a partially-successful capture sweep keeps its real renders.
-        all_names = {n for names in _static_scenarios_by_module().values() for n in names}
+        all_names = {n for names in by_module.values() for n in names}
         names = list(args.only) if args.only else sorted(all_names)
         unknown = [n for n in names if n not in all_names]
         if unknown:
@@ -194,13 +241,22 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
         return _write_stubs(names, args.out)
 
+    if module_filter is not None:
+        if module_filter not in by_module:
+            print(f"Unknown corpus module: {module_filter}", file=sys.stderr)
+            print(f"Known: {', '.join(by_module)}", file=sys.stderr)
+            return 2
+        modules = [module for module in modules if module == module_filter]
+    elif args.only:
+        modules = [module for module in modules if set(by_module[module]).intersection(args.only)]
+
     _start_watchdog()
     _ensure_offscreen_default()
     _boot_qapplication()
 
     from .scenarios._base import CaptureContext, auto_dismiss_modals
 
-    scenarios = _import_corpus_scenarios()
+    scenarios = _import_corpus_scenarios(modules)
 
     if args.list:
         for name, scenario in scenarios.items():
@@ -209,22 +265,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name}\t{first}")
         return 0
 
-    if module_filter is not None:
-        selected = {name: s for name, s in scenarios.items() if _module_of(s) == module_filter}
-        if not selected:
-            known = sorted({_module_of(s) for s in scenarios.values()})
-            print(f"Unknown corpus module: {module_filter}", file=sys.stderr)
-            print(f"Known: {', '.join(known)}", file=sys.stderr)
-            return 2
-    elif args.only:
-        unknown = [n for n in args.only if n not in scenarios]
+    if args.only and module_filter is None:
+        unknown = [name for name in args.only if name not in scenarios]
         if unknown:
             print(f"Unknown corpus scenarios: {', '.join(unknown)}", file=sys.stderr)
-            print(f"Known: {', '.join(scenarios)}", file=sys.stderr)
             return 2
         selected = {name: scenarios[name] for name in args.only}
     else:
         selected = scenarios
+
+    if required is not None:
+        selected = {name: scenario for name, scenario in selected.items() if name in required}
 
     if args.skip_fits:
         for name in [n for n, s in selected.items() if s.requires_fit]:
@@ -242,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, scenario in selected.items():
             print(f"[corpus-screenshots] capturing {name}...", flush=True)
             t0 = time.monotonic()
+            _capture_receipt(args.out / f"{name}.png").unlink(missing_ok=True)
             try:
                 path = scenario.capture(ctx)
             except Exception:
@@ -251,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[corpus-screenshots] FAILED {name}", file=sys.stderr, flush=True)
                 failed.append(name)
                 continue
+            write_capture_receipt(path)
             print(f"[corpus-screenshots] wrote {path} ({time.monotonic() - t0:.1f}s)", flush=True)
             captured.append(path)
 

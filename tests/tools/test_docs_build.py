@@ -279,23 +279,28 @@ def test_cache_modes_recheck_warnings_and_keep_real_assets(site):
         assert "Inline literal" in result.stderr
 
 
-def test_publishing_allows_existing_labeled_corpus_stub(site):
-    from docs.screenshots.capture_corpus import _write_stub_png
+def test_pages_requires_a_completed_capture_for_each_referenced_corpus_image(site):
+    from PIL import Image
+
+    from docs.screenshots.capture_corpus import _write_stub_png, write_capture_receipt
 
     complete_capture(site)
     scenarios = site / "screenshots/scenarios/corpus"
     scenarios.mkdir()
-    (scenarios / "example.py").write_text("class CorpusExample:\n    name = 'corpus_example'\n")
+    (scenarios / "example.py").write_text(
+        "class CorpusExample:\n    name = 'corpus_example'\n"
+        "class UnpublishedExample:\n    name = 'corpus_unused'\n"
+    )
     with (site / "index.rst").open("a") as stream:
-        stream.write(
-            "\nCorpus figures may be labelled placeholders when acquired data are unavailable.\n"
-            "\n.. image:: /_generated/corpus_screenshots/corpus_example.png\n"
-        )
-    result = build(site)
-    assert result.returncode == 0, result.stdout + result.stderr
+        stream.write("\n.. figure:: _generated/corpus_screenshots/corpus_example.png\n")
+    assert build(site).returncode == 0
+    result = build(site, "pages")
+    assert result.returncode != 0
+    assert "Missing corpus capture: corpus_example.png" in result.stderr
     result = build(site, "publish")
     assert result.returncode != 0
     assert "image file not readable" in result.stderr
+
     image = site / "_generated/corpus_screenshots/corpus_example.png"
     image.parent.mkdir()
     _write_stub_png(image, "corpus_example")
@@ -303,6 +308,51 @@ def test_publishing_allows_existing_labeled_corpus_stub(site):
     assert build(site, "publish").returncode == 0
     assert build(site).returncode == 0
     assert image.read_bytes() == content
+    result = build(site, "pages")
+    assert result.returncode != 0
+    assert "No completed corpus capture: corpus_example.png" in result.stderr
+
+    Image.new("RGB", (2, 2)).save(image)
+    write_capture_receipt(image)
+    result = build(site, "pages")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (site.parent / "html/_images/corpus_example.png").is_file()
+    assert not list((site.parent / "html").rglob("*.sha256"))
+
+    _write_stub_png(image, "corpus_example")
+    result = build(site, "pages")
+    assert result.returncode != 0
+    assert "Corpus capture checksum mismatch: corpus_example.png" in result.stderr
+
+    image.write_bytes(b"not a PNG")
+    write_capture_receipt(image)
+    result = build(site, "pages")
+    assert result.returncode != 0
+    assert "Invalid corpus capture PNG: corpus_example.png" in result.stderr
+
+
+def test_corpus_png_with_valid_chunks_and_unreadable_pixels_is_rejected(tmp_path):
+    from zlib import crc32
+
+    from PIL import Image
+
+    from docs.screenshots.capture_corpus import corpus_capture_problem, write_capture_receipt
+
+    image = tmp_path / "corpus_example.png"
+    Image.new("RGB", (2, 2)).save(image)
+    png = image.read_bytes()
+    start = png.index(b"IDAT")
+    size = int.from_bytes(png[start - 4 : start], "big")
+    chunk = b"IDAT" + bytes(size)
+    image.write_bytes(
+        png[:start] + chunk + crc32(chunk).to_bytes(4, "big") + png[start + size + 8 :]
+    )
+    write_capture_receipt(image)
+    assert corpus_capture_problem(image) == "Invalid corpus capture PNG: corpus_example.png"
+
+    image.write_bytes(png[:-1])
+    write_capture_receipt(image)
+    assert corpus_capture_problem(image) == "Invalid corpus capture PNG: corpus_example.png"
 
 
 def test_real_gate_applies_page_budget_after_successful_sphinx(site):

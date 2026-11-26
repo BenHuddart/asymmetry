@@ -37,7 +37,8 @@ boundary, touches shared behavior, or changes user-visible workflows.
 | `python tools/harness.py test` | Standard tier (default): everything except `slow`/`integration` (~2 min locally). |
 | `python tools/harness.py gui-smoke` | Headless GUI startup check using the app's `--smoke-test` path. |
 | `python3 tools/harness.py docs --mode source` | Fresh offline source documentation gate. |
-| `python3 tools/harness.py docs --mode publish` | Same defect gate plus ordinary screenshot completeness. |
+| `python3 tools/harness.py docs --mode publish` | Local preview with complete ordinary screenshots and optional corpus placeholders. |
+| `python3 tools/harness.py docs --mode pages` | Publication gate with complete ordinary screenshots and verified corpus captures. |
 | `python tools/harness.py validate` | Structural checks, lint, and the standard-tier test suite. |
 
 ### Documentation modes
@@ -55,12 +56,14 @@ logo, download, unknown-image, local/API-reference, markup, and unknown/untyped
 warning defects still fail. The contributor default is `source`; unknown modes
 are rejected before generation. `--screenshots` is an explicit capture request.
 
-Use `python3 tools/harness.py docs --mode publish` with prepared ordinary GUI
-assets. The existing registry/reference/completeness checks remain authoritative.
-Corpus figures require existing PNGs, which may be the explicitly permitted
-labelled placeholders produced by `capture_corpus --stubs-missing`; these do not
-establish acquired-data capture. The hosted capture/fallback disclosure, timeout,
-permissions, concurrency, retention, and deploy dependencies remain in force.
+Use `python3 tools/harness.py docs --mode publish` for a local preview with
+prepared ordinary GUI assets. Every embedded corpus figure needs a PNG.
+`capture_corpus --stubs-missing` supplies labelled placeholders when needed.
+
+Use `python3 tools/harness.py docs --mode pages` for the publication gate.
+The workflow verifies the pinned corpus archive and runs the referenced
+scenarios in separate processes by module. The gate checks a valid PNG and
+its capture checksum for every corpus figure referenced by Sphinx.
 
 Every gate rereads all sources (`-E -a`), including repeated builds and mode
 switches sharing output/doctree paths. It never relies on cached warnings or

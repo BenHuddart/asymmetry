@@ -32,6 +32,7 @@ Run from the repository root:
 ```bash
 python3 tools/harness.py docs --mode source
 python3 tools/harness.py docs --mode publish
+python3 tools/harness.py docs --mode pages
 ```
 
 `source` is the contributor default (`docs` without `--mode` also selects it).
@@ -41,25 +42,22 @@ Only missing images with exact names in the screenshot scenario registry become
 visible **Optional generated screenshot** notices. Existing captures are preserved.
 This limited output is suitable for reviewing text; it is not ready to publish.
 
-`publish` applies the same defect gate and additionally requires every ordinary
-GUI screenshot under the existing `capture --check-complete` contract. Every
-embedded corpus image must also exist; the established labelled placeholders
-remain permitted when acquired captures are unavailable. A placeholder is not an
-acquired-data capture. The hosted publishing workflow retains its capture,
-`--stubs-missing`, and fallback-disclosure steps. For a local publishing check,
-prepare ordinary assets separately and fill permitted corpus holes with:
+`publish` builds a local preview with the complete ordinary GUI screenshot set
+and a PNG for every embedded corpus figure. Fill any corpus holes with labelled
+placeholders using `python3 -m docs.screenshots.capture_corpus --stubs-missing`.
+That command preserves existing renders.
 
-```bash
-python3 -m docs.screenshots.capture_corpus --stubs-missing
-python3 tools/harness.py docs --mode publish
-```
+`pages` requires a valid PNG and a matching checksum from a completed capture
+for every embedded corpus figure. Run `capture_corpus --published` with the
+corpus available to prepare both files. GitHub Pages uses this mode after it
+verifies the pinned corpus archive and captures the required modules. A failed
+build leaves the current site live.
 
-Neither mode generates GUI screenshots by default. `--screenshots` explicitly
-requests ordinary capture before the gate and propagates capture failures.
-`--stubs-missing` never overwrites an existing real render. Unknown mode names fail
-before capture or Sphinx starts. Generated HTML is in `docs/_build/html/`.
+The modes use existing assets by default. `--screenshots` requests ordinary
+GUI capture before the gate and propagates capture failures. Unknown mode names
+fail before capture or Sphinx starts. Generated HTML is in `docs/_build/html/`.
 
-Both modes check scenario references, use a fresh Sphinx environment (`-E -a`),
+All modes check scenario references, use a fresh Sphinx environment (`-E -a`),
 reject Sphinx warnings (`-W --keep-going`), preserve process/extension failure
 exits, and check every output HTML page against the 600 KB budget. Missing
 logos, static images, downloads, unknown generated names, malformed RST,
@@ -69,7 +67,7 @@ lists in footnotes and citations, where unescaped author initials can become lis
 
 ### Offline references and API rendering
 
-Both modes set the intersphinx mapping to an empty dictionary before inventory
+All modes set the intersphinx mapping to an empty dictionary before inventory
 loading. They make no inventory requests, even with empty caches. A small exact
 set of external objects remains readable without hyperlinks:
 
@@ -149,8 +147,8 @@ engine and index, rather than reproducing its scoring rules.
 
 ### Development builds and other formats
 
-`cd docs && make html` runs the source gate. `make publish` runs the publishing
-gate with prepared assets. Direct `sphinx-build` and the other make targets are
+`cd docs && make html` runs the source gate. `make publish` builds the local
+preview with prepared assets. Direct `sphinx-build` and the other make targets are
 non-gating development builds: they load the same Sphinx policy, but do not promise
 a fresh environment, warning failure exits, or the HTML page-budget check.
 
@@ -272,7 +270,7 @@ python -m docs.screenshots.capture --check-refs   # refs + size budget
 python tools/harness.py structural                # includes the check above
 python3 tools/harness.py docs --mode source       # offline source gate + page budget
 pip install -c constraints.txt -e ".[hdf4,hdf5,root]" # screenshot file loaders
-python3 tools/harness.py docs --mode publish --screenshots # ordinary capture + publishing gate
+python3 tools/harness.py docs --mode publish --screenshots # ordinary capture + local preview
 ```
 
 A docs-only PR gets the cheap CI smoke; the published site rebuilds (with
@@ -359,7 +357,7 @@ tests, dependency configuration, or the docs workflow. Source changes can alter
 both autodoc output and the captured GUI images.
 PRs touching documentation, source, tooling, tooling tests, dependency configuration,
 or the docs workflow run the source gate without captures or corpus secrets.
-Both CI jobs use the same harness gate; a failed publishing gate prevents artifact
+Both CI jobs use the same harness gate; a failed Pages gate prevents artifact
 upload and deployment.
 
 If screenshot capture, completeness, or Sphinx fails, repair the build before rerunning.
