@@ -370,19 +370,29 @@ def test_embedded_widget_window_resolves_shell_ui_manager(
 # ── recent-projects broadcast reaches every tab ───────────────────────────
 
 
-def test_recent_projects_broadcast_reaches_other_tabs(shell: ProjectShell, tmp_path) -> None:
-    settings = QSettings()
-    previous = settings.value("project/recent_files")
+def test_recent_projects_broadcast_survives_menu_action_lookup(
+    shell: ProjectShell, tmp_path
+) -> None:
     page1 = shell.add_project()
+    file_action = next(action for action in shell._menu_bar.actions() if action.text() == "&File")
+    file_menu = file_action.menu()
+    recent_action = next(
+        action for action in file_menu.actions() if action.text() == "Recent Projects"
+    )
+    assert recent_action.menu().actions()[0].text() == "(No recent projects)"
+    del recent_action, file_menu, file_action
+
     page2 = shell.add_project()
-    try:
-        page1._add_recent_project(str(tmp_path / "x.asymp"))
-        assert page2._recent_menu.actions()[0].text() == "x.asymp"
-    finally:
-        if previous is None:
-            settings.remove("project/recent_files")
-        else:
-            settings.setValue("project/recent_files", previous)
+    page2._add_recent_project(str(tmp_path / "x.asymp"))
+
+    for page in (page1, page2):
+        assert page._recent_menu.actions()[0].text() == "x.asymp"
+
+    page1._recent_menu.actions()[-1].trigger()
+    for page in (page1, page2):
+        (empty_action,) = page._recent_menu.actions()
+        assert empty_action.text() == "(No recent projects)"
+        assert not empty_action.isEnabled()
 
 
 # ── UI-scale broadcast reaches every tab ──────────────────────────────────

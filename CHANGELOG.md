@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep File → Recent Projects updating across open tabs after saving or
+  opening a project.
+
 - Show the histogram snapshot dialog during grouping only when capture takes
   about 400 ms or longer.
 
