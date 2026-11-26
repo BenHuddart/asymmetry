@@ -69,9 +69,10 @@ different **Preset** or edit the detectors in **Detector Layout**, then click
    * - :doc:`PTFE <fmuf_entangled_states>`
      - ``Nuclear magnetism and ionic motion/The FmuF state in PTFE/Data/``
      - MuSR 17293 for calibration and 17294–17322 for the zero-field scan.
-   * - :doc:`BiSCCO penetration depth <superconductor_penetration_depth>`
+   * - :ref:`BiSCCO linewidths <biscco-linewidth>`
      - ``Superconductivity/A high-Tc cuprate/Data/``
-     - MuSR 1276–1289 at 400 G and 1290–1303 at 200 G.
+     - MuSR 1276–1289 at 400 G and 1290, 1292–1294, and 1296–1301 at 200 G.
+       Runs 1276 (125 K) and 1290 (120 K) are the respective normal-state references.
    * - :doc:`LiFeAs penetration depth <superconductor_penetration_depth>`
      - ``Superconductivity/LiFeAs/data/``
      - PSI GPS ``.bin`` files 3366–3373 for the 40 mT Sample 1 temperature scan.

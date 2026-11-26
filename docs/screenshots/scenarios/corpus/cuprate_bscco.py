@@ -1,58 +1,9 @@
-"""Corpus scenarios — penetration depth in a high-Tc cuprate (BiSCCO).
+"""Corpus figures for the Rigi school BiSCCO transverse-field scans.
 
-Worked example ``Superconductivity/A high-Tc cuprate`` (WiMDA muon school
-corpus), driving Asymmetry through the classic transverse-field vortex-lattice
-σ(T) → penetration-depth workflow on Bi-2212 (Bi-Sr-Ca-Cu-O). Data are the ISIS
-MUSR NeXus-v1 HDF4 ``.nxs`` runs 1274–1303 (a 400 G and a 200 G TF temperature
-scan, 10–125 K), resolved through the corpus root. See the example's
-``GROUND_TRUTH.md``; the shipped WiMDA ``.fit``/``.dat`` reference numbers grade
-these scenarios.
-
-Physics. Below T_c ≈ 105–110 K the applied transverse field enters the sample
-as a vortex lattice, producing an inhomogeneous internal-field distribution
-p(B). The TF-µSR line is approximated by a Gaussian relaxation
-G(t) = exp(−σ²t²/2), whose second moment σ = γ_µ⟨ΔB²⟩^½ measures the width of
-p(B). σ(T→0) connects to the London penetration depth by the guide relation
-σ(µs⁻¹) = 75780 / λ_L²(nm). ⚠ For the *extremely anisotropic* Bi-2212 the three
-teaching fields (150/200/400 G) all sit below the pancake-vortex crossover
-B* ≈ 500 G, so a single λ_L is physically unreliable here (GROUND_TRUTH §6b);
-these renders treat λ_L as indicative only and grade the σ(T) curve itself.
-
-Scenarios registered (all on the MUSR 400 G scan, the authoritative deliverable):
-
-* ``corpus_bscco_tf_damping`` — time-domain overlay of the 10 K (run 1277) and
-  125 K normal-state (run 1276) 400 G spectra: the Gaussian vortex damping
-  (σ ≈ 1.15 µs⁻¹, decayed by ~2 µs) against the essentially undamped
-  normal-state precession. The field-distribution broadening, in time.
-* ``corpus_bscco_vortex_fft`` — frequency-domain FFT of the 10 K run: the broad
-  vortex p(B) line near the 400 G Larmor frequency (~5.4 MHz).
-* ``corpus_bscco_tf_fit`` — converged Oscillatory × Gaussian fit on run 1277
-  (10 K): σ ≈ 1.16 µs⁻¹ against the WiMDA reference 1.1467(75) µs⁻¹ (§7).
-* ``corpus_bscco_sigma_t`` — the **headline**: per-run TF batch fit rendered as
-  σ(T) 10–125 K, reproducing the 14-row WiMDA reference trend (σ falls from
-  ≈1.15 µs⁻¹ at 10 K to ≈0.055 µs⁻¹ above T_c). λ_L ≈ 255 nm noted, with the
-  §6b anisotropy caveat.
-* ``corpus_bscco_field_compare`` — the guide's field-comparison task: σ(T) at
-  400 G overlaid on σ(T) at 200 G. The 200 G plateau (~0.9 µs⁻¹) sits below the
-  400 G plateau (~1.15 µs⁻¹) — the pancake-vortex field dependence of §6b, not
-  fit scatter.
-
-* ``corpus_bscco_maxent`` — the guide's FFT-vs-MaxEnt comparison: the 10 K
-  broad vortex p(B) overlaid on the 125 K normal-state narrow line, both as
-  unit-area MaxEnt spectra. The vortex lattice spreads the same area into a
-  broad distribution; the 10 K peak also sits just below the normal-state line
-  (the diamagnetic shift). Out of the box now (PR #249) — see below.
-
-The guide asks to compare FFT with Maximum-Entropy. This *previously* failed:
-MaxEnt diverged into spiky noise on this real forward/back asymmetry (its large
-α = 1 baseline drove the solver past its χ² optimum by ~cycle 7), so wave-2
-shipped only the FFT render. **PR #249 fixed the engine** (weighted baseline,
-lowered amplitude floor, σ-weighted nuisance fits, data-derived phase seeding of
-the MUSR quadrant groups): the 10 K run (1277) now converges out of the box to
-χ²/N ≈ 1.04 with the peak on the 5.40 MHz vortex line, so ``corpus_bscco_maxent``
-ships the previously-dropped comparison. ``requires_fit = True`` on every
-scenario that runs a real iminuit/MaxEnt computation at capture time (iminuit
-trips numpy ≥ 2.3 in dev environments; CI pins numpy < 2.3).
+The MuSR scans span 10–125 K at 400 G and 10–120 K at 200 G. The time-domain
+fits use the Gaussian component's exp(−σ_G²t²) convention. The trend figures
+show the fitted widths, including the normal-state runs. The FFT and MaxEnt
+figures illustrate the broadening on cooling at 400 G.
 """
 
 from __future__ import annotations
@@ -69,60 +20,24 @@ from ._corpus import CorpusScenario, load_corpus_datasets, register
 EXAMPLE = "Superconductivity/A high-Tc cuprate"
 _DATA = "Superconductivity/A high-Tc cuprate/Data/MUSR%08d.nxs"
 
-# TF mixed-state precession (GROUND_TRUTH §7: Osc=Rotation Field, Rel=Gaussian):
-#   G(t) = A·exp(−σ²t²/2)·cos(2πνt+φ) + A_bg.
+# Asymmetry’s Gaussian component uses exp(−σ_G²t²).
 _TF_MODEL = (["Oscillatory", "Gaussian", "Constant"], ["*", "+"])
 
-# MUSR 400 G temperature scan, ascending T (GROUND_TRUTH §3 / §7 reference table).
-# (run, T[K]); the σ(T) headline series. Run 1276 (125 K) is the normal-state
-# reference run and sorts last by temperature.
-_SCAN_400G: list[tuple[int, float]] = [
-    (1277, 10.0),
-    (1278, 30.0),
-    (1279, 50.0),
-    (1280, 70.0),
-    (1281, 80.0),
-    (1282, 85.0),
-    (1283, 90.0),
-    (1284, 95.0),
-    (1285, 100.0),
-    (1286, 105.0),
-    (1287, 110.0),
-    (1288, 115.0),
-    (1289, 120.0),
-    (1276, 125.0),
-]
-_RUN_SUPER = 1277  # 10 K, deep in the mixed state (broad vortex line)
-_RUN_NORMAL = 1276  # 125 K, above T_c (narrow, undamped line)
+# MuSR run selections in ascending temperature order.
+_RUN_SUPER = 1277  # 10 K, broad mixed-state line
+_RUN_NORMAL = 1276  # 125 K, narrow normal-state line
+_SCAN_400G = (*range(_RUN_SUPER, 1290), _RUN_NORMAL)
 
-# MUSR 200 G temperature scan (GROUND_TRUTH §7 second table). Run 1291 (10 K)
-# is dropped: its reference fit is the documented negative-σ pathology (§9), a
-# fit artefact rather than a plateau point. Runs 1295/1303 ship no reference
-# and 1302 used a different model, so they are excluded too.
-_SCAN_200G: list[tuple[int, float]] = [
-    (1292, 30.0),
-    (1293, 50.0),
-    (1294, 70.0),
-    (1296, 85.0),
-    (1297, 90.0),
-    (1298, 95.0),
-    (1299, 100.0),
-    (1300, 105.0),
-    (1301, 110.0),
-    (1290, 120.0),
-]
-
-# Guide σ↔λ relation, σ(µs⁻¹) = 75780 / λ_L²(nm) (GROUND_TRUTH §1/§6/§7).
-_LAMBDA_COEFF = 75780.0
+# The 200 G subset excludes the poor reference fit at 10 K (1291), the
+# two-component fit (1302) and the runs without reference fits (1295, 1303).
+_SCAN_200G = (1292, 1293, 1294, *range(1296, 1302), 1290)
 
 
 def _rel(run: int) -> str:
     return _DATA % run
 
 
-# Larmor frequency seeds: γ_µ ≈ 0.013554 MHz/G, so 400 G ≈ 5.42 MHz and
-# 200 G ≈ 2.71 MHz. Below T_c the fitted field drops (vortex diamagnetic shift),
-# so the seed sits just below the applied-field value; bounds bracket it.
+# The seed and bounds account for the lower fitted frequency in the mixed state.
 _FREQ_400G = (5.3, 4.8, 6.0)
 _FREQ_200G = (2.7, 2.3, 3.2)
 
@@ -147,27 +62,21 @@ def _tf_seeds(dataset, sigma_seed: float, freq_seed: float = _FREQ_400G[0]) -> d
     }
 
 
-def _fit_sigma_series(scan, freq=_FREQ_400G, sigma_start=1.15):
-    """Fit the TF Gaussian model to each run; return (T, |σ|, σ_err) arrays.
-
-    Runs are fitted in ascending-temperature order through the same core
-    :class:`FitEngine` the GUI drives, warm-starting σ downward from the plateau
-    so every run lands in the correct minimum (σ falls with T). The Gaussian
-    width enters squared, so its sign is a fit artefact — |σ| is reported
-    (GROUND_TRUTH §9: the 200 G run-1291 fit famously returns −0.21).
-    """
+def _fit_sigma_series(scan, field, frequency_range, sigma_seed):
+    """Fit each run and retain its identity alongside the Gaussian width."""
     from asymmetry.core.fitting.composite import CompositeModel
     from asymmetry.core.fitting.engine import FitEngine
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
     model = CompositeModel(_TF_MODEL[0], operators=_TF_MODEL[1])
     engine = FitEngine()
-    f_seed, f_lo, f_hi = freq
+    f_seed, f_lo, f_hi = frequency_range
 
-    temps, vals, errs = [], [], []
-    sigma_seed = sigma_start
-    for run, temp in scan:
-        dataset = load_corpus_datasets([_rel(run)])[0]
+    rows = []
+    for run in scan:
+        (dataset,) = load_corpus_datasets([_rel(run)])
+        if dataset.run_number != run or dataset.field != field or dataset.temperature is None:
+            raise ValueError(f"Unexpected run, applied field or temperature for MuSR file {run}")
         seeds = _tf_seeds(dataset, sigma_seed, f_seed)
         params = ParameterSet(
             [
@@ -179,43 +88,23 @@ def _fit_sigma_series(scan, freq=_FREQ_400G, sigma_start=1.15):
             ]
         )
         result = engine.fit(dataset, model.function, params)
-        by_name = {p.name: p.value for p in result.parameters}
-        unc = result.uncertainties or {}
-        sigma = abs(float(by_name["sigma"]))
-        temps.append(float(temp))
-        vals.append(sigma)
-        errs.append(float(unc.get("sigma", np.nan)))
+        if not result.success:
+            raise RuntimeError(f"MuSR run {dataset.run_number} TF fit failed: {result.message}")
+        sigma = float(result.parameters["sigma"].value)
+        rows.append(
+            {
+                "run_number": dataset.run_number,
+                "run_label": dataset.run_label,
+                "field": dataset.field,
+                "temperature": dataset.temperature,
+                "values": {"sigma": sigma},
+                "errors": {"sigma": result.uncertainties["sigma"]},
+                "reduced_chi_squared": result.reduced_chi_squared,
+                "chi_squared": result.chi_squared,
+            }
+        )
         sigma_seed = max(sigma * 0.9, 0.05)
-    return np.array(temps), np.array(vals), np.array(errs)
-
-
-def _sigma_rows(temps, sigma, sigma_err, field, base_run):
-    """Build trend-panel row dicts for one σ(T) field scan (ascending T)."""
-    order = np.argsort(temps)
-    return [
-        {
-            "run_number": int(base_run + i),
-            "run_label": f"{temps[j]:.0f} K",
-            "field": float(field),
-            "temperature": float(temps[j]),
-            "values": {"sigma": float(sigma[j])},
-            "errors": {"sigma": float(sigma_err[j])},
-        }
-        for i, j in enumerate(order)
-    ]
-
-
-def _load_trend_panel(temps, sigma, sigma_err, title):
-    """Build a FitParametersPanel showing the σ(T) trend points."""
-    from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
-
-    panel = FitParametersPanel()
-    panel.load_representation_series(
-        [("bscco-sigma-t", title, _sigma_rows(temps, sigma, sigma_err, 400.0, 1276))],
-        select_id="bscco-sigma-t",
-    )
-    _process_events_for(milliseconds=80)
-    return panel
+    return rows
 
 
 def _configure_single_fit(window, seeds, positive):
@@ -374,10 +263,7 @@ class BsccoVortexFftScenario(CorpusScenario):
 # --------------------------------------------------------------------------- #
 class BsccoTfFitScenario(CorpusScenario):
     name = "corpus_bscco_tf_fit"
-    description = (
-        "Converged Oscillatory × Gaussian fit on the BiSCCO 10 K 400 G run "
-        "(1277): σ ≈ 1.16 µs⁻¹ vs the WiMDA reference 1.1467(75) µs⁻¹."
-    )
+    description = "Gaussian-damped precession fit to the BiSCCO 10 K, 400 G run (1277)."
     example = EXAMPLE
     size = (1500, 920)
     requires_fit = True
@@ -408,141 +294,50 @@ class BsccoTfFitScenario(CorpusScenario):
         return window
 
 
-# --------------------------------------------------------------------------- #
-#  5. σ(T) headline — vortex depolarisation rate through T_c.
-# --------------------------------------------------------------------------- #
 class BsccoSigmaTScenario(CorpusScenario):
     name = "corpus_bscco_sigma_t"
-    description = (
-        "BiSCCO 400 G vortex depolarisation rate σ(T), 10–125 K: falls from "
-        "≈1.15 µs⁻¹ (λ_L ≈ 255 nm) toward ≈0.055 µs⁻¹ above T_c, reproducing "
-        "the 14-row WiMDA reference trend."
-    )
+    description = "Fitted BiSCCO Gaussian linewidths at 400 G from 10 to 125 K."
     example = EXAMPLE
     size = (1240, 760)
     requires_fit = True
 
     def build(self) -> QWidget:
-        temps, sigma, sigma_err = _fit_sigma_series(_SCAN_400G)
-        self._temps, self._sigma, self._sigma_err = temps, sigma, sigma_err
-        return _load_trend_panel(temps, sigma, sigma_err, "σ(T) — BiSCCO 400 G TF (vortex state)")
+        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
-    def settle(self, widget: QWidget) -> None:
-        widget._refresh_plot()
-        _process_events_for(milliseconds=200)
-        axes = list(widget._figure.axes)
-        if axes:
-            ax = axes[0]
-            ax.set_ylim(-0.05, 1.30)
-            # T_c marker and the σ(T→0)→λ_L note (guide formula; ⚠ GROUND_TRUTH
-            # §6b: λ is unreliable at 400 G for pancake-vortex Bi-2212).
-            ax.axvline(107.0, color="0.5", linestyle="--", linewidth=1.0, zorder=1)
-            ax.text(
-                107.0,
-                1.30,
-                r"  $T_\mathrm{c}\approx$ 107 K",
-                color="0.35",
-                fontsize=9,
-                va="top",
-                ha="left",
-            )
-            if getattr(self, "_sigma", None) is not None and len(self._sigma):
-                sigma0 = float(np.max(self._sigma))
-                lam = float(np.sqrt(_LAMBDA_COEFF / sigma0))
-                ax.text(
-                    0.02,
-                    0.06,
-                    rf"$\sigma(10\,\mathrm{{K}})\approx${sigma0:.2f} µs$^{{-1}}$"
-                    rf"  $\Rightarrow\ \lambda_L\approx${lam:.0f} nm"
-                    "\n(indicative only — pancake vortices at 400 G, GT §6b)",
-                    transform=ax.transAxes,
-                    color="0.3",
-                    fontsize=8,
-                    va="bottom",
-                    ha="left",
-                )
-            widget._canvas.draw()
-        _process_events_for(milliseconds=120)
+        rows = _fit_sigma_series(_SCAN_400G, 400.0, _FREQ_400G, 1.15)
+        panel = FitParametersPanel()
+        panel.load_representation_series(
+            [("bscco-sig-400", "400 G — TF scan", rows)],
+            select_id="bscco-sig-400",
+        )
+        return panel
 
 
-# --------------------------------------------------------------------------- #
-#  5. Field comparison — σ(T) at 400 G vs 200 G (pancake-vortex physics).
-# --------------------------------------------------------------------------- #
 class BsccoFieldCompareScenario(CorpusScenario):
     name = "corpus_bscco_field_compare"
     description = (
-        "BiSCCO σ(T) at 400 G overlaid on 200 G in the real Fit-Parameters trend "
-        "panel (multi-series overlay): the 200 G plateau (~0.9 µs⁻¹) sits below "
-        "the 400 G plateau (~1.15 µs⁻¹) — the pancake-vortex field dependence of "
-        "the extremely anisotropic Bi-2212 (GROUND_TRUTH §6b)."
+        "BiSCCO Gaussian linewidths at 400 G and 200 G overlaid in Fit Parameters. "
+        "At the lowest shared temperatures, the 400 G series is broader."
     )
     example = EXAMPLE
     size = (1240, 760)
     requires_fit = True
 
     def build(self) -> QWidget:
-        # Native two-series overlay in the real FitParametersPanel (PR-248): both
-        # σ(T) curves are genuine per-run TF Gaussian fits via the core FitEngine.
-        # The panel distinguishes them by colour + a legend of the series names.
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
-        t400, s400, e400 = _fit_sigma_series(_SCAN_400G, _FREQ_400G, sigma_start=1.15)
-        t200, s200, e200 = _fit_sigma_series(_SCAN_200G, _FREQ_200G, sigma_start=0.90)
-        # Remember the plateau values for the settle() annotation.
-        self._s400_plateau = float(np.max(s400))
-        self._s200_plateau = float(np.max(s200))
-
+        rows_400 = _fit_sigma_series(_SCAN_400G, 400.0, _FREQ_400G, 1.15)
+        rows_200 = _fit_sigma_series(_SCAN_200G, 200.0, _FREQ_200G, 0.90)
         panel = FitParametersPanel()
-        # Series names sort alphabetically for pill/colour order, so "200 G…"
-        # takes C0 and "400 G…" C1; the 400 G scan is the active series (owns the
-        # table + any model-fit overlay) via ``select_id``.
         panel.load_representation_series(
             [
-                ("bscco-sig-400", "400 G — TF scan", _sigma_rows(t400, s400, e400, 400.0, 1276)),
-                ("bscco-sig-200", "200 G — TF scan", _sigma_rows(t200, s200, e200, 200.0, 1292)),
+                ("bscco-sig-400", "400 G — TF scan", rows_400),
+                ("bscco-sig-200", "200 G — TF scan", rows_200),
             ],
             select_id="bscco-sig-400",
         )
-        # Overlay via the public PR-248 API (the equivalent of Shift-clicking the
-        # second pill): the first id is the active series, both are overlaid.
         panel.select_series(["bscco-sig-400", "bscco-sig-200"])
-        _process_events_for(milliseconds=80)
         return panel
-
-    def settle(self, widget: QWidget) -> None:
-        widget._refresh_plot()
-        _process_events_for(milliseconds=200)
-        axes = list(widget._figure.axes)
-        if axes:
-            ax = axes[0]
-            ax.set_ylim(-0.05, 1.32)
-            ax.set_title("BiSCCO vortex-state σ(T): 400 G vs 200 G transverse field", fontsize=10)
-            ax.axvline(107.0, color="0.5", linestyle="--", linewidth=0.9, zorder=1)
-            ax.text(
-                106.0,
-                0.62,
-                r"$T_\mathrm{c}\approx$ 107 K",
-                color="0.4",
-                ha="right",
-                va="center",
-                fontsize=9,
-            )
-            ax.text(
-                0.015,
-                0.05,
-                f"400 G plateau ≈ {getattr(self, '_s400_plateau', 1.15):.2f} µs⁻¹ sits above the "
-                f"200 G plateau ≈ {getattr(self, '_s200_plateau', 0.9):.2f} µs⁻¹ — the field\n"
-                "dependence of σ in Bi-2212 is pancake-vortex physics, so a single λ_L is\n"
-                "unreliable here (both fields < B* ≈ 500 G; GROUND_TRUTH §6b).\n"
-                "Run 1291 (200 G, 10 K) excluded: documented negative-σ fit (§9).",
-                transform=ax.transAxes,
-                color="0.35",
-                fontsize=8,
-                va="bottom",
-                ha="left",
-            )
-            widget._canvas.draw()
-        _process_events_for(milliseconds=120)
 
 
 # --------------------------------------------------------------------------- #

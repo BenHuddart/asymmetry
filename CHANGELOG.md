@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explain how the corannulene integral scans give half-recovery fields and
   which independent calibration an absolute muonium fraction requires.
 
+- Show how to compare and export the two BiSCCO linewidth scans, with a
+  penetration-depth estimate conditional on the normal-state and vortex models.
+
 - Add machine-readable citation metadata for researchers citing Asymmetry.
 
 - Use the exact Poisson deviance for occupied bins with very small positive

@@ -1,12 +1,8 @@
 """Parameter-trending panel: two-field σ(T) multi-series overlay.
 
 Captures the real :class:`~asymmetry.gui.panels.fit_parameters_panel.
-FitParametersPanel` with two recorded σ(T) series — a 400 G and a 200 G
-transverse-field scan of a high-Tc cuprate — overlaid on one axis (colour =
-series, with a legend flagging the active series). This is the field-comparison
-presentation the multi-series overlay exists for: the 200 G plateau sits below
-the 400 G one, the pancake-vortex field dependence of the London second moment
-(cf. the BiSCCO corpus example).
+FitParametersPanel` with two synthetic σ(T) series at 400 G and 200 G.
+Colour identifies the series, and the legend flags the active series.
 
 No fit runs at capture time (``requires_fit = False``): the point is the overlay
 itself, driven through the public :meth:`FitParametersPanel.select_series` API.

@@ -305,13 +305,12 @@ model-fit controls.
    :alt: The trending panel overlaying σ(T) at 400 G and 200 G as two colour-coded series
    :width: 100%
 
-*Two* :math:`\sigma(T)` *series — a 400 G and a 200 G transverse-field scan —*
+*Two synthetic* :math:`\sigma(T)` *series at 400 G and 200 G*
 *overlaid on the* ``σ (µs⁻¹)`` *card. Colour encodes the series (legend*
 *top-right, the active series flagged); with two series pills selected, the*
 *footer reads* ``2 series`` *and the card's Fit button reads*
 **Global fit ×2…** *— see* `Cross-Group Fitting`_
-*below. The 200 G plateau sitting below the 400 G one is the pancake-vortex*
-*field dependence of the London second moment.*
+*below.*
 
 .. _trend-phase-owned-series:
 

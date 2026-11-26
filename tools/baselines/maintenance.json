@@ -3,9 +3,6 @@
     "docs/screenshots/scenarios/apodisation_comparison.py": {
       "ApodisationComparisonScenario.capture|asymmetry.gui.mainwindow.MainWindow|Call(func=Name(id='hasattr', ctx=Load()), args=[Name(id='window', ctx=Load()), Constant(value='_dirty')], keywords=[])": 1
     },
-    "docs/screenshots/scenarios/corpus/cuprate_bscco.py": {
-      "BsccoSigmaTScenario.settle|docs.screenshots.scenarios.corpus.cuprate_bscco.BsccoSigmaTScenario|Call(func=Name(id='getattr', ctx=Load()), args=[Name(id='self', ctx=Load()), Constant(value='_sigma'), Constant(value=None)], keywords=[])": 1
-    },
     "docs/screenshots/scenarios/corpus/nickel_ferro.py": {
       "NiZfFftScenario.build|asymmetry.gui.panels.fourier_panel.FourierPanel|Call(func=Name(id='hasattr', ctx=Load()), args=[Name(id='fp', ctx=Load()), Constant(value='_filter_lorentzian_radio')], keywords=[])": 1,
       "NiZfFftScenario.build|asymmetry.gui.panels.fourier_panel.FourierPanel|Call(func=Name(id='hasattr', ctx=Load()), args=[Name(id='fp', ctx=Load()), Constant(value='_filter_time_constant_edit')], keywords=[])": 1,
