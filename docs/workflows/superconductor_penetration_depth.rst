@@ -14,14 +14,11 @@ Superconductor penetration depth from σ(T)
    own component model and non-superconducting linewidth before converting a
    linewidth trend to penetration depth.
 
-This chapter is a worked example of the canonical superconductor μSR
-workflow: extract the temperature dependence of the vortex-lattice
-depolarisation rate :math:`\sigma(T)` from transverse-field (TF) μSR data
-in the mixed state, convert it to the magnetic penetration depth
-:math:`\lambda_L`, and read the pairing physics from the shape of the
-curve. The Rigi school example **A high-Tc cuprate** uses a
-bismuth-strontium-calcium-copper-oxide (BiSCCO, Bi-2212) sample measured on
-ISIS MuSR at 400 G and 200 G transverse field over 10–125 K.
+This chapter shows how to compare transverse-field (TF) μSR linewidths
+through the superconducting transition and what assumptions enter a
+penetration-depth estimate. The Rigi school example **A high-Tc cuprate**
+uses a bismuth-strontium-calcium-copper-oxide (BiSCCO) sample measured on
+ISIS MuSR at 400 G and 200 G over 10–125 K.
 
 The same workflow reappears, with material-specific twists, in two further
 examples cross-referenced at the end: the iron-pnictide LiFeAs, where
@@ -32,14 +29,17 @@ alongside a zero-field time-reversal-symmetry-breaking signal.
 Physical motivation
 -------------------
 
-In the vortex state of a type-II superconductor, between :math:`H_{c1}`
-and :math:`H_{c2}`, an applied transverse field penetrates the sample as a
-lattice of flux tubes. A muon stops at a random position relative to that
-lattice and samples the inhomogeneous internal field, drawn from the
-lattice's field distribution :math:`p(B)`. The distribution is asymmetric:
-a sharp peak at the saddle-point field between three vortices, with a long
-tail toward the high-field cores (see Brandt, Phys. Rev. B **37**, 2349
-(1988)). The Gaussian approximation to the time-domain envelope can be written as
+In the mixed state of a type-II superconductor, between :math:`H_{c1}`
+and :math:`H_{c2}`, magnetic flux penetrates the sample as vortices.
+Each muon precesses at a frequency proportional to the local magnetic
+field. Muons in different fields accumulate different phases. As these
+phases spread, their contributions cancel in the measured ensemble
+polarisation and damp the oscillation. In an ideal triangular vortex
+lattice the field distribution :math:`p(B)` is asymmetric, with a peak
+at the saddle-point field and a high-field tail from near the vortex
+cores (Brandt, Phys. Rev. B **37**, 2349 (1988)). For a Gaussian
+approximation with root-mean-square field width
+:math:`\langle\Delta B^2\rangle^{1/2}`, the time-domain envelope is
 
 .. math::
 
@@ -50,23 +50,22 @@ tail toward the high-field cores (see Brandt, Phys. Rev. B **37**, 2349
 The ``Gaussian`` component fits :math:`\sigma_G`, while the second-moment
 width :math:`\sigma_2` enters the London conversion. In the fitted trends
 below, :math:`\sigma` denotes :math:`\sigma_G`. For a triangular vortex lattice
-in the London limit the superconducting width is proportional to
-:math:`\lambda_L^{-2}`. The teaching guide uses the rounded relation
+in the London limit the superconducting width
+:math:`\sigma_{G,\mathrm{sc}}` is proportional to :math:`\lambda_L^{-2}`.
+The teaching guide uses the rounded relation
 
 .. math::
 
-   \sigma_G(T\to0)\;[\mu\mathrm{s}^{-1}]
-   =\frac{75780}{\lambda_L^2\;[\mathrm{nm}]},
+   \sigma_{G,\mathrm{sc}}\;[\mu\mathrm{s}^{-1}]
+   =\frac{75780}{\lambda_L^2\;[\mathrm{nm}^2]},
 
-so that :math:`\lambda_L=\sqrt{75780/\sigma_G}`.
+so that :math:`\lambda_L=\sqrt{75780/\sigma_{G,\mathrm{sc}}}`.
 
 The :ref:`thermal-kernel accuracy <sc-kernel-accuracy>` is specified in the
-model reference. The temperature dependence carries the physics. The superfluid density
-:math:`\rho_s(T) \propto \sigma(T) \propto 1/\lambda^2(T)` reflects the
-superconducting gap structure: a single isotropic s-wave gap freezes
-:math:`\rho_s(T)` exponentially as :math:`T \to 0`; a d-wave gap with line
-nodes gives a linear-in-:math:`T` decrease at low :math:`T`; a two-gap
-(s+s) system shows a shoulder marking the smaller gap's freezing scale.
+model reference. When the linewidth follows the London relation,
+:math:`\rho_s(T) \propto \sigma_{G,\mathrm{sc}}(T) \propto 1/\lambda^2(T)`
+connects the fitted width to the temperature dependence of the superfluid
+density.
 
 .. dropdown:: Derivation — the London-limit σ ↔ λ relation and its conventions
 
@@ -95,159 +94,165 @@ nodes gives a linear-in-:math:`T` decrease at low :math:`T`; a two-gap
    temperature laws retain their input convention. See :ref:`trend-width-inputs`.
 
 
-The data
---------
+.. _biscco-linewidth:
 
-The main analysis fits a single Gaussian-relaxed precession to each run
-in the 400 G MuSR temperature scan (1276–1289, 10–125 K). The 200 G
-MuSR scan (1290–1303) provides a field comparison. Run 1276 (125 K) sits
-above :math:`T_c` and serves as the normal-state reference.
-The workflow runs entirely in the GUI: fit one TF run, inspect the vortex
-line shape in the frequency domain, trend :math:`\sigma(T)` through
-:math:`T_c`, and compare the two fields.
+The BiSCCO data
+---------------
 
-Step 1 — Fit a TF run for σ
----------------------------
+The 400 G trend uses all 14 MuSR runs 1276–1289 (10–125 K). The 200 G
+trend uses ten runs, 1290, 1292–1294, and 1296–1301 (30–120 K). This is
+the subset with comparable fits in the school's reference analysis. Run
+1291 (10 K) has a poor reference fit, run 1302 (115 K) uses a different
+model, and runs 1295 (80 K) and 1303 (120 K) have no reference fits.
+
+The normal-state references are runs 1276 (125 K, 400 G) and 1290 (120 K,
+200 G). Keep them in their respective trends. Use the applied field and
+temperature setpoint recorded in each file. The school exercise identifies
+the sample as BiSCCO and the MuSR run titles use the label ``HTC``. The
+crystallographic phase is unspecified in these records.
+
+Step 1 — Fit a transverse-field run for σ
+-----------------------------------------
 
 .. figure:: /_generated/corpus_screenshots/corpus_bscco_tf_fit.png
-   :alt: Converged Oscillatory × Gaussian fit on the BiSCCO 10 K, 400 G run
+   :alt: Time-domain fit to the Gaussian-damped BiSCCO precession at 10 K and 400 G
    :width: 100%
 
-   The **Fit** dock (**Single** tab) after fitting the base-temperature
-   400 G run (1277, 10 K). The composite model
-   ``Oscillatory * Gaussian + Constant`` —
-   ``A_1*cos(2*pi*frequency*t)*exp(-(sigma*t)^2) + A_bg`` in the **MODEL**
-   box — carries the vortex signal: the oscillation at the 400 G Larmor
-   frequency (``f`` = 5.24 MHz, shifted below the applied field by the
-   diamagnetic response) under a Gaussian envelope that collapses the
-   precession within ~2 μs. The **PARAMETERS** table reports
-   ``σ`` = 1.164 μs⁻¹, and **FIT RESULTS** shows "Fit converged" with
-   :math:`\chi^2_\nu = 1.09`.
+   The **Fit** dock (**Single** tab) for run 1277 at 10 K and 400 G. The
+   **PARAMETERS** table shows a precession frequency of about 5.24 MHz
+   and a Gaussian width of about 1.16 μs⁻¹. The plot zoom shows how the
+   oscillation damps within about 2 μs.
 
-For each temperature the per-run recipe is the same. Open the **Fit** dock,
-build the composite ``Oscillatory * Gaussian + Constant`` in the function
-builder (see :doc:`/reference/composite_models`), and record the Gaussian
-envelope's :math:`\sigma_G=\gamma_\mu B_{\mathrm{rms}}/\sqrt{2}` with its
-uncertainty. The ``Oscillatory`` component carries the average field's
-Larmor frequency; the additive ``Constant`` absorbs the non-precessing
-baseline.
+Use the file's MuSR detector grouping. The time-domain fits use forward/backward
+asymmetry from file groups 1 and 2 with :math:`\alpha=1`, the imported
+time-zero and good-bin settings, and no extra bunching, dead-time, or
+background correction. The trend fits use the full available time
+range after reduction, approximately 0.09–31.8 μs depending on the run.
 
-Step 2 — Inspect the vortex line shape
---------------------------------------
+In the **Fit** dock, build ``Oscillatory * Gaussian + Constant`` (see
+:doc:`/reference/composite_models`). The oscillation has a free amplitude,
+frequency, and phase. The Gaussian envelope is
+:math:`\exp[-(\sigma_G t)^2]`, and the **Constant** term absorbs the
+non-precessing offset in the asymmetry. Keep the minimum of ``sigma`` at
+zero. Record :math:`\sigma_G=\gamma_\mu B_\mathrm{rms}/\sqrt{2}` and its
+uncertainty. The reference WiMDA fits use detector-group counts, so the
+numbers shown here are from the Asymmetry asymmetry fits.
 
-The guide asks the analyst to compare the time-domain fit with the
-frequency-domain line shape, first by FFT and then by maximum entropy.
-Both views make the vortex broadening directly visible.
+Step 2 — Inspect the frequency-domain line shape
+------------------------------------------------
+
+The frequency-domain views show how the distribution of precession
+frequencies changes between the mixed and normal states. Select the
+10 K, 400 G run for the FFT.
 
 .. figure:: /_generated/corpus_screenshots/corpus_bscco_vortex_fft.png
-   :alt: FFT of the BiSCCO 10 K, 400 G run showing the broad vortex line
+   :alt: FFT showing a broad line near 5.4 MHz for BiSCCO at 10 K and 400 G
    :width: 100%
 
-   The **Frequency** domain (**FFT** under **FREQUENCY DOMAIN**) of the
-   10 K run. With **X Units:** ``Frequency (MHz)`` and **Reference:**
-   400.00 G, the broad, asymmetric vortex line sits on the 400 G Larmor
-   frequency near 5.4 MHz — the frequency-domain image of the mixed-state
-   :math:`p(B)`. Its width is the same second moment the time-domain
-   Gaussian :math:`\sigma` measures; above :math:`T_c` this line collapses
-   to a narrow nuclear-dipolar Gaussian.
+   The **FFT** in the **Frequency** workspace, with **X Units:**
+   ``Frequency (MHz)`` and **Reference:** 400.00 G. The low-temperature
+   precession frequencies spread around the nominal 400 G Larmor
+   frequency of 5.4 MHz.
 
 .. figure:: /_generated/corpus_screenshots/corpus_bscco_maxent.png
-   :alt: Maximum-entropy spectra of the BiSCCO 10 K vortex line versus the 125 K normal-state line
+   :alt: BiSCCO maximum-entropy spectra at 400 G showing a broad 10 K line and a narrow 125 K line
    :width: 100%
 
-   The maximum-entropy (**MaxEnt**) reconstruction, the guide's
-   FFT-versus-MaxEnt comparison. The 10 K vortex distribution (filled,
-   :math:`\chi^2/N = 1.04`) spreads the same unit spectral area that the
-   125 K normal-state line concentrates into a single narrow peak — the
-   vortex lattice broadening :math:`p(B)`. The 10 K peak (5.40 MHz) sits
-   just below the normal-state line (5.42 MHz): the diamagnetic shift of
-   the mixed state. On this real forward/backward asymmetry the estimator
-   converges out of the box, seeding the four MUSR quadrant-group phases
-   from the data — the **Seed phases from data** option, on by default.
+   The **MaxEnt** reconstruction of runs 1277 and 1276. Normalised to
+   unit area, the 10 K line spreads over a wider range of frequencies
+   than the 125 K line, and its peak lies slightly below the normal-state
+   peak. Keep **Seed phases from data** checked to initialise the four
+   MuSR quadrant phases.
 
-.. note::
+Finite observation times and FFT processing affect the FFT line shape.
+MaxEnt regularises the reconstructed line shape. Use the time-domain
+Gaussian fit for the quantitative linewidth in this example.
 
-   A maximum-entropy line shape is a regularised *estimate* of
-   :math:`p(B)`, not a calibrated linewidth. Treat the MaxEnt and FFT views
-   as qualitative pictures of the broadening; the quantitative
-   :math:`\sigma` comes from the time-domain Gaussian fit of Step 1.
+Step 3 — Trend the fitted widths with temperature
+-------------------------------------------------
 
-Step 3 — Trend σ(T) through T_c
--------------------------------
+Make a data group for each field with the run selections above. Use the
+**Batch** tab to fit each group separately. Keep the oscillation,
+Gaussian width, and offset parameters **Local**. Start the amplitude near
+8%, phase at zero, and offset near the asymmetry median. Start frequency
+near 5.3 MHz at 400 G or 2.7 MHz at 200 G. The figure fits start with
+``sigma`` near 1.15 μs⁻¹ at 400 G or 0.90 μs⁻¹ at 200 G and seed
+subsequent runs from the preceding lower-temperature width. Click
+**Run series** and check convergence and residuals for each run. See
+:ref:`global-fitting` for the series controls.
+
+Open **View → Show Fit Parameters**, select the 400 G series, choose
+``𝑇 (K)`` on the **x** rail, and check ``σ (µs⁻¹)`` on the **y** rail.
 
 .. figure:: /_generated/corpus_screenshots/corpus_bscco_sigma_t.png
-   :alt: BiSCCO vortex depolarisation rate σ(T) from 10 to 125 K in the trend panel
+   :alt: BiSCCO fitted Gaussian linewidths at 400 G, falling from 1.16 at 10 K to 0.064 inverse microseconds at 125 K
    :width: 100%
 
-   The **Fit Parameters** trend panel with the per-run 400 G
-   :math:`\sigma(T)` series loaded and ``σ (µs⁻¹)`` on the y-axis. For
-   the 14 runs in this series, :math:`\sigma` falls
-   from ≈ 1.16 μs⁻¹ at 10 K to a small residual ≈ 0.06 μs⁻¹ above
-   :math:`T_c \approx 107\;\mathrm{K}`. The base-temperature value maps to
-   :math:`\lambda_L = \sqrt{75780/\sigma} \approx 255\;\mathrm{nm}` — noted
-   on the plot as indicative only (see below).
-
-Loading each run's fit result into the trend panel and checking the
-``σ (µs⁻¹)`` chip on the y rail plots the depolarisation rate against
-temperature. The curve has the canonical mixed-state form: a low-:math:`T`
-plateau where the superfluid density is fully developed, a monotonic fall
-on warming as :math:`\rho_s` melts, and a collapse to the nuclear-dipolar
-background as superconductivity is lost near 107 K. The lowest-:math:`T`
-value, :math:`\sigma(10\;\mathrm{K}) \approx 1.16\;\mu\mathrm{s}^{-1}`,
-gives :math:`\lambda_L \approx 255\;\mathrm{nm}` through the guide relation,
-consistent with the literature order of magnitude for optimally-doped Bi-2212 (:math:`\lambda_{ab} \approx
-260\;\mathrm{nm}`).
-
-.. warning::
-
-   A single :math:`\lambda_L` is only indicative for Bi-2212 at these
-   fields. Bi-2212 is extremely anisotropic, and above a crossover field
-   :math:`B^* \approx 500\;\mathrm{G}` its flux lines break into weakly
-   correlated pancake vortices. All three teaching fields (150, 200 and
-   400 G) sit below :math:`B^*`, so the extended-flux-line interpretation of
-   :math:`\sigma` as :math:`\lambda_{ab}` is not physically robust here (see
-   Bernhard *et al.*, Phys. Rev. B **52**, 10488 (1995), which states that
-   meaningful :math:`\lambda_{ab}` values "cannot be extracted from
-   :math:`\sigma`" in the usual way for this material). Quote
-   :math:`\lambda_L \approx 255\;\mathrm{nm}` as an order-of-magnitude guide
-   from :math:`\lambda_L = \sqrt{75780/\sigma}`, and grade the
-   :math:`\sigma(T)` curve itself rather than a single derived
-   :math:`\lambda_L`.
+   The **Fit Parameters** panel plots 14 fitted total Gaussian widths
+   :math:`\sigma_G` at 400 G. The width falls from 1.16 μs⁻¹ at 10 K to
+   a residual of about 0.06–0.07 μs⁻¹ at 110–125 K, including the
+   normal-state reference at 125 K.
 
 Step 4 — Compare the two fields
 -------------------------------
 
+With one series selected in **Fit Parameters**, **Shift+click** the
+second series chip. Both field scans appear on the same axes and the
+legend identifies them. Choose **⋯ → Export TSV…** with both chips
+selected. The file retains both series, with ``Series``, ``Run``,
+``B (G)``, ``T (K)``, ``sigma (µs⁻¹)``, and ``err_sigma (µs⁻¹)``
+columns. For this selection the export contains 14 rows at 400 G and
+ten at 200 G. Use **Table** to inspect the active series.
+
 .. figure:: /_generated/corpus_screenshots/corpus_bscco_field_compare.png
-   :alt: BiSCCO σ(T) at 400 G overlaid on 200 G in the trend panel
+   :alt: BiSCCO Gaussian linewidths at 200 and 400 G, with the 400 G points higher at 30, 50, and 70 K
    :width: 100%
 
-   The trend panel overlaying the 400 G and 200 G :math:`\sigma(T)` scans
-   as two coloured series (armed through ``select_series``, the equivalent
-   of Shift-clicking the second series pill). Both are genuine per-run TF
-   Gaussian fits. The 200 G plateau (≈ 0.9 μs⁻¹) sits *below* the 400 G
-   plateau (≈ 1.15 μs⁻¹): the field dependence of :math:`\sigma` in Bi-2212
-   is the pancake-vortex physics of the warning above, not fit scatter. The
-   200 G overlay uses runs 1290, 1292–1294, and 1296–1301. This is the subset
-   with comparable fits in the reference analysis. Use the same subset to
-   reproduce the overlay from the public runs.
+   At 30, 50, and 70 K, the fitted Gaussian linewidth is higher at
+   400 G than at 200 G. The ordering reverses between 85 and 90 K as the
+   widths approach their normal-state values. The plot compares the
+   measured linewidths, including the residual above the transition.
 
-The guide's field-comparison task is exactly this overlay. For a
-conventional, weakly-anisotropic superconductor deep in the mixed state,
-:math:`\sigma` is field-independent between :math:`H_{c1}` and
-:math:`H_{c2}`, and the two scans would coincide. That they do not is the
-signature of dimensional crossover: below :math:`B^*` the pancake vortices
-in adjacent CuO₂ planes decouple, the lattice order softens, and the
-measured second moment shrinks. The overlay is a plot-only comparison;
-**⋯ → Export TSV…** writes both series, while GLE export and any card
-**Fit** apply to the active series alone.
+In the mixed state the local-field distribution depends on both
+penetration depth and vortex arrangement. Vortex disorder and anisotropy
+can change the linewidth (Brandt, Phys. Rev. B **37**, 2349 (1988)). The
+two-field comparison establishes a
+difference in fitted width over part of the temperature range. Locating
+a dimensional crossover would require evidence for the vortex structure
+and its evolution with field in this specimen.
+
+Estimating a penetration depth
+------------------------------
+
+Use the normal-state reference at the same field to estimate the residual
+width. At 400 G, the fitted :math:`\sigma_G` values are 1.164 μs⁻¹ at
+10 K and 0.064 μs⁻¹ at 125 K. If the residual broadening is a
+temperature-independent Gaussian contribution statistically independent of
+the vortex broadening, their variances add. Subtract in quadrature to
+obtain
+
+.. math::
+
+   \sigma_{G,\mathrm{sc}}
+   =\sqrt{\sigma_{G,10\,\mathrm{K}}^2-\sigma_{G,125\,\mathrm{K}}^2}
+   \approx 1.162\,\mu\mathrm{s}^{-1}.
+
+If an ideal triangular vortex lattice in the London limit describes the
+sample, the conversion above gives
+:math:`\lambda_L(10\,\mathrm{K})=\sqrt{75780/\sigma_{G,\mathrm{sc}}}
+\approx 255\,\mathrm{nm}`. This estimate assumes the sample dominates the
+precessing signal and uses :math:`\sigma_2=\sqrt{2}\sigma_G` when applying
+Brandt's second-moment relation. The two-field comparison alone leaves the
+lattice structure, anisotropy, and any additional precessing components
+unresolved. Bernhard *et al.* discuss the conditions for relating this
+linewidth to penetration depth in separately measured cuprate samples.
 
 Fitting a gap model
 -------------------
 
-Where the material and the field permit a clean single-:math:`\lambda`
-interpretation — which Bi-2212 at 150–400 G does not — the next step is to
-fit the superfluid density :math:`\sigma(T)` (background-subtracted) to a
-gap model and read off the pairing symmetry. Asymmetry's parametric-model
+If a single penetration depth describes a dataset, fit the corrected
+superconducting width :math:`\sigma_\mathrm{sc}(T)` as a proxy for the
+superfluid density and compare gap models. Asymmetry's parametric-model
 registry ships the standard family, each documented in the component-info
 dialog:
 
@@ -350,8 +355,8 @@ broken time-reversal symmetry in zero field. The measurements come from the
 Interpretation
 --------------
 
-What the shape of :math:`\sigma(T)` (equivalently :math:`\rho_s(T)`) tells
-you about the material:
+When the corrected linewidth is proportional to the superfluid density,
+compare its shape with the candidate gap models.
 
 - Exponential saturation at low temperature. A single isotropic s-wave gap
   (``SC_SWave``); the :math:`\Delta/k_B T_c` value distinguishes
@@ -362,26 +367,20 @@ you about the material:
 - A shoulder or kink near :math:`T/T_c \approx 0.3\text{–}0.5`.
   Multiband superconductivity with two gaps (``SC_TwoGap_SS``); the smaller
   gap freezes out at its own scale.
-- **A field-dependent plateau.** As in Bi-2212 here: not a pairing-symmetry
-  statement at all, but dimensional-crossover physics that invalidates a
-  single-:math:`\lambda` reading.
 
 Assumptions and limitations
 ---------------------------
 
-- **The London limit.** :math:`\sigma \to \lambda` is exact only for
-  :math:`\lambda \gg \xi`. Where :math:`\xi` approaches :math:`\lambda` the
-  Brandt expression acquires corrections (see Sonier *et al.*, Rev. Mod.
-  Phys. **72**, 769 (2000), Appendix B).
-- **The nuclear-dipolar background.** Even above :math:`T_c` the muon sees a
-  non-zero :math:`\sigma` from nuclear dipoles (≈ 0.055 μs⁻¹ here). Fit it
-  and subtract it in quadrature before converting :math:`\sigma \to
-  \lambda`.
-- **Anisotropy and the vortex regime.** Below :math:`H_{c1}` the field does
-  not enter as a lattice; above :math:`H_{c2}` superconductivity is
-  suppressed; and in extremely anisotropic layered materials a pancake-
-  vortex crossover (Bi-2212 above) breaks the single-:math:`\lambda`
-  picture even well inside the mixed state.
+- **The London limit.** The triangular-lattice conversion assumes
+  :math:`\lambda \gg \xi` and a field well inside the mixed state (see
+  Sonier *et al.*, Rev. Mod. Phys. **72**, 769 (2000), Appendix B).
+- **The normal-state width.** Above :math:`T_c` nuclear dipoles and other
+  sources such as field inhomogeneity can contribute to the residual width.
+  Subtract this width in quadrature if it represents independent Gaussian
+  broadening and is also present in the mixed state.
+- **Anisotropy and the vortex regime.** To infer a penetration depth from
+  the linewidth, choose a vortex model appropriate to the specimen,
+  applied field, and field orientation.
 - **Width convention.** Convert :math:`\sigma_G` to
   :math:`\sigma_2=\sqrt{2}\sigma_G` when using a second-moment relation.
   Omitting this factor makes :math:`\lambda_L` too long by
@@ -403,8 +402,10 @@ References
   (2000) — the canonical review of TF μSR in superconductors.
 - C\. Bernhard, Ch. Niedermayer, U. Binninger, A. Hofer, Ch. Wenger, J. L.
   Tallon, G. V. M. Williams, E. J. Ansaldo, J. I. Budnick, C. E. Stronach,
-  D\. R. Noakes, and M. A. Blankson-Mills, Phys. Rev. B **52**, 10488 (1995)
-  — the σ ↔ λ relation and the pancake-vortex caveat for Bi-2212.
+  D\. R. Noakes, and M. A. Blankson-Mills, Phys. Rev. B **52**,
+  `10488 (1995) <https://doi.org/10.1103/PhysRevB.52.10488>`__ —
+  the conditions for relating μSR depolarisation and penetration depth in
+  polycrystalline cuprates.
 - F\. L. Pratt, P. J. Baker, S. J. Blundell, T. Lancaster, H. J. Lewtas, P.
   Adamson, M. J. Pitcher, D. R. Parker, and S. J. Clarke, Phys. Rev. B
   **79**, `052508 (2009) <https://doi.org/10.1103/PhysRevB.79.052508>`__ — LiFeAs :math:`B_\mathrm{rms}(T)` and
