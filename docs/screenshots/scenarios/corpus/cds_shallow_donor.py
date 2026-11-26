@@ -7,25 +7,12 @@ spec: J. M. Gil *et al.*, "Novel Muonium state in CdS," Phys. Rev. Lett. **83**
 (1999) 5294; ionisation fitting in Phys. Rev. B **64** (2001) 075205. See the
 example's ``GROUND_TRUTH.md`` (audit-corrected).
 
-Physics (GROUND_TRUTH §4/§5/§6). At low T the muon captures an electron and
-forms a **neutral shallow-donor muonium** (Mu⁰) whose hyperfine coupling is
-tiny — ~10⁻⁴ of vacuum Mu (4463 MHz) — and **anisotropic**: A∥ = 335(8) kHz,
-A⊥ = 199(6) kHz (Gil *et al.*). At 100 G this is deep Paschen-Back, so the TF
-line is a **central diamagnetic (Mu⁺) Larmor line** flanked by **satellites
-split by the hyperfine constant A** (guide: satellite splitting = A). The
-observed splitting ≈ 0.24 MHz sits between the A⊥ and A∥ orientation limits
-(a wurtzite powder samples Δν(Θ) = A∥cos²Θ + A⊥sin²Θ, GROUND_TRUTH §6). On
-**warming the donor ionises** (E_i ~ tens of meV): the satellites vanish and a
-single sharp Mu⁺ line remains (onset ~30 K, GROUND_TRUTH §6). The satellites
-also beat against the central line in the time domain (guide §4).
-
-This is subtle spectroscopy near the FFT resolution limit: the loader delivers
-1979 bins at 16 ns over a **31.75 µs** window ⇒ ~32 kHz raw frequency
-resolution. Every FFT here runs through the program's own
-``compute_average_group_spectrum`` with a **Hann** apodisation and **zero
-padding** (the ``padding`` config field) so the ~0.12 MHz central-satellite
-offset — ~4 raw bins — resolves cleanly. See ``NOTES_cds.md`` for the honest
-resolution discussion and satellite-splitting comparison.
+At low temperature the muon captures an electron to form neutral
+shallow-donor muonium (Mu⁰). Its weak, anisotropic hyperfine interaction
+produces satellite lines around the separate diamagnetic (Mu⁺) Larmor line.
+The warm run provides a control with one dominant diamagnetic line. The
+comparison uses the grouped FFT and MaxEnt on both runs, including the
+weighted time-domain residuals that the MaxEnt overlay displays.
 
 Coldest run: **20721** (Tlog = 5.175 K, 45.9 MEv — the highest-statistics run,
 deepest in the Mu⁰ phase). ⚠ Runs 20711–20721 park the cryostat **setpoint** at
@@ -40,10 +27,11 @@ Scenarios registered:
   5.2 K) zoomed on the 100 G Larmor line: central Mu⁺ line + two symmetric
   Mu⁰ satellites, with the expected A∥ / A⊥ satellite positions marked.
 * ``corpus_cds_cold_vs_warm`` — headline: the 5.2 K spectrum (split) overlaid
-  on a 50 K spectrum (single sharp line) — the satellites disappear as the
-  donor ionises.
-* ``corpus_cds_time_beats`` — the corresponding slow beat envelope in the
-  time-domain asymmetry (cold, beating) vs the warm run (single line, no beat).
+  on a 50 K spectrum with one dominant line.
+* ``corpus_cds_maxent_triplet`` — matched cold and warm FFTs and MaxEnt
+  spectra, with MaxEnt residuals for each run.
+* ``corpus_cds_time_beats`` — the slow beat envelope in the cold run's
+  time-domain asymmetry.
 * ``corpus_cds_neutral_fraction_t`` — Mu⁰ neutral fraction vs T across the
   stable runs 20722–20733, fitted with the OrderParameter power law → the
   ionisation onset Tc ≈ 30 K (GROUND_TRUTH §6 "satellites appear below ~30 K").
@@ -68,12 +56,10 @@ from ._corpus import (
 EXAMPLE = "Semiconductors/Shallow donor state in cadmium sulphide"
 _DATA = EXAMPLE + "/Data/EMU000%d.nxs"
 
-# Observed diamagnetic (Mu⁺) Larmor line at 100 G. γ_µ/2π = 13.554 kHz/G gives
-# 1.355 MHz at 100.00 G; the fitted line sits at ~1.39 MHz (a small calibration
-# offset, GROUND_TRUTH §7). Annotations centre on the observed line.
-_CENTRE_MHZ = 1.390
-# Anisotropic hyperfine constants (Gil et al.; GROUND_TRUTH §6). The satellite
-# splitting equals A, so satellites sit at centre ± A/2.
+# Gil et al., PRL 83, 5294, Fig. 1 and Eq. (1). At 10 mT each pair is
+# symmetric about the Larmor frequency and its separation depends on orientation.
+_REFERENCE_CENTRE_MHZ = 1.38
+_REFERENCE_INNER_PAIR_MHZ = 0.214
 _A_PAR_MHZ = 0.335  # A∥, Θ = 0°
 _A_PERP_MHZ = 0.199  # A⊥, Θ = 90°
 
@@ -100,6 +86,9 @@ _STABLE_RUNS: list[tuple[int, float]] = [
 _CEN_BAND = (1.36, 1.42)
 _SATL_BAND = (1.21, 1.32)
 _SATU_BAND = (1.46, 1.57)
+_COMPARISON_BAND_MHZ = (1.15, 1.65)
+_PEAK_PROMINENCE_FRACTION = 0.20
+_MIN_MARKER_SEPARATION_MHZ = 0.03
 
 
 def _rel(run: int) -> str:
@@ -109,38 +98,28 @@ def _rel(run: int) -> str:
 # --------------------------------------------------------------------------- #
 #  Program-engine FFT (the real Fourier pipeline the panel drives).
 # --------------------------------------------------------------------------- #
-def _spectrum(run: int, label: str, *, padding: int = 4, normalise_centre: bool = False):
-    """Hann-apodised, zero-padded FFT of *run* via the core Fourier routine.
-
-    Runs through ``compute_average_group_spectrum`` — the same average grouped
-    FFT the Fourier panel computes — so the render is the program's own output.
-    A Hann window plus ``padding`` zero-padding lifts the effective frequency
-    resolution from the raw ~32 kHz bin to ~8 kHz, enough to separate the
-    ~0.12 MHz central-satellite offset. The overlay legend reads
-    ``metadata['run_label']``, so a physics label replaces "20721 Average".
-
-    With *normalise_centre* the spectrum is scaled to unit central-line peak, so
-    a cold (3-line) and warm (1-line) run overlay on a common scale where the
-    satellite presence/absence — not the absolute central-line height — is the
-    visual message.
-    """
+def _cds_grouped_fft(run, *, window: str = "lorentzian"):
+    """Grouped-count FFT with a common 0–31 µs input window and padding."""
     from asymmetry.core.fourier import GroupSpectrumConfig, compute_average_group_spectrum
 
-    ds = load_corpus_datasets([_DATA % run])[0]
-    run_obj = ds.run
-    gids = list(run_obj.grouping["groups"].keys())
     cfg = GroupSpectrumConfig(
         display="(Power)^1/2",
-        window="hann",
-        padding=padding,
-        selected_group_ids=gids,
-        group_phase_degrees={g: 0.0 for g in gids},
-        exclusion_ranges=[],
+        window=window,
+        filter_time_constant_us=6.0,
+        padding=4,
         t_min_us=0.0,
         t_max_us=31.0,
         subtract_average_signal=True,
     )
-    spectrum = compute_average_group_spectrum(run_obj, cfg)
+    spectrum = compute_average_group_spectrum(run, cfg)
+    if spectrum is None:
+        raise RuntimeError("CdS FFT requires the two detector groups")
+    return spectrum
+
+
+def _spectrum(run: int, label: str, *, window: str = "lorentzian", normalise_centre: bool = False):
+    dataset = load_corpus_datasets([_DATA % run])[0]
+    spectrum = _cds_grouped_fft(dataset.run, window=window)
     if normalise_centre:
         f = np.asarray(spectrum.time, float)
         peak = _band_peak(f, np.asarray(spectrum.asymmetry, float), _CEN_BAND)
@@ -164,7 +143,7 @@ def _neutral_fraction(run: int) -> float:
     ≈ 0.66) collapsing toward the warm background as the donor ionises. The
     complement of the central-line dominance (GROUND_TRUTH §4/§6).
     """
-    sp = _spectrum(run, "", padding=4)
+    sp = _spectrum(run, "", window="hann")
     f = np.asarray(sp.time, float)
     s = np.asarray(sp.asymmetry, float)
     c = _band_peak(f, s, _CEN_BAND)
@@ -189,24 +168,29 @@ def _annotate_satellites(panel, *, both_pairs: bool = True) -> None:
     spectra are plotted, so the marks travel with the program's own render.
     """
     ax = panel._figure.axes[0]
-    y0, y1 = ax.get_ylim()
-    # Central diamagnetic line. Mathtext labels so the ⁺/∥/⊥ physics symbols
-    # render regardless of the panel's UI font (IBM Plex Mono lacks them).
-    ax.axvline(_CENTRE_MHZ, color="0.45", lw=1.0, ls="--", zorder=1)
+    _, y1 = ax.get_ylim()
+    # Mathtext supplies the ⁺, ∥, and ⊥ glyphs used in the guide labels.
+    ax.axvline(_REFERENCE_CENTRE_MHZ, color="0.45", lw=1.0, ls="--", zorder=1)
     ax.text(
-        _CENTRE_MHZ, y1 * 0.97, r" $\mathrm{Mu}^+$", color="0.35", fontsize=9, ha="left", va="top"
+        _REFERENCE_CENTRE_MHZ,
+        y1 * 0.97,
+        r" $\mathrm{Mu}^+$ reference",
+        color="0.35",
+        fontsize=9,
+        ha="left",
+        va="top",
     )
     pairs = [(_A_PERP_MHZ, r"$A_\perp$", "#1f77b4")]
     if both_pairs:
         pairs.append((_A_PAR_MHZ, r"$A_\parallel$", "#d62728"))
     for a, tag, colour in pairs:
         for sign in (-1.0, +1.0):
-            x = _CENTRE_MHZ + sign * a / 2.0
+            x = _REFERENCE_CENTRE_MHZ + sign * a / 2.0
             ax.axvline(x, color=colour, lw=1.0, ls=":", alpha=0.8, zorder=1)
         ax.text(
-            _CENTRE_MHZ + a / 2.0,
+            _REFERENCE_CENTRE_MHZ + a / 2.0,
             y1 * 0.80,
-            f" {tag}",
+            f" {tag} guide",
             color=colour,
             fontsize=8,
             ha="left",
@@ -215,10 +199,20 @@ def _annotate_satellites(panel, *, both_pairs: bool = True) -> None:
     panel._figure.canvas.draw_idle()
 
 
-# The satellite triplet the guide flags at 100 G (central Mu⁺ ± A/2, with the
-# observed inner-pair splitting A ≈ 0.24 MHz, GROUND_TRUTH §6): 1.27 / 1.39 /
-# 1.51 MHz.
-_TRIPLET_MHZ = (_CENTRE_MHZ - 0.12, _CENTRE_MHZ, _CENTRE_MHZ + 0.12)
+def _comparison_grid_maxima(frequencies: np.ndarray, spectrum: np.ndarray) -> np.ndarray:
+    """Select prominent grid maxima and leave room between their markers."""
+    from scipy.signal import find_peaks
+
+    lo, hi = _COMPARISON_BAND_MHZ
+    in_view = np.flatnonzero((frequencies >= lo) & (frequencies <= hi))
+    values = spectrum[in_view]
+    grid_step = frequencies[1] - frequencies[0]
+    peaks, _ = find_peaks(
+        values,
+        prominence=_PEAK_PROMINENCE_FRACTION * values.max(),
+        distance=_MIN_MARKER_SEPARATION_MHZ / grid_step,
+    )
+    return in_view[peaks]
 
 
 def _grab_canvas_agg(canvas, name: str, output_dir):
@@ -236,46 +230,19 @@ def _grab_canvas_agg(canvas, name: str, output_dir):
     return out_path
 
 
-def _cds_maxent_triplet(
-    run: int,
-    *,
-    f_lo: float = 0.9,
-    f_hi: float = 1.9,
-    binning: int = 4,
-    points: int = 128,
-    cycles: int = 20,
-):
-    """MaxEnt reconstruction of the CdS TF line over a tight window.
-
-    The 100 G run's satellites straddle the ~1.39 MHz central line by only
-    ~0.12 MHz — a few raw FFT bins. The field-derived auto window (±300 G ≈
-    ±4 MHz) is far too wide at this low field (README lesson), so an **explicit
-    tight window** 0.9–1.9 MHz plus modest **time binning** (×4, lifting the
-    post-binning Nyquist just clear of the window) and a compact 128-point grid
-    let MaxEnt super-resolve the triplet into three clean lobes the FFT can only
-    blur. Stable at 10–25 cycles. Returns ``(frequencies, spectrum, χ²/N)`` —
-    χ²/N recomputed from the time-domain reconstruction so it equals the
-    engine's by identity. On this high-statistics real F/B run χ²/N plateaus
-    ≈ 4.5 (README: expected on some real runs); the three lobes still land
-    dead-on 1.27 / 1.39 / 1.51 MHz.
-    """
+def _cds_maxent_reconstruction(run):
+    """Compare the runs with the same MaxEnt settings and overlay residuals."""
     from asymmetry.core.maxent import MaxEntConfig, maxent, reconstruct_group_signals
 
-    dataset = load_corpus_datasets([_DATA % run])[0]
     config = MaxEntConfig(
         auto_window=False,
-        f_min_mhz=f_lo,
-        f_max_mhz=f_hi,
-        time_binning_factor=binning,
-        n_spectrum_points=points,
+        f_min_mhz=0.9,
+        f_max_mhz=1.9,
+        time_binning_factor=4,
+        n_spectrum_points=128,
     )
-    result = maxent(dataset.run, config, cycles=cycles)
-    recon = reconstruct_group_signals(result.maxent_input, result.state)
-    n_obs = sum(g.n_obs for g in recon.values()) or 1
-    chi2_over_n = sum(g.chi2 for g in recon.values()) / n_obs
-    spectrum = np.asarray(result.spectrum, dtype=float)
-    frequencies = np.asarray(result.frequencies_mhz, dtype=float)
-    return frequencies, spectrum, float(chi2_over_n)
+    result = maxent(run, config, cycles=20)
+    return result, reconstruct_group_signals(result.maxent_input, result.state)
 
 
 # --------------------------------------------------------------------------- #
@@ -285,9 +252,8 @@ class CdsLowTLineshapeScenario(CorpusScenario):
     name = "corpus_cds_low_t_lineshape"
     description = (
         "Program FFT of the coldest CdS run (20721, 5.2 K, TF 100 G) zoomed on "
-        "the Larmor line: the central diamagnetic Mu⁺ line at ~1.39 MHz flanked "
-        "by two symmetric shallow-donor Mu⁰ satellites (splitting ≈ 0.24 MHz = "
-        "the hyperfine constant), with the expected A∥ / A⊥ positions marked."
+        "the diamagnetic Mu⁺ line and candidate shallow-donor Mu⁰ satellites, "
+        "with fixed A∥ and A⊥ guides from Gil et al."
     )
     example = EXAMPLE
     size = (1180, 760)
@@ -323,10 +289,9 @@ class CdsLowTLineshapeScenario(CorpusScenario):
 class CdsColdVsWarmScenario(CorpusScenario):
     name = "corpus_cds_cold_vs_warm"
     description = (
-        "Headline: the 5.2 K CdS spectrum (central Mu⁺ line + Mu⁰ satellites) "
-        "overlaid on the 50 K spectrum (a single sharp Mu⁺ line). Warming "
-        "ionises the shallow donor, so the satellites vanish — the CdS "
-        "shallow-donor signature (GROUND_TRUTH §4/§6)."
+        "The 5.2 K and 50 K CdS runs transformed with matched FFT settings. "
+        "The cold trace has two satellite candidates around the central Mu⁺ "
+        "line, while the warm trace has one dominant line."
     )
     example = EXAMPLE
     size = (1180, 760)
@@ -337,8 +302,8 @@ class CdsColdVsWarmScenario(CorpusScenario):
         # Normalise each spectrum to its own central-line peak so the two
         # overlay on a common scale: the story is the satellites' presence
         # (cold) vs absence (warm), not the central line's absolute height.
-        cold = _spectrum(_COLD_RUN, "5.2 K — Mu0 satellites", normalise_centre=True)
-        warm = _spectrum(_WARM_RUN, "50 K — Mu+ only", normalise_centre=True)
+        cold = _spectrum(_COLD_RUN, "5.2 K", normalise_centre=True)
+        warm = _spectrum(_WARM_RUN, "50 K", normalise_centre=True)
 
         panel = PlotPanel(domain="frequency")
         panel.set_overlay_enabled(True)
@@ -365,9 +330,8 @@ class CdsTimeBeatsScenario(CorpusScenario):
     name = "corpus_cds_time_beats"
     description = (
         "Time-domain asymmetry of the 5.2 K CdS run: the central Mu⁺ line and "
-        "its Mu⁰ satellites beat against each other, giving the pronounced "
-        "envelope the guide flags (§4) — a node near ~3 µs and an antinode near "
-        "~8 µs (beat period ~8 µs = 1/(central–satellite offset ≈ 0.12 MHz))."
+        "the Mu⁰ satellite oscillations give a beat envelope on a slower "
+        "time scale than the Larmor precession."
     )
     example = EXAMPLE
     size = (1440, 860)
@@ -505,94 +469,99 @@ class CdsNeutralFractionTScenario(CorpusScenario):
 
 
 # --------------------------------------------------------------------------- #
-#  5. MaxEnt super-resolution — FFT vs MaxEnt on the cold satellite triplet.
+#  5. Matched spectra and time-domain residuals.
 # --------------------------------------------------------------------------- #
 class CdsMaxEntTripletScenario(CorpusScenario):
     name = "corpus_cds_maxent_triplet"
     description = (
-        "MaxEnt super-resolution flagship (run 20721, 5.2 K, TF 100 G): the "
-        "MaxEnt reconstruction resolves the 1.27 / 1.39 / 1.51 MHz shallow-donor "
-        "satellite triplet (central Mu⁺ ± A/2) side-by-side with the raw program "
-        "FFT, which at the native ~32 kHz bin cannot separate the lines. The "
-        "frequency-domain MaxEnt-vs-FFT comparison the guide (§4) calls for."
+        "Grouped FFT and MaxEnt for CdS runs 20721 and 20729, with matching settings "
+        "within each method. Circles show prominent FFT and MaxEnt grid maxima, and "
+        "dotted lines show the literature inner-pair guides. The bottom panels show "
+        "the weighted MaxEnt residuals for both detector groups in each run."
     )
     example = EXAMPLE
-    size = (1320, 640)
-    requires_fit = True  # real MaxEnt reconstruction runs at capture time
+    size = (1320, 780)
+    requires_fit = True
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._summary: dict[str, float] = {}
-
-    def capture(self, ctx):  # noqa: D401 - standalone side-by-side figure
+    def capture(self, ctx):
         from asymmetry.gui.styles import tokens
         from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
-        # Warm a throwaway canvas so the first real draw is deterministic.
-        _warm_fig, _warm_canvas = create_canvas(layout="tight")
-        _warm_canvas.draw()
-        _process_events_for(milliseconds=60)
-
-        # The raw program FFT at native resolution (no zero-padding interpolation):
-        # the satellites are only a few bins off the central line, so they blur
-        # into shoulders — the FFT "cannot" resolve the triplet.
-        fft = _spectrum(_COLD_RUN, "", padding=1)
-        f_fft = np.asarray(fft.time, float)
-        s_fft = np.asarray(fft.asymmetry, float)
-
-        f_me, s_me, chi2 = _cds_maxent_triplet(_COLD_RUN)
-        self._summary = {"chi2_over_n": chi2}
-
-        x_min, x_max = 1.0, 1.8
         figure, canvas = create_canvas(layout="tight")
-        ax_fft = figure.add_subplot(1, 2, 1)
-        ax_me = figure.add_subplot(1, 2, 2)
-
-        # Left: the noisy FFT that cannot separate the lines.
-        band = (f_fft >= x_min) & (f_fft <= x_max)
-        pk_fft = float(np.nanmax(s_fft[band])) if np.any(band) else 1.0
-        ax_fft.plot(f_fft, s_fft / pk_fft, color=tokens.TRACE_VERMILLION, lw=1.3)
-        ax_fft.set_title("Program FFT — triplet unresolved", fontsize=10.5)
-        ax_fft.set_ylabel("Spectral amplitude (norm.)")
-
-        # Right: MaxEnt resolves the three lines.
-        band_me = (f_me >= x_min) & (f_me <= x_max)
-        pk_me = float(np.nanmax(s_me[band_me])) if np.any(band_me) else 1.0
-        ax_me.fill_between(f_me, 0.0, s_me / pk_me, color=tokens.TRACE_BLUE, alpha=0.25, lw=0)
-        ax_me.plot(f_me, s_me / pk_me, color=tokens.TRACE_BLUE, lw=1.5)
-        ax_me.set_title(f"MaxEnt — triplet resolved  (χ²/N = {chi2:.2f})", fontsize=10.5)
-
+        ax_fft = figure.add_subplot(2, 2, 1)
+        ax_me = figure.add_subplot(2, 2, 2, sharey=ax_fft)
+        ax_cold = figure.add_subplot(2, 2, 3)
+        ax_warm = figure.add_subplot(2, 2, 4, sharex=ax_cold, sharey=ax_cold)
+        lo, hi = _COMPARISON_BAND_MHZ
         for ax in (ax_fft, ax_me):
-            for i, fx in enumerate(_TRIPLET_MHZ):
-                colour = "0.45" if i == 1 else "#1f77b4"
-                ax.axvline(fx, color=colour, ls="--" if i == 1 else ":", lw=1.0, alpha=0.8)
-            ax.set_xlim(x_min, x_max)
-            ax.set_ylim(-0.04, 1.16)
-            ax.set_xlabel(r"Frequency $\nu$ (MHz)")
-        ax_fft.text(
-            _TRIPLET_MHZ[1],
-            1.12,
-            r" $\mathrm{Mu}^+$",
-            color="0.35",
-            fontsize=8.5,
-            ha="left",
-            va="top",
+            for sign in (-1, 1):
+                ax.axvline(
+                    _REFERENCE_CENTRE_MHZ + sign * _REFERENCE_INNER_PAIR_MHZ / 2,
+                    color="0.45",
+                    ls=":",
+                    lw=1.1,
+                    label="Gil et al. inner pair" if sign == 1 else None,
+                )
+            ax.set(xlim=(lo, hi), ylim=(-0.04, 1.34), xlabel="Frequency (MHz)")
+        ax_fft.set(title="Grouped FFT", ylabel="Normalised spectral amplitude")
+        ax_me.set_title("MaxEnt spectrum")
+
+        cases = (
+            (_COLD_RUN, "5.2 K", tokens.TRACE_BLUE, ax_cold),
+            (_WARM_RUN, "50 K", tokens.TRACE_VERMILLION, ax_warm),
         )
-        for fx in (_TRIPLET_MHZ[0], _TRIPLET_MHZ[2]):
-            ax_me.text(fx, 1.12, f"{fx:.2f}", color="#1f77b4", fontsize=8, ha="center", va="top")
-        figure.suptitle(
-            "CdS shallow donor (20721, 5.2 K, 100 G): MaxEnt super-resolves the "
-            "Mu⁰ satellite triplet the FFT blurs",
-            fontsize=11,
-        )
+        for number, temperature, colour, ax_residual in cases:
+            run = load_corpus_datasets([_DATA % number])[0].run
+            fft = _cds_grouped_fft(run)
+            result, groups = _cds_maxent_reconstruction(run)
+            spectra = (
+                (ax_fft, fft.time, fft.asymmetry),
+                (ax_me, result.frequencies_mhz, result.spectrum),
+            )
+            for ax, frequency, values in spectra:
+                keep = (frequency >= lo) & (frequency <= hi)
+                normalised = values / values[keep].max()
+                ax.plot(frequency, normalised, color=colour, label=f"{number} · {temperature}")
+                peaks = _comparison_grid_maxima(frequency, values)
+                ax.plot(
+                    frequency[peaks],
+                    normalised[peaks],
+                    linestyle="none",
+                    marker="o",
+                    markersize=4.5,
+                    markerfacecolor="white",
+                    markeredgecolor=colour,
+                    label="Grid maximum" if number == _COLD_RUN else None,
+                )
+
+            ax_residual.axhspan(-1, 1, color="0.92", zorder=0)
+            ax_residual.axhline(0, color="0.55", lw=0.8)
+            for group, group_colour in zip(
+                groups.values(), (tokens.TRACE_BLUE, tokens.TRACE_VERMILLION), strict=True
+            ):
+                ax_residual.plot(
+                    group.time_us,
+                    group.residual,
+                    color=group_colour,
+                    lw=0.8,
+                    label=group.group_name,
+                )
+            chi2_over_n = sum(g.chi2 for g in groups.values()) / sum(
+                g.n_obs for g in groups.values()
+            )
+            ax_residual.set(
+                title=rf"{number} · {temperature} · $\chi^2/N = {chi2_over_n:.2f}$",
+                xlabel="Time (µs)",
+            )
+        ax_fft.legend(loc="upper center", ncol=2, fontsize=8)
+        ax_cold.set_ylabel(r"Weighted residual $(d-m)/\sigma$")
+        ax_warm.legend(loc="upper right", fontsize=8)
+        figure.suptitle("CdS at 100 G · cold and warm spectra with MaxEnt residuals", fontsize=13)
 
         canvas.resize(*self.size)
         canvas.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         canvas.show()
         _process_events_for(milliseconds=200)
-        canvas.draw()
-        _process_events_for(milliseconds=80)
-        canvas.draw()
         out = _grab_canvas_agg(canvas, self.name, ctx.output_dir)
         canvas.close()
         canvas.deleteLater()

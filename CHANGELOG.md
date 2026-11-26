@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restore the EMU dead-time comparison and the HAL high-field FFT and MaxEnt
   figures using the acquired detector groups.
 
+- Compare matched cold and warm CdS spectra and MaxEnt residuals, with
+  literature guides labelled separately from spectral grid maxima.
+
 - Link the worked examples to public Rigi school data and ISIS runs, and show
   the LiFeAs Sample 1 linewidth from fits to the raw GPS data.
 - Open matching single-period legacy EMU and HiFi files with all-zero grouping

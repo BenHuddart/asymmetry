@@ -1602,73 +1602,103 @@ MaxEnt rewards a tightly scoped problem. To resolve a clean precession line:
   refinement — the fit is over-iterating; **Restart** and run fewer cycles
   (or with fewer spectrum points) rather than pushing it further.
 
-The CdS shallow-donor example uses EMU run 20721 from the
-:ref:`Rigi school data <rigi-school-data>`. This 100 G transverse-field run
-was recorded at 5.175 K with 45.9 million events. The spectrum resolves the
-diamagnetic Mu\ :sup:`+` Larmor line near 1.39 MHz (compare the expected
-:math:`\gamma_\mu \cdot 100\,\text{G} \approx 1.36` MHz) with a frequency
-window capped a little above the line, a good time window, and a modest
-number of cycles and spectrum points.
-Tightening that window further and binning the raw histogram brings out the two
-faint Mu\ :sup:`0` satellites this cold run also carries — the super-resolution
-example below.
+Finding shallow-muonium satellites in CdS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Super-resolution: satellites the FFT cannot separate
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Do the side peaks survive changes in analysis settings, and do they persist
+when the donor ionises? Compare the 100 G transverse-field EMU runs 20721
+(logged 5.175 K) and 20729 (50 K) from the
+:ref:`Rigi school data <rigi-school-data>`. At low temperature a muon can bind
+an electron to form shallow neutral muonium (Mu\ :sup:`0`). Its weak hyperfine
+interaction produces a pair of precession frequencies that flank the separate
+diamagnetic Mu\ :sup:`+` Larmor line. The warm run provides a control with one
+dominant line as shallow muonium ionises. [8]_ [9]_
 
-The clearest demonstration of what MaxEnt buys you is a splitting the FFT
-physically cannot separate. In a shallow-donor semiconductor the implanted muon
-captures an electron to form neutral muonium (Mu\ :sup:`0`), a light-hydrogen
-analogue whose weak hyperfine coupling splits the diamagnetic precession line
-into a **triplet**: a central Mu\ :sup:`+` line flanked by two Mu\ :sup:`0`
-satellites offset by half the hyperfine constant. In CdS at 100 G that splitting
-is only about 0.214 MHz [8]_ [9]_ — a few times the raw FFT bin of the EMU
-record (≈ 32 kHz over its 32 μs window), so close that the transform's own sinc
-side-lobes masquerade as structure and the three lines blur into a single lumpy
-shoulder.
+Gil *et al.* measured an inner-pair spacing of 0.214(5) MHz and an outer-pair
+spacing of 0.335(7) MHz in the Fourier spectrum of a CdS crystal at 2.1 K,
+with 10 mT along the crystal's hexagonal axis. The two spacings reflect
+different orientations of the same anisotropic hyperfine interaction. The
+dotted lines in the example use their reported 1.38 MHz Larmor frequency plus
+and minus half their inner-pair spacing. [8]_
 
 .. figure:: /_generated/corpus_screenshots/corpus_cds_maxent_triplet.png
-   :alt: Side-by-side program FFT and MaxEnt reconstruction of the CdS
-      shallow-donor TF 100 G base-temperature run 20721, showing the muonium
-      satellite triplet blurred by the FFT and resolved by MaxEnt
+   :alt: CdS cold and warm spectra in grouped FFT and MaxEnt, with dotted
+      literature guides and circles at prominent grid maxima. The cold
+      spectra have side peaks around the central line. The warm spectra have
+      one dominant line. The bottom panels show both groups' weighted MaxEnt
+      residuals, with the largest departures early in the cold run.
    :width: 100%
 
-   The base-temperature CdS run (20721, logged 5.175 K, 45.9 Mevents, TF 100
-   G). *Left:* the program FFT — at its native ≈ 32 kHz bin, no zero padding —
-   renders the Mu\ :sup:`0` satellite triplet as an unreadable comb of
-   side-lobes about the central Mu\ :sup:`+` line. *Right:* a MaxEnt
-   reconstruction over a tight explicit window resolves three clean lobes at
-   1.27, 1.39, and 1.51 MHz — the central line and its two satellites. The
-   measured satellite splitting, ≈ 0.214 MHz, is the shallow-muonium hyperfine
-   constant. The reconstruction plateaus at χ²/N = 4.54 on this real
-   forward/backward run, yet the lobe centres land on the expected positions.
+   Matched spectra and MaxEnt residuals for the two CdS runs at 100 G. Each
+   spectrum is scaled to its maximum in the plotted band. Circles mark grid
+   maxima with prominence at least 20% of that maximum, keeping the taller
+   peak when maxima are less than 0.03 MHz apart. Dotted lines are fixed
+   literature guides. The residual panels report χ²/N with *N* equal to the
+   number of included observations. Both runs show excess residual scatter,
+   and the cold run has larger, structured deviations at early times.
 
-The recipe is the tightly scoped one above, pushed to its limit:
+The figure uses the Python API with the standard EMU forward/backward
+groups for both runs.
 
-* **Set an explicit frequency window** — 0.9–1.9 MHz here. Uncheck ``Auto
-  window from field``: at 100 G the field-derived window spans several MHz, so
-  the reconstruction spends its amplitude budget on empty bins and blurs the
-  very lines you are trying to separate.
-* **Bin the raw histogram** (``Binning`` ×4). Combining time bins shortens the
-  design matrix and raises the counts per bin without touching the frequency
-  resolution, which the window sets.
-* **Keep the spectrum grid compact** — a 128-point grid across the narrow
-  window is enough to separate lines 0.1 MHz apart. This is a genuine
-  trade-off: too fine a grid lets the reconstruction ring, scattering spurious
-  ripple between the lobes, while too coarse a grid merges them, so the compact
-  grid is chosen deliberately rather than for speed.
-* **Run a modest number of cycles** (about 20) and watch the Diagnostics line
-  settle.
+* The grouped FFT uses ``compute_average_group_spectrum`` with
+  ``display="(Power)^1/2"``, ``subtract_average_signal=True``, a Lorentzian
+  filter starting at 0 µs with τ = 6 µs, and a zero-pad factor of 4. The API
+  explicitly selects 0–31 µs. With no filter, the cold spectrum retains side
+  structure over 0–12 µs and 0–18 µs, although the maxima shift. At 31 µs
+  without a filter, the noisy late bins have more influence and obscure the
+  pattern. The warm FFT has weaker side structure on the shorter windows.
+* The MaxEnt reconstruction uses 0.9–1.9 MHz, 128 spectrum points, the
+  good-bin time range, and time binning by a factor of 4. Each run starts
+  fresh with a single ``maxent(..., cycles=20)`` call. The engine can stop
+  before 20 cycles. Repeating the calculation with 0.85–1.95 MHz at 128
+  points or 0.9–1.9 MHz at 96 points retains three prominent regions in the
+  cold spectrum and one dominant peak in the warm spectrum. The individual
+  maxima and subsidiary lobes vary, and the residual structure persists.
 
-Note the honest caveat printed on the figure. On this real, high-statistics
-forward/backward run the χ² per degree of freedom plateaus near 4.5 rather than
-falling to 1 — the error model and background handling of a genuine run set a
-floor the entropy estimator cannot beat, and a plateau above 1 is expected on
-several real runs even where the reconstruction is visibly correct. The
-:ref:`caution above <maxent-caution>` therefore applies with full force: read
-the **number and positions** of the three lines, which are robust, and measure
-the splitting with a frequency-domain fit (:doc:`frequency_domain_fitting`)
-rather than off the lobe heights.
+Use the desktop controls to inspect these runs interactively.
+
+#. For both runs, select **Grouped average**, **(Power)^1/2**, and
+   **Lorentzian**. Set **Filter start (µs)** to 0, **Filter τ (µs)** to 6,
+   and **Zero-pad factor** to 4, and enable **Subtract average signal**.
+   Click **Compute FFT**. The **Fit range** in **Single** sets the requested
+   window, and the sparse-count cutoff caps it at about 10.23 µs for both
+   runs with the school files' default timing. Use the grouped FFT API to
+   reproduce the longer windows in the figure and the sensitivity check.
+#. Open **MaxEnt** with the cold run active and both runs selected. Untick
+   **Auto window from field** and enter 0.9 and 1.9 in **Min frequency (MHz)**
+   and **Max frequency (MHz)**. Use **Binning** 4 and **Spectrum points**
+   128. Include both detector groups. Leave **Start (µs)** and **End (µs)**
+   blank to use the available good bins. Leave **De-weight from (µs)** and
+   **De-weight to (µs)** blank to retain the default count-error weights
+   throughout the time window.
+#. Start each run from a fresh state. Click **+25** once for the cold run.
+   With both runs still selected and the cold run active, click **Apply to
+   selection** to copy the computed run's settings. Activate the warm run and
+   click **+25** once. Read the final cycle count and stop reason in each
+   status message. Another cycle-button press can resume a state after an
+   early stop and give a different spectrum.
+#. Tick **Show time-domain reconstruction** and inspect both groups. The
+   residual strip shows :math:`(d-m)/\sigma`. Look for oscillations or
+   excursions over several bins. In the figure, the early cold residuals
+   are structured, and the warm run also has larger excursions near the
+   ends of the record. See `Reading the reconstruction overlay`_ for how
+   to view the residuals by group. Use **Restart** after changing the
+   window or grid for a sensitivity check.
+
+On the 31 µs FFT the unpadded grid spacing is about 32 kHz, and a zero-pad
+factor of 4 samples it about every 8 kHz. The MaxEnt grid in the figure is
+also spaced by about 8 kHz. These increments describe where the spectra are
+sampled. The usable signal duration, time weighting, and noise affect whether
+neighbouring lines can be distinguished.
+
+The cold–warm contrast supports a qualitative identification of the satellite
+pair. The settings sensitivity and structured residuals limit what can be
+inferred from its grid maxima. To report a splitting, fit justified line
+components and give the run, time range, model assumptions, and uncertainty.
+For fitted satellite centres, propagate their covariance to their difference.
+For an equal-spacing :ref:`time-domain fit <affine-ties>`, report twice the
+fitted half-splitting and twice its standard error. A frequency-domain fit
+requires the uncertainty checks in :doc:`frequency_domain_fitting`.
 
 Reading the reconstruction overlay
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2151,6 +2181,7 @@ References
 .. [7] F\. J. Harris, Proc. IEEE **66**, 51 (1978).
 
 .. [8] J\. M. Gil *et al.*, Phys. Rev. Lett. **83**, 5294 (1999).
+   `DOI: 10.1103/PhysRevLett.83.5294 <https://doi.org/10.1103/PhysRevLett.83.5294>`_.
 
 .. [9] J\. M. Gil *et al.*, Phys. Rev. B **64**, 075205 (2001).
 
