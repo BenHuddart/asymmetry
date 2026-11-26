@@ -664,8 +664,7 @@ def risch_kehr(t: NDArray, Gamma: float) -> NDArray:
     gives the muon (or muonium) polarisation a :math:`(\pi x)^{-1/2}` long-time tail.
 
     The scaled complementary error function :math:`\mathrm{erfcx}(\sqrt{x})` is
-    numerically stable for all :math:`x`. WiMDA switches forms at :math:`\Gamma t=20`
-    and uses a mirrored :math:`2-G` branch for negative rates.
+    numerically stable for all :math:`x`.
 
     References
     ----------
