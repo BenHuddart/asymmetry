@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import numpy as np
 import pytest
@@ -15,7 +16,7 @@ pytest.importorskip("PySide6")
 from matplotlib.lines import Line2D
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.plot_panel import PlotPanel
@@ -602,6 +603,119 @@ class TestWaterfallGleExport:
         time_panel._write_data_file(dat_path, offset_payload)
         ys = [row[1] for row in _numeric_rows(dat_path.read_text(encoding="utf-8"))]
         assert ys and max(ys) > 4.0
+
+
+@pytest.fixture(params=["manual", "auto", "off", "visible_range"])
+def frequency_waterfall(freq_panel, request):
+    if not freq_panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    datasets = [_freq_dataset(run, 1.0) for run in (1, 2)]
+    _, fitted = datasets
+    mode = request.param
+    window = (0.8, 1.2) if mode == "visible_range" else (0.0, 5.0)
+    freq_panel.set_overlay_enabled(True)
+    freq_panel.set_waterfall_enabled(mode != "off")
+    if mode != "auto":
+        freq_panel.set_waterfall_offset(5.0)
+    freq_panel.set_view_limits(*window, -0.1, 6.5)
+    freq_panel.set_global_fits({2: (fitted.time, fitted.asymmetry, "Synthetic fit")})
+    freq_panel.plot_datasets(datasets)
+    freq_panel._canvas.draw()
+
+    drawn_data = [
+        next(line for line in freq_panel._ax.lines if line.get_label() == ds.run_label)
+        for ds in datasets
+    ]
+    (drawn_fit,) = [line for line in freq_panel._ax.lines if line.get_linewidth() == 2.0]
+    in_view = (fitted.time >= window[0]) & (fitted.time <= window[1])
+    offset = float(np.max(drawn_data[1].get_ydata()) - np.max(fitted.asymmetry))
+    if mode == "auto":
+        assert offset > 0.0
+    else:
+        assert offset == pytest.approx(0.0 if mode == "off" else 5.0)
+    return freq_panel, datasets, drawn_data, drawn_fit, in_view, offset
+
+
+def test_frequency_waterfall_text_data_and_fit_match_plot(
+    frequency_waterfall, tmp_path, monkeypatch
+):
+    panel, datasets, drawn_data, drawn_fit, in_view, offset = frequency_waterfall
+    export_dir = tmp_path / "text"
+    export_dir.mkdir()
+    monkeypatch.setattr(
+        panel, "_prompt_text_export_options", lambda: ("data_fit", not in_view.all())
+    )
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_: str(export_dir))
+    monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *_: None)
+
+    panel.export_plotted_data_as_text()
+
+    assert sorted(path.name for path in export_dir.iterdir()) == ["1.dat", "2.dat", "2.fit"]
+    fit_path = export_dir / "2.fit"
+    fitted = datasets[1]
+    data_rows = np.loadtxt(export_dir / "2.dat", comments="!")
+    fit_rows = np.loadtxt(fit_path, comments="!")
+    np.testing.assert_array_equal(data_rows[:, 0], fit_rows[:, 0])
+    peak = np.max(fitted.asymmetry) + offset
+    assert np.max(data_rows[:, 1]) == pytest.approx(peak)
+    assert np.max(fit_rows[:, 1]) == pytest.approx(peak)
+    np.testing.assert_allclose(fit_rows[:, 0], drawn_fit.get_xdata()[in_view])
+    np.testing.assert_allclose(fit_rows[:, 1], drawn_fit.get_ydata()[in_view])
+    for ds, line, trace_offset in zip(datasets, drawn_data, (0.0, offset), strict=True):
+        path = export_dir / f"{ds.run_label}.dat"
+        rows = np.loadtxt(path, comments="!")
+        np.testing.assert_allclose(rows[:, 0], line.get_xdata())
+        np.testing.assert_allclose(rows[:, 1], line.get_ydata())
+        np.testing.assert_array_equal(rows[:, 2], ds.error[in_view])
+        header = path.read_text()
+        assert "! frequency_MHz  amplitude  error\n" in header
+        assert ("waterfall offset:" in header) == bool(trace_offset)
+        if trace_offset:
+            assert float(header.split("waterfall offset: ")[1].splitlines()[0]) == pytest.approx(
+                trace_offset
+            )
+    fit_header = fit_path.read_text()
+    assert "! frequency_MHz  amplitude_fit\n" in fit_header
+    assert ("waterfall offset:" in fit_header) == bool(offset)
+    if offset:
+        assert float(fit_header.split("waterfall offset: ")[1].splitlines()[0]) == pytest.approx(
+            offset
+        )
+
+
+def test_frequency_waterfall_gle_offsets_only_in_script(frequency_waterfall, tmp_path):
+    glp = pytest.importorskip("gleplot")
+    panel, datasets, _, _, in_view, offset = frequency_waterfall
+    script_path = tmp_path / "figure.gle"
+    panel._gle_snapshot(panel._collect_export_payloads()).build(glp, script_path, tmp_path)
+    script = script_path.read_text()
+
+    expected_window = "0 max 5" if in_view.all() else "0.8 max 1.2"
+    assert f"xaxis min {expected_window}\n" in script
+    for ds in datasets:
+        rows = np.loadtxt(tmp_path / f"run_{ds.run_label}_main.dat", comments="!")
+        np.testing.assert_allclose(rows, np.column_stack((ds.time, ds.asymmetry, ds.error)))
+    for path, skiprows, tolerance in (("run_2_main.fit", 0, 0), ("run_2_main_fit.dat", 1, 1e-5)):
+        fitted = datasets[1]
+        rows = np.loadtxt(tmp_path / path, comments="!", skiprows=skiprows)
+        np.testing.assert_allclose(
+            rows, np.column_stack((fitted.time, fitted.asymmetry)), rtol=1e-5, atol=tolerance
+        )
+
+    shifts = re.findall(r"let (d\d+) = (d\d+)\+([\d.eE+-]+)", script)
+    for trace in ("run_1_main", "run_2_main", "run_2_main_fit"):
+        (source,) = re.findall(rf"data {trace}\.dat (d\d+)=c1,c2", script)
+        shifted = [
+            (target, float(amount)) for target, dataset, amount in shifts if dataset == source
+        ]
+        if offset and trace != "run_1_main":
+            ((plotted, amount),) = shifted
+            assert amount == pytest.approx(offset, rel=1e-5)
+            assert all(dataset != plotted for _, dataset, _ in shifts)
+        else:
+            assert not shifted
+            plotted = source
+        assert re.search(rf"^\s+{plotted} line\b", script, re.MULTILINE)
 
 
 class TestWaterfallDeltaField:

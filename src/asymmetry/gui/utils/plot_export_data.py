@@ -301,7 +301,14 @@ class PlotExportData:
 
             if payload.get("domain") == "frequency":
                 self._write_frequency_data_body(
-                    f, payload, display_label=display_label, x_range=x_range
+                    f,
+                    payload,
+                    t_data,
+                    y_data,
+                    y_err,
+                    display_label=display_label,
+                    waterfall_offset=waterfall_offset,
+                    x_range=x_range,
                 )
                 return
 
@@ -470,8 +477,12 @@ class PlotExportData:
         self,
         f,
         payload: dict,
+        t_data,
+        y_data,
+        y_err,
         *,
         display_label: object,
+        waterfall_offset: float,
         x_range: tuple[float, float] | None,
     ) -> None:
         """Write the frequency-view DATA SET / FOURIER header and data rows.
@@ -484,13 +495,6 @@ class PlotExportData:
         display-unit column, matching the on-screen window and the text
         export's control-value conversion.
         """
-        data = payload.get("data") or {}
-        t_data = data.get("t")
-        y_data = data.get("y")
-        y_err = data.get("err")
-        if t_data is None or y_data is None:
-            return
-
         mhz_arr = np.asarray(t_data, dtype=float)
         x_display = payload.get("x_display")
         x_disp_arr = (
@@ -533,6 +537,8 @@ class PlotExportData:
         f.write(f"!  Title: {display_label}\n")
         f.write(f"!  Xlabel: {x_label}\n")
         f.write(f"!  Ylabel: {y_label}\n")
+        if waterfall_offset:
+            f.write(f"!  waterfall offset: {waterfall_offset:.10g}\n")
         f.write("! END OF DATA SET INFORMATION\n")
         f.write("!\n")
 

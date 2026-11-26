@@ -614,13 +614,16 @@ against its own reference rather than the axis origin. Frequency-domain
 waterfalls stack the same way but skip the hairline, since a spectrum already
 sits on its own zero baseline.
 
-**Export to GLE** and the plain-text data/fit exports both reproduce the
-on-screen stack, but differ in *where* the offset lives. The GLE export applies
-per-trace offsets in the script (a GLE ``let`` that shifts the trace at plot
-time), so the ``.dat``/``.fit`` sidecars keep raw, unshifted values. The stack
-can be retuned in the script. Plain-text exports add the offset to the written
-column. Each file records a ``waterfall offset:`` header line documenting the
-shift.
+In both plot panels, **Export plotted data (text)…** adds the displayed
+vertical offset to the data and fit values. With **Data + fit**, the
+``.dat`` and ``.fit`` files for a trace carry the same shift. Frequency or
+time coordinates and uncertainties retain their original values. **Limit to
+current x-range** selects rows within the visible window.
+
+**Export to GLE…** applies the vertical offsets in the script with GLE
+``let`` statements. The ``.dat`` and ``.fit`` sidecars hold the unshifted
+values. In either export, the ``waterfall offset:`` header records each
+nonzero shift.
 
 The waterfall setting — on/off and the manual Δ (or automatic, if left
 blank) — is saved per plot panel in the project file and restored on reopen.

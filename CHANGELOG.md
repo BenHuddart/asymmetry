@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Apply display bunching once in **Raw counts** and **Individual groups**, with
   fit overlays and labelled text and GLE exports on the displayed count scale.
+- Keep frequency-waterfall data and fit curves aligned in plain-text exports by
+  applying the displayed vertical offset to both.
 
 - Recover marginal errors for coupled global fits with stable curvature at
   strictly interior parameter values near a bound.
