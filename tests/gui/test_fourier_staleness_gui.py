@@ -248,7 +248,7 @@ def test_stale_and_overlay_mismatch_banners_are_independent(tmp_path, qapp) -> N
 # ── MainWindow integration: staleness evaluation end-to-end ──────────────
 
 
-def _tf_run(*, n: int = 512, bin_width: float = 0.04) -> Run:
+def _tf_run(*, n: int = 512, bin_width: float = 0.04, run_number: int = 77) -> Run:
     """A two-detector transverse-field run with a plain F/B grouping."""
     rng = np.random.default_rng(11)
     time_axis = np.arange(n, dtype=float) * bin_width
@@ -259,7 +259,7 @@ def _tf_run(*, n: int = 512, bin_width: float = 0.04) -> Run:
         counts = rng.poisson(np.clip(counts, 1.0, None)).astype(float)
         histograms.append(Histogram(counts=counts, bin_width=bin_width, t0_bin=0))
     return Run(
-        run_number=77,
+        run_number=run_number,
         histograms=histograms,
         metadata={"field": 200.0, "temperature": 5.0},
         grouping={
@@ -280,7 +280,7 @@ def window(qapp):
     win.close()
 
 
-def _computed_window(window: MainWindow) -> tuple[MainWindow, MuonDataset]:
+def _computed_window(window: MainWindow, *, run_number: int = 77) -> tuple[MainWindow, MuonDataset]:
     """A window whose current run has one explicitly computed FFT spectrum.
 
     Drives the real, unified Compute FFT handler (selection-scoped since the
@@ -292,7 +292,7 @@ def _computed_window(window: MainWindow) -> tuple[MainWindow, MuonDataset]:
     """
     from PySide6.QtWidgets import QApplication
 
-    run = _tf_run()
+    run = _tf_run(run_number=run_number)
     dataset = MuonDataset(
         time=np.array([0.0, 1.0]),
         asymmetry=np.zeros(2),

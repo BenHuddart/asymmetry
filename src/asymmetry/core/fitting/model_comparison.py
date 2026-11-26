@@ -29,6 +29,7 @@ from asymmetry.core.fitting.information_criteria import (
 from asymmetry.core.fitting.input_attribution import saved_fit_matches, source_context_key
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations
 from asymmetry.core.fitting.parameters import Parameter
+from asymmetry.core.fitting.spectral_weights import SpectralWeightPolicy, spectral_weight_policy
 
 if TYPE_CHECKING:
     from asymmetry.core.data.dataset import MuonDataset
@@ -82,10 +83,13 @@ def normalised_residuals(
     if result is not None and result.observation_report is not None:
         return np.array([], dtype=float), np.array([], dtype=float)
     curve_time, curve_value = curve
-    if observation_report is not None:
+    if observation_report is not None or dataset.metadata.get("plot_domain") == "frequency":
         observations = dataset_observations(dataset, curve_time[0], curve_time[-1])
+        sigma = observations.stated_sigma
+        if sigma is None:
+            return np.array([], dtype=float), np.array([], dtype=float)
         model = np.interp(observations.time, curve_time, curve_value)
-        return observations.time, (observations.values - model) / observations.sigma
+        return observations.time, (observations.values - model) / sigma
     time = np.asarray(dataset.time, dtype=float)
     inside = (time >= curve_time[0]) & (time <= curve_time[-1])
     t = time[inside]
@@ -400,6 +404,12 @@ def _saved_fit_comparison_key(
     slot: FitSlot,
 ) -> tuple[tuple[str, int], Objective, tuple] | None:
     """Matching observations, likelihoods, and source context share a ranking pool."""
+    attribution = (slot.result or {}).get("input_attribution")
+    if spectral_weight_policy(attribution) in (
+        SpectralWeightPolicy.UNKNOWN,
+        SpectralWeightPolicy.UNIT,
+    ) or (attribution or {}).get("coupled_unit_weights"):
+        return None
     data_key = slot.data_key()
     objective = None if slot.result is None else slot.result.get("objective")
     return (

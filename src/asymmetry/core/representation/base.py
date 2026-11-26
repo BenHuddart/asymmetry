@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.input_attribution import same_source_context
+from asymmetry.core.fitting.spectral_weights import SpectralWeightPolicy, spectral_weight_policy
 from asymmetry.core.transform.rotating_frame import FrameSnapshot
 
 
@@ -157,6 +158,7 @@ class FitSlot:
             None
             if self.analysis_history is not None
             or recorded is None
+            or spectral_weight_policy(recorded) is SpectralWeightPolicy.UNKNOWN
             or not computation.is_current(result.get("computation_revision"))
             or result.get("ndof") is None
             or result.get("npar") is None

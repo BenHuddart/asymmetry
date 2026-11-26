@@ -27,6 +27,32 @@ _CENTRED_STENCIL = ((-1, 1), (-0.5, 0.5), (1, 1))
 _INWARD_STENCIL = ((1, 2, 3), (2, -0.5), (-5, 4, -1))
 
 
+def member_jacobian_sparsity(
+    point_counts: Sequence[int], parameter_columns: Sequence[tuple[int, ...]], n_columns: int
+):
+    """Structural residual-to-parameter dependence for a fit partitioned into members."""
+    from scipy.sparse import csr_matrix
+
+    n_rows = int(sum(point_counts))
+    n_cols = n_columns
+    rows: list[NDArray[np.int64]] = []
+    cols: list[NDArray[np.int64]] = []
+    offset = 0
+    for count, columns in zip(point_counts, parameter_columns, strict=True):
+        if columns:
+            block = np.asarray(columns, dtype=np.int64)
+            rows.append(np.repeat(np.arange(offset, offset + count, dtype=np.int64), block.size))
+            cols.append(np.tile(block, count))
+        offset += count
+
+    if not rows:
+        return csr_matrix((n_rows, n_cols), dtype=np.int8)
+    row_index = np.concatenate(rows)
+    col_index = np.concatenate(cols)
+    data = np.ones(row_index.size, dtype=np.int8)
+    return csr_matrix((data, (row_index, col_index)), shape=(n_rows, n_cols))
+
+
 class CurvatureUnavailableError(ValueError):
     """The objective does not support a reliable local quadratic covariance."""
 

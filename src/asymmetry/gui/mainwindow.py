@@ -293,6 +293,7 @@ from asymmetry.gui.panels.fit import (
     SeriesCatalogue,
     SeriesMenuEntry,
 )
+from asymmetry.gui.panels.fit.result_readout import fit_statistic_text
 from asymmetry.gui.panels.fit.tab_base import (
     _fit_curve_time_bounds,
 )
@@ -5799,7 +5800,7 @@ class MainWindow(QMainWindow):
             self._log_panel.log(f"Batch seeding: {BATCH_SEEDING_LABELS.get(mode, mode)}", tag="fit")
 
     def _collect_latest_fit_records(self) -> list[tuple[str, dict]]:
-        """Gather (title, record) for every saved single fit in the project.
+        """Gather titled records for saved single fits and spectral fit series.
 
         Each ``record`` is the enriched ``fit_result_summary`` dict already stored on
         a representation's :class:`FitSlot` — the same provenance that rides into
@@ -5817,10 +5818,19 @@ class MainWindow(QMainWindow):
                         suffix = f" · {projection}" if projection else ""
                         title = f"Run {run_number} · {rep_label}{suffix}"
                         records.append((f"{title} · {representation.fit_name(slot)}", result))
+        for series in self._project_model.batches.values():
+            if (
+                series.rep_type not in (RepresentationType.FREQ_FFT, RepresentationType.FREQ_MAXENT)
+                or series.is_computed
+            ):
+                continue
+            label = series.label or self._series_fallback_name(series)
+            for run_number, result in series.results_by_run.items():
+                records.append((f"Run {run_number} · {series.rep_type.value} · {label}", result))
         return records
 
     def _on_export_fit_report(self) -> None:
-        """Write a human-readable report of every dataset's latest fit to a file."""
+        """Write the saved fit records to a human-readable text report."""
         errors = [
             f"Run {dataset.run_number}: {dataset.metadata['correction_error']}"
             for dataset in self._data_browser.get_all_datasets()
@@ -6991,13 +7001,12 @@ class MainWindow(QMainWindow):
                     continue
                 if time.size == 0 or asymmetry.size == 0:
                     continue
-                if error.size != asymmetry.size:
+                if error.shape != asymmetry.shape:
                     error = np.zeros_like(asymmetry, dtype=float)
-                metadata = entry.get("metadata", {})
-                if not isinstance(metadata, dict):
-                    metadata = {}
-                metadata = dict(metadata)
+                raw_metadata = entry.get("metadata")
+                metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
                 metadata.setdefault("run_number", run_number)
+                metadata["plot_domain"] = "frequency"
                 restored.append(
                     MuonDataset(
                         time=time,
@@ -10067,12 +10076,15 @@ class MainWindow(QMainWindow):
             # A fit the user has just run is what they want to see, even on a
             # run the active series also covers (D5).
             panel.set_shown_fits(run_number, ["single"])
-        self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
+        if panel is self._frequency_plot_panel:
+            self._last_fit_chi2 = None
+            statistic = fit_statistic_text(fit_result_summary(fit_result), ".4f")
+        else:
+            self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
+            statistic = f"χ²ᵣ = {format_fit_statistic(self._last_fit_chi2, '.4f')}"
         self._set_status_chi2(self._last_fit_chi2)
         self._record_single_fit_slot(fit_result)
-        self._log_panel.log(
-            f"Fit completed: χ²ᵣ = {format_fit_statistic(self._last_fit_chi2, '.4f')}", tag="fit"
-        )
+        self._log_panel.log(f"Fit completed: {statistic}", tag="fit")
 
     def _active_representation_type(self) -> RepresentationType | None:
         """Map the active workspace view to its representation type."""
@@ -11702,9 +11714,7 @@ class MainWindow(QMainWindow):
         """The bound run's whole record in the active domain, before the fit-range crop."""
         if self._plot_workspace.active_domain() == "frequency":
             panel = self._frequency_plot_panel
-            return self._frequency_dataset_with_fit_errors(
-                panel.get_analysis_dataset(panel._current_dataset)
-            )
+            return panel.get_analysis_dataset(panel._current_dataset)
         return self._get_full_fit_context()[0]
 
     def _sync_saved_fit_overlays(self) -> None:
@@ -13191,15 +13201,18 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Batch fit completed with no successful results")
             return
 
-        avg_chi2r = (
-            sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
-        )
-        self._last_fit_chi2 = float(avg_chi2r)
+        if is_frequency_fit:
+            self._last_fit_chi2 = None
+            summaries = [fit_result_summary(payload[0]) for payload in successful_results]
+            statistic = reduced_statistic_summary(summaries, mean=True)
+        else:
+            avg_chi2r = (
+                sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
+            )
+            self._last_fit_chi2 = float(avg_chi2r)
+            statistic = f"average χ²ᵣ = {format_fit_statistic(avg_chi2r, '.3f')}"
         self._set_status_chi2(self._last_fit_chi2)
-        self._log_panel.log(
-            f"Batch fit completed: {n_datasets} datasets, average χ²ᵣ = {format_fit_statistic(avg_chi2r, '.3f')}",
-            tag="fit",
-        )
+        self._log_panel.log(f"Batch fit completed: {n_datasets} datasets, {statistic}", tag="fit")
         self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
 
     def _grouped_fit_completion_summary(self, grouped_datasets, results_dict) -> str:
@@ -15333,35 +15346,7 @@ class MainWindow(QMainWindow):
         if dataset is None:
             return None
         analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(dataset)
-        fit_dataset = self._frequency_plot_panel.get_fit_dataset(analysis_dataset)
-        return self._frequency_dataset_with_fit_errors(fit_dataset)
-
-    def _frequency_dataset_with_fit_errors(self, dataset: MuonDataset | None) -> MuonDataset | None:
-        """Return a frequency dataset with finite positive errors for least squares."""
-        if dataset is None:
-            return None
-        error = np.asarray(dataset.error, dtype=float)
-        if error.shape == np.asarray(dataset.asymmetry).shape and np.any(
-            np.isfinite(error) & (error > 0.0)
-        ):
-            safe_error = np.where(np.isfinite(error) & (error > 0.0), error, np.nan)
-            fallback = float(np.nanmedian(safe_error))
-            if not np.isfinite(fallback) or fallback <= 0.0:
-                fallback = 1.0
-            safe_error = np.where(np.isfinite(safe_error), safe_error, fallback)
-        else:
-            y = np.asarray(dataset.asymmetry, dtype=float)
-            scale = float(np.nanstd(y)) if y.size else 1.0
-            if not np.isfinite(scale) or scale <= 0.0:
-                scale = 1.0
-            safe_error = np.full_like(y, scale * 0.05, dtype=float)
-        return MuonDataset(
-            time=np.asarray(dataset.time, dtype=float).copy(),
-            asymmetry=np.asarray(dataset.asymmetry, dtype=float).copy(),
-            error=np.asarray(safe_error, dtype=float),
-            metadata=dict(dataset.metadata),
-            run=dataset.run,
-        )
+        return self._frequency_plot_panel.get_fit_dataset(analysis_dataset)
 
     def _frequency_fit_datasets_for_selected_runs(self) -> list[MuonDataset]:
         """Return the **cached** spectra for selected runs (pure; no side effects).
@@ -15420,9 +15405,8 @@ class MainWindow(QMainWindow):
                 continue
             analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(spectra[0])
             fit_dataset = self._frequency_plot_panel.get_fit_dataset(analysis_dataset, fit_range)
-            safe_dataset = self._frequency_dataset_with_fit_errors(fit_dataset)
-            if safe_dataset is not None:
-                datasets.append(safe_dataset)
+            if fit_dataset is not None:
+                datasets.append(fit_dataset)
         return datasets
 
     def _refresh_frequency_fit_datasets(self) -> list[MuonDataset]:

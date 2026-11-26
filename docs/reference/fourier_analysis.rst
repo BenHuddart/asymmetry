@@ -67,6 +67,16 @@ grouped FFT workflow directly:
 * for averaged grouped spectra, optionally estimate error bars from
   the spread across the selected group spectra
 
+The default FFT leaves **Average errors** off. A peak fit in a window without
+positive errors uses **Unit weights** for exploratory estimates. It reports the
+**Residual sum of squares** in squared spectrum-amplitude units and omits
+parameter errors and the χ² verdict. When the window contains positive errors,
+the fit uses those bins with their stated errors and skips bins without positive
+errors. A narrower window retains the stated errors on shared bins. The fit
+result and exported report record the policy, the frequency span, and how many
+bins entered the fit. See :doc:`frequency_domain_fitting` for interpreting a
+fitted centre or width.
+
 Automatic computation and overlays
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -119,14 +129,13 @@ out, and a weak or low-field line that the peak detection cannot see still
 gets a sensible window instead of the full Nyquist span. Spectra also default
 to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
 than 2–3 bins wide. Zero padding adds no observations and can change the
-sampled maximum. Padded spectral points are correlated. Frequency-domain fits
-and moment errors use heuristic scalar padding rescaling: effective degrees of
-freedom and chi-square are rescaled, and parameter/moment errors receive a
-square-root factor. This can understate or overstate errors; it does not recover
-spectral covariance or establish coverage. **Approximate errors** in the moment
-readout and **Approximate spectral fit errors/statistics** in fit results explain
-that correlations, estimated phase, and upstream/reconstruction uncertainty are
-not fully propagated. See :doc:`spectral_moments` and
+sampled maximum. Padded spectral points are correlated. Diagonally weighted
+fits and moment errors use heuristic scalar padding rescaling. Fit statistics
+and effective degrees of freedom are adjusted, and parameter and moment errors
+receive a square-root factor. The reported errors remain conditional on the
+displayed spectrum and its processing. **Approximate errors** in the moment
+readout and **Approximate spectral fit errors/statistics** in fit results
+describe those limits. See :doc:`spectral_moments` and
 :doc:`frequency_domain_fitting`. The zero-pad
 factor goes up to 64. All of these are first-paint seeds only: your own zoom and settings
 are never overridden.

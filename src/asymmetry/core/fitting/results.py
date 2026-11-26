@@ -11,6 +11,12 @@ from numpy.typing import NDArray
 from asymmetry.core.data.ratio_validity import ObservationReport
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.spectral_weights import (
+    SpectralWeightPolicy,
+    spectral_quality_reason,
+    spectral_weight_policy,
+    spectral_weighting_detail,
+)
 from asymmetry.core.transform.deadtime import DeadtimeCalibration
 
 
@@ -70,9 +76,15 @@ class FitResult:
         self.objective = Objective(self.objective)
         if self.dof is not None and self.dof <= 0:
             self.reduced_chi_squared = math.nan
-        scope = (self.input_attribution or {}).get("uncertainty_scope")
-        if scope and scope not in self.warnings:
-            self.warnings.append(scope)
+        policy = spectral_weight_policy(self.input_attribution)
+        spectral_notes = (
+            spectral_weighting_detail(self.input_attribution),
+            spectral_quality_reason(self.input_attribution)
+            if policy is not SpectralWeightPolicy.UNIT
+            else None,
+            (self.input_attribution or {}).get("uncertainty_scope"),
+        )
+        self.warnings.extend(note for note in spectral_notes if note and note not in self.warnings)
         if self.observation_report is not None and self.observation_report.omitted:
             message = self.observation_report.summary()
             if message not in self.warnings:

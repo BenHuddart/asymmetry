@@ -66,7 +66,12 @@ def test_grid_edit_marks_computed_range_spectrum_stale_then_refreshes(qapp, monk
         background_mode="range",
         background_range=[0, 5],
     )
-    monkeypatch.setattr(staleness_helpers, "_tf_run", lambda: run)
+
+    def configured_run(*, run_number):
+        assert run_number == run.run_number
+        return run
+
+    monkeypatch.setattr(staleness_helpers, "_tf_run", configured_run)
     window = MainWindow()
     try:
         staleness_helpers._computed_window(window)

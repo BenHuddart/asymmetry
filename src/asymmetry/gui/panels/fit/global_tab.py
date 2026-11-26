@@ -104,6 +104,7 @@ from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
 )
+from asymmetry.core.fitting.spectral_weights import spectral_weighting_detail
 from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
 from asymmetry.core.representation.naming import format_run_range
 from asymmetry.core.representation.series import FitSeries, normalise_recipe
@@ -991,21 +992,25 @@ class GlobalFitTab(FitTabBase):
             n_converged += converged
             n_clean += clean
             summary = _fit_summary(result)
-            chi2 = format_fit_statistic(summary["reduced_chi_squared"], ".3g")
             summaries.append(summary)
             quality = summary["quality"]
+            statistic = format_fit_statistic(summary["reduced_chi_squared"], ".3g")
+            tooltip = spectral_weighting_detail(summary.get("input_attribution"))
+            tooltip = (
+                result.message if not converged else tooltip or ", ".join(flags) or "converged"
+            )
             chips.append(
                 MemberChip(
                     run=int(member),
-                    text=f"{member} {'✓' if clean else '⚠'} {chi2}",
+                    text=f"{member} {'✓' if clean else '⚠'} {statistic}".rstrip(),
                     colours=(
                         FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
                         if quality is not None
                         else NEUTRAL_CHIP_COLOURS
                     ),
                     tooltip="\n".join(
-                        [", ".join(flags) or "converged", summary["quality_reason"] or ""]
-                    ).strip(),
+                        part for part in (tooltip, summary["quality_reason"]) if part
+                    ),
                 )
             )
 
@@ -4406,29 +4411,16 @@ class GlobalFitTab(FitTabBase):
         global_param_names: list[str],
         advice_html: str,
     ) -> str:
-        """The batch card's body: statistics, accounting, advisories, in one block.
-
-        The card renders its detail as one rich-text line, so everything the old
-        results box appended after the success banner — the engine's advisory
-        warnings, the fitted/failed/flagged accounting, the resolved seeding mode
-        and the near-transition advice — is composed here instead.
-        """
+        """Describe fit statistics, member outcomes and warnings."""
         statistic = reduced_statistic_summary(
             [_fit_summary(result) for result in successful.values()], mean=True
         )
         lines = [f"{statistic} · {len(successful)} datasets · npar = {len(global_param_names)}"]
-        # The same trap typically fires for every run, so dedupe to one row per
-        # distinct message (first-seen order) rather than repeating it per dataset.
-        seen: set[str] = set()
-        for run_result in successful.values():
-            for message in getattr(run_result, "warnings", None) or []:
-                if message not in seen:
-                    seen.add(message)
-                    lines.append(warning_html("⚠ " + html.escape(str(message))))
-        # F2: a one-line accounting of the batch — fitted / failed / flagged — so a
-        # silently dropped or garbage member is visible, not just in the log.
-        summary_line = self._batch_outcome_summary_line(results_dict, run_label_by_number)
-        if summary_line:
+        warnings = dict.fromkeys(
+            message for result in successful.values() for message in result.warnings
+        )
+        lines.extend(warning_html("⚠ " + html.escape(message)) for message in warnings)
+        if summary_line := self._batch_outcome_summary_line(results_dict, run_label_by_number):
             lines.append(info_html(summary_line))
         failed = [run for run, result in results_dict.items() if not result.success]
         if failed:
@@ -4488,7 +4480,7 @@ class GlobalFitTab(FitTabBase):
         emitted_global = fitted_global
         if self._domain == "frequency":
             emitted_results = {}
-            for run_number, result in results_dict.items():
+            for run_number, result in successful.items():
                 params, uncertainties = append_frequency_field_derived_parameters(
                     result.parameters,
                     result.uncertainties,
@@ -4749,10 +4741,12 @@ class GlobalFitTab(FitTabBase):
                 ),
             )
         else:
-            # Nothing converged, so every member is a failed one.
-            labels = [run_label_by_number.get(run, str(run)) for run in results_dict]
+            failures = "<br>".join(
+                html.escape(f"{run_label_by_number.get(run, run)}: {result.message}")
+                for run, result in results_dict.items()
+            )
             self._results_card.set_message(
-                f"<b>Batch fit failed</b><br>Failed datasets: {labels}",
+                f"<b>Batch fit failed</b><br>{failures}",
                 tag="Error",
                 tone="error",
             )

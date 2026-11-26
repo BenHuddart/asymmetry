@@ -34,14 +34,16 @@ from asymmetry.core.fitting.parameters import (
     ParameterSet,
     get_param_info,
 )
+from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.results import FitResult
 from asymmetry.core.fitting.spectral import (
     default_frequency_model,
 )
 from asymmetry.core.transform.rebin import BINNING_POLICY
-from asymmetry.gui.utils.formatting import format_fit_statistic, format_param_label
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 
 from .global_tab import NO_UNAVAILABLE, GlobalFitTab
+from .result_readout import fit_readout_html
 from .single_tab import SavedFitCatalogue, SingleFitTab
 from .wizard_cache import (
     WizardCacheEntry,
@@ -884,35 +886,10 @@ class FitPanel(QWidget):
         state["wizard_state"] = wizard_state
         self._single_state_by_run[run_key] = copy.deepcopy(state)
 
-    def _result_html_from_fit(self, fit_result: object, source: str) -> str:
-        """Build single-fit result HTML from a completed fit result object."""
-        if getattr(fit_result, "success", False) is not True:
-            message = str(getattr(fit_result, "message", "Fit failed"))
-            return f"<b>{source} failed:</b> {message}"
-
-        reduced = format_fit_statistic(fit_result.reduced_chi_squared, ".4f")
-        chi2 = float(getattr(fit_result, "chi_squared", float("nan")))
-        lines = [
-            f"<b>{source}</b>",
-            f"<b>χ² = {chi2:.4f}</b>",
-            f"<b>χ²ᵣ = {reduced}</b>",
-            "<br><b>Parameters:</b>",
-        ]
-
-        uncertainties = getattr(fit_result, "uncertainties", {}) or {}
-        for param in getattr(fit_result, "parameters", []):
-            name = getattr(param, "name", None)
-            if not isinstance(name, str):
-                continue
-            value = float(getattr(param, "value", 0.0))
-            unc = float(uncertainties.get(name, 0.0))
-            lines.append(f"  {format_param_label(name)} = {value:.6f} ± {unc:.6f}")
-        return "<br>".join(lines)
-
     def _single_state_from_fit_result(
         self,
         model: CompositeModel,
-        fit_result: object,
+        fit_result: FitResult,
         source: str,
         roles: dict[str, str] | None = None,
     ) -> dict:
@@ -973,7 +950,7 @@ class FitPanel(QWidget):
             "model_name": "Composite",
             "composite_model": model.to_dict(),
             "parameters": params,
-            "result_html": self._result_html_from_fit(fit_result, source),
+            "result_html": fit_readout_html(fit_result_summary(fit_result), source),
             "result_tag": _result_tag(getattr(fit_result, "success", False) is True),
         }
 
@@ -1055,37 +1032,7 @@ class FitPanel(QWidget):
         }
 
     def _result_html_from_slot_result(self, result: dict, *, source: str = "Batch fit") -> str:
-        """Render a saved result when its form reopens."""
-        if not result.get("success", False):
-            message = str(result.get("message", "Fit failed"))
-            return f"<b>{source} failed:</b> {message}"
-
-        reduced = format_fit_statistic(result.get("reduced_chi_squared"), ".4f")
-        chi2 = float(result.get("chi_squared", float("nan")))
-        lines = [
-            f"<b>{source}</b>",
-            f"<b>χ² = {chi2:.4f}</b>",
-            f"<b>χ²ᵣ = {reduced}</b>",
-        ]
-        if reason := result.get("quality_reason"):
-            lines.append(str(reason))
-        lines.append("<br><b>Parameters:</b>")
-
-        parameters = result.get("parameters")
-        parameters = parameters if isinstance(parameters, dict) else {}
-        uncertainties = result.get("uncertainties")
-        uncertainties = uncertainties if isinstance(uncertainties, dict) else {}
-        for name, raw_value in parameters.items():
-            try:
-                value = float(raw_value)
-            except (TypeError, ValueError):
-                continue
-            try:
-                unc = float(uncertainties.get(name, 0.0) or 0.0)
-            except (TypeError, ValueError):
-                unc = 0.0
-            lines.append(f"  {format_param_label(name)} = {value:.6f} ± {unc:.6f}")
-        return "<br>".join(lines)
+        return fit_readout_html(result, source)
 
     def register_global_fit_results(
         self, results_by_run: dict[int, tuple[object, object, object]]
