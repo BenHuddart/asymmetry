@@ -95,8 +95,12 @@ For histogram-backed F–B asymmetry, **Fixed**, **Variable** and **Constant err
 all merge counts and their shared-background uncertainty before forming the
 ratio. G+R pools prepared counts and variances before background, binning, and
 one ratio. G−R bins each separately prepared set on common native support, then
-subtracts their asymmetries with independent marginal variances added. The Groups and Raw counts views sum the corresponding
-count bins. A merge larger than the record leaves no complete output point.
+subtracts their asymmetries with independent marginal variances added.
+**Raw counts** and **Individual groups** each sum the detector counts and
+propagate their counting errors once at the combined fixed factor. Points are
+placed at the centres of the complete bins. **Individual groups** applies the
+lifetime correction to the sums and errors at those centres. A merge larger
+than the record leaves no complete output point.
 Curves without a resolved histogram observation and rotated projections use the
 curve-bin mean described below.
 

@@ -4731,15 +4731,10 @@ class TestPlotPanel:
                 time=t,
                 asymmetry=0.18 * np.exp(-0.25 * t),
                 error=e,
-                metadata={"run_number": 3001, "run_label": "3001 B"},
+                metadata={"run_number": 3002, "run_label": "3001 B"},
             ),
         ]
-        # Mirror plot_grouped_time_domain_subplots' state: all groups in
-        # _current_datasets, a per-group axis key (not "ALL"), no vector subplots.
-        panel._grouped_time_subplot_datasets = list(groups)
-        panel._current_datasets = list(groups)
-        panel._current_polarization_axis = "grp:1"
-        panel._vector_subplot_datasets = {}
+        panel.plot_grouped_time_domain_subplots(groups)
 
         target_gle = tmp_path / "groups_export.gle"
 

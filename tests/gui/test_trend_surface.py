@@ -362,9 +362,8 @@ class TestRefreshTrendPanel:
         """
         for rn in (42, 43):
             mw._data_browser.add_dataset(_dataset(rn))
-        mw._on_dataset_selected(42)
-        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
-        mw._plot_workspace.set_active_view("groups")
+        mw._data_browser.select_runs([42])
+        mw._domain_buttons_by_token["groups"].click()
         monkeypatch.setattr(
             mw._multi_group_fit_window, "get_grouped_state", self._grouped_state_stub
         )
@@ -395,7 +394,7 @@ class TestRefreshTrendPanel:
         drawn = rendered[-1]
         # Only one run's groups (2), not all four members.
         assert len(drawn) == 2
-        source_runs = {mw._grouped_member_source_run(ds) for ds in drawn}
+        source_runs = {ds.metadata["source_run_number"] for ds in drawn}
         assert source_runs == {42}
 
     def _grouped_state_stub(self):

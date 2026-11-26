@@ -22,6 +22,7 @@ from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, linear_com
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 if TYPE_CHECKING:
+    from asymmetry.core.data.dataset import MuonDataset
     from asymmetry.core.transform.grouping import ForwardBackwardLayout
 
 
@@ -66,6 +67,35 @@ def merge_curve_bins(
     e = np.sqrt((errors[:trimmed].reshape(n_new, factor) ** 2).sum(axis=1)) / factor
 
     return t, v, e
+
+
+def rebin_grouped_fit_curve(
+    dataset: MuonDataset, curve: tuple, source_bunch_factor: int | None
+) -> tuple | None:
+    """Interpolate the count fit's drawing curve at fitted-bin centres and pack it."""
+    if source_bunch_factor is None or not dataset.metadata.get("grouped_time_domain"):
+        return curve
+    factor = dataset.metadata["grouped_time_domain_bunch_factor"]
+    if factor == source_bunch_factor:
+        return curve
+    merge, remainder = divmod(factor, source_bunch_factor)
+    if remainder or merge < 1:
+        return None
+
+    time, values, label = curve
+    fitted_width = dataset.metadata["count_bin_width_us"] * source_bunch_factor
+    offsets = (np.arange(merge) - (merge - 1) / 2) * fitted_width
+    member_times = dataset.time[:, None] + offsets
+    tolerance = fitted_width * 1e-10
+    valid = (member_times[:, 0] >= time[0] - tolerance) & (
+        member_times[:, -1] <= time[-1] + tolerance
+    )
+    if not np.any(valid):
+        return None
+    member_counts = np.interp(member_times[valid], time, values)
+    # Convert each fitted bin's lifetime scale to that of the merged centre.
+    counts = np.sum(member_counts * np.exp(-offsets / MUON_LIFETIME_US), axis=1)
+    return dataset.time[valid], counts, label
 
 
 def rebin_counts(

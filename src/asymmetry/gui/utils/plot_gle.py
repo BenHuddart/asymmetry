@@ -267,6 +267,8 @@ class PlotGleSnapshot(PlotExportData):
                     fallback="FFT (%)",
                 )
             )
+        elif "group_id" in payloads[0]:
+            ax.set_ylabel(self._sanitize_gle_text(payloads[0]["y_label"]))
         else:
             ax.set_ylabel(self._export_axis_ylabel(axis_key))
         ax.set_xlim(*self.x_limits)

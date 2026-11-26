@@ -182,10 +182,26 @@ the existing fit path where practical:
   bunching factor
 * the active fit range still decides which part of the active dataset is sent to the grouped fitter
 
-The grouped plot view itself shows the grouped lifetime-corrected traces built
-from the current grouped analysis dataset, while the grouped fit uses the
-active fit-range restricted dataset. Required native bins follow merged-bin
-centres and fit exclusions, together with active background dependencies.
+**Raw counts** plots counts for each detector group, and **Individual groups**
+plots lifetime-corrected counts. **Bunch:** combines the grouping's fixed bins
+once for the display. The plotted points and export tables use the same bin
+centres, summed counts and propagated errors. **Individual groups** scales
+both the sums and errors by :math:`e^{t/\tau_\mu}` at each bin centre.
+Fit previews and completed fit overlays follow the displayed binning. When
+the display combines fitted bins, the overlay linearly interpolates the drawn
+fit curve at their centres, sums the values on the raw count scale, and
+applies the lifetime correction at the displayed centre. The **Bunch:**
+control changes the plotted and exported overlay independently of the grouped
+fit's input bins. A fit overlay covers a merged bin when the curve covers all
+contributing fitted-bin centres.
+
+.. image:: /_generated/screenshots/grouped_count_bunching.png
+   :alt: Raw counts subplots for two detector groups at toolbar Bunch 2.
+   :width: 100%
+
+The grouped fit uses the active fit-range restricted dataset. Required native
+bins follow merged-bin centres and fit exclusions, together with active
+background dependencies.
 If packing, time limits, or exclusions leave no complete fit bin, preparation
 reports ``Grouped time-domain fitting produced fewer than two usable groups``
 before unused corrections. Choose a smaller factor or a wider window; raw

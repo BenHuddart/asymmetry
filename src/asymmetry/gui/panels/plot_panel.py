@@ -56,7 +56,7 @@ from asymmetry.core.transform.grouping import (
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
-from asymmetry.core.transform.rebin import binning_spec
+from asymmetry.core.transform.rebin import binning_spec, rebin_grouped_fit_curve
 from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import (
@@ -2749,6 +2749,8 @@ class PlotPanel(QWidget):
             return None
         if self._is_frequency_plot_panel() or self._is_frequency_domain_dataset(dataset):
             return dataset
+        if dataset.metadata.get("grouped_time_domain"):
+            return dataset  # Group preparation has already packed the detector counts.
         bunch_factor = self._bunch_factor.value()
         if bunch_factor <= 1:
             return dataset
@@ -3705,11 +3707,9 @@ class PlotPanel(QWidget):
             if fit_id is None:
                 shown = self.shown_fit_ids(run_number)
                 fit_id = shown[0] if shown else SINGLE_FIT_ID
-            fit_data = self._fit_curves_by_key.get((run_number, axis_key, fit_id))
-            if fit_data is not None:
-                return fit_data
-
-            if axis_key is not None:
+            key = (run_number, axis_key, fit_id)
+            fit_data = self._fit_curves_by_key.get(key)
+            if fit_data is None and axis_key is not None:
                 has_axis_specific_fit = any(
                     key_run == run_number and key_axis is not None and key_fit == fit_id
                     for key_run, key_axis, key_fit in self._fit_curves_by_key
@@ -3717,9 +3717,14 @@ class PlotPanel(QWidget):
                 if has_axis_specific_fit:
                     return None
 
-                fit_data = self._fit_curves_by_key.get((run_number, None, fit_id))
-                if fit_data is not None:
-                    return fit_data
+                key = (run_number, None, fit_id)
+                fit_data = self._fit_curves_by_key.get(key)
+            if fit_data is not None:
+                return rebin_grouped_fit_curve(
+                    dataset,
+                    fit_data,
+                    self._fit_metadata_by_key.get(key, {}).get("grouped_bunch_factor"),
+                )
 
             # Legacy per-run stores mirror the single fit only, so they can only
             # answer for it.
@@ -7353,6 +7358,7 @@ class PlotPanel(QWidget):
         *,
         fit_id: str = SINGLE_FIT_ID,
         fit_labels: dict[str, str] | None = None,
+        grouped_bunch_factors: dict[int, int] | None = None,
     ) -> None:
         """Set fit curves from global fitting.
 
@@ -7371,13 +7377,15 @@ class PlotPanel(QWidget):
             ``{fit_id: display name}`` for the toolbar's Fits menu
             (:meth:`set_fit_labels`) — the series' own name, not the generic
             per-curve legend text a caller may pass as *label*.
+        grouped_bunch_factors : dict, optional
+            Recorded fit bin factor by synthetic group run number.
         """
         if not self._has_mpl:
             return
         if fit_labels:
             self._fit_label_by_id.update({str(k): str(v) for k, v in fit_labels.items()})
 
-        # Update fit curves, preserving results from other groups
+        grouped_bunch_factors = grouped_bunch_factors or {}
         for run_number, payload in fit_curves_dict.items():
             axis_key = None
             if len(payload) >= 6:
@@ -7407,14 +7415,14 @@ class PlotPanel(QWidget):
                 self._fit_components_by_run[run_key] = list(component_curves or [])
             self._fit_curves_by_key[(run_key, axis_key, fit_id)] = (t_fit, y_fit, label)
             self._fit_components_by_key[(run_key, axis_key, fit_id)] = list(component_curves or [])
-            if fit_result is not None or fit_function:
-                self._store_fit_metadata(
-                    run_key,
-                    fit_result,
-                    fit_function=fit_function,
-                    axis_key=axis_key,
-                    fit_id=fit_id,
-                )
+            self._store_fit_metadata(
+                run_key,
+                fit_result,
+                fit_function=fit_function,
+                axis_key=axis_key,
+                fit_id=fit_id,
+                grouped_bunch_factor=grouped_bunch_factors.get(run_key),
+            )
         # Clear single fit curve
         self._fit_curve = None
         self._fit_curve_run_number = None
@@ -7590,9 +7598,14 @@ class PlotPanel(QWidget):
         fit_function: str | None = None,
         axis_key: str | None = None,
         fit_id: str = SINGLE_FIT_ID,
+        grouped_bunch_factor: int | None = None,
     ) -> None:
         """Extract and store fit metadata from a FitResult for export headers."""
-        meta: dict = {}
+        meta = (
+            {"grouped_bunch_factor": grouped_bunch_factor}
+            if grouped_bunch_factor is not None
+            else {}
+        )
         if fit_result is not None:
             chi2 = getattr(fit_result, "chi_squared", None)
             red_chi2 = getattr(fit_result, "reduced_chi_squared", None)
@@ -7627,16 +7640,6 @@ class PlotPanel(QWidget):
         has_data = bool(self._current_datasets)
         self._export_gle_btn.setEnabled(has_data)
         self._gle_format_combo.setEnabled(has_data)
-
-    @staticmethod
-    def _safe_file_token(value: str) -> str:
-        """Sanitize a string for use in a filename (shared foundation)."""
-        return safe_file_token(value, fallback="dataset")
-
-    @staticmethod
-    def _dedup_export_token(base: str, used: set[str] | None) -> str:
-        """Return a token unique within *used* (shared foundation)."""
-        return dedup_export_token(base, used)
 
     def get_current_plot_export_data(
         self, datasets: list[MuonDataset] | None = None
@@ -7740,6 +7743,15 @@ class PlotPanel(QWidget):
                 "run_metadata": run_metadata,
                 "histogram_info": histogram_info,
             }
+            if analysis.metadata.get("grouped_time_domain"):
+                group = analysis.metadata
+                payload.update(
+                    run_number=group["source_run_number"],
+                    label=group["group_name"],
+                    group_id=group["group_id"],
+                    y_label=group["y_label"],
+                    display_bunch_factor=group["grouped_time_domain_bunch_factor"],
+                )
             if self._connect_points and self._time_view is not None:
                 payload["connector_low_mask"] = self._low_count_mask_for_dataset(
                     analysis, source_dataset=dataset
@@ -7829,12 +7841,6 @@ class PlotPanel(QWidget):
 
         return payloads
 
-    def _export_axis_suffix(self, axis_key: str | None) -> str:
-        """Return filename-safe suffix for per-axis exports."""
-        if axis_key in {"P_x", "P_y", "P_z"}:
-            return axis_key.lower().replace("_", "")
-        return "main"
-
     def _write_fit_file(
         self,
         fit_path: Path,
@@ -7864,18 +7870,6 @@ class PlotPanel(QWidget):
             x_range=x_range,
             axis_key=axis_key,
             bake_waterfall_offset=bake_waterfall_offset,
-        )
-
-    def _write_frequency_data_body(
-        self,
-        f,
-        payload: dict,
-        *,
-        display_label: object,
-        x_range: tuple[float, float] | None,
-    ) -> None:
-        return self._plot_export_context()._write_frequency_data_body(
-            f, payload, display_label=display_label, x_range=x_range
         )
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
@@ -8016,7 +8010,7 @@ class PlotPanel(QWidget):
         if total_series == 1:
             axis_key, payloads = axis_groups[0]
             payload = payloads[0]
-            token = self._safe_file_token(str(payload.get("label", "dataset")))
+            token = safe_file_token(str(payload.get("label", "dataset")))
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export plotted data (text)",
@@ -8043,11 +8037,13 @@ class PlotPanel(QWidget):
             written = []
             used_tokens: set[str] = set()
             for axis_key, payloads in axis_groups:
-                axis_suffix = self._export_axis_suffix(axis_key)
+                suffix = (
+                    axis_key.lower().replace("_", "") if axis_key in {"P_x", "P_y", "P_z"} else ""
+                )
                 for i, payload in enumerate(payloads):
                     label = str(payload.get("label", f"dataset_{i}"))
-                    name = f"{label}_{axis_suffix}" if axis_key in {"P_x", "P_y", "P_z"} else label
-                    token = self._dedup_export_token(self._safe_file_token(name), used_tokens)
+                    name = f"{label}_{suffix}" if suffix else label
+                    token = dedup_export_token(safe_file_token(name), used_tokens)
                     written.extend(
                         self._write_payload_text_files(
                             export_dir / token,
@@ -8142,18 +8138,17 @@ class PlotPanel(QWidget):
         from asymmetry.gui.utils.plot_gle import PlotGleSnapshot
 
         axes = []
+        grouped_limits = {}
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
             for key in self._projection_subplot_order(self._vector_subplot_datasets):
                 axes.append(
                     (key, self.get_current_plot_export_data(self._vector_subplot_datasets[key]), "")
                 )
-        elif len(self._grouped_time_subplot_datasets) > 1:
-            for dataset in self._grouped_time_subplot_datasets:
-                data = self.get_current_plot_export_data([dataset])
-                label = dataset.run_label
-                if data:
-                    data[0]["label"] = label
-                axes.append((None, data, label))
+        elif self._grouped_time_subplot_datasets:
+            for dataset, payload in zip(self._grouped_time_subplot_datasets, payloads, strict=True):
+                key = self._grouped_subplot_axis_key(dataset)
+                axes.append((key, [payload], dataset.run_label))
+                grouped_limits[key] = tuple(self._subplot_axes_by_polarization[key].get_ylim())
         else:
             axes.append((None, payloads, ""))
         context = self._plot_export_context()
@@ -8166,7 +8161,8 @@ class PlotPanel(QWidget):
             context.x_label,
             tuple(deepcopy(axes)),
             (float(self._x_min.value()), float(self._x_max.value())),
-            {
+            grouped_limits
+            or {
                 key: self._limits.held(self._y_axis_id(key))
                 or (float(self._y_min.value()), float(self._y_max.value()))
                 for key, _, _ in axes
