@@ -130,6 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Open **Grouping** on runs with missing detectors in the authored grouping,
   show the preview diagnostic, and let users repair the membership.
+- Returning from the FFT or MaxEnt view no longer replaces the time-domain fit
+  range with the frequency range.
 
 ## [0.29.0] - 2026-11-25
 

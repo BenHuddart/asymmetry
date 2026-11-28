@@ -107,6 +107,7 @@ class _StubFitPanel(QWidget):
         self.last_dataset = None
         self.last_datasets = None
         self.last_global_results = None
+        self.last_fit_range = None
         self._grouped_mode = False
 
     def set_series_catalogue_provider(self, _provider):
@@ -114,6 +115,12 @@ class _StubFitPanel(QWidget):
 
     def set_saved_fit_catalogue_provider(self, _provider):
         return
+
+    def refresh_saved_fits(self):
+        return
+
+    def set_fit_range_display(self, x_min, x_max):
+        self.last_fit_range = (x_min, x_max)
 
     def open_series_id(self):
         return None
@@ -179,6 +186,8 @@ class _StubPlotPanel(QWidget):
         self.factor = 1
         self.last_plotted_dataset = None
         self.last_grouped_datasets = None
+        self.active_label_group = None
+        self._fit_range = (None, None)
         self._time_view_mode = "fb_asymmetry"
         self._time_view_modes = ["fb_asymmetry"]
 
@@ -200,6 +209,9 @@ class _StubPlotPanel(QWidget):
 
     def set_fit_labels(self, _labels):
         return
+
+    def set_active_label_group(self, group_id):
+        self.active_label_group = group_id
 
     def plot_dataset(self, dataset):
         self.last_plotted_dataset = dataset
@@ -275,10 +287,10 @@ class _StubPlotPanel(QWidget):
         return dataset
 
     def get_fit_range(self):
-        return (None, None)
+        return self._fit_range
 
     def set_fit_range(self, x_min, x_max):
-        return
+        self._fit_range = (x_min, x_max)
 
     def clear(self, *, message=None):
         self.last_plotted_dataset = None
@@ -342,6 +354,7 @@ class _StubMultiGroupFitWindow(QWidget):
         self.set_trends_available = lambda _available: None
         self.last_dataset = None
         self.last_block_state = None
+        self.last_fit_range = None
         self._title = "Multi-Group Fit"
 
     def set_dataset(self, dataset):
@@ -353,6 +366,9 @@ class _StubMultiGroupFitWindow(QWidget):
 
     def set_fit_blocked(self, blocked, reason=""):
         self.last_block_state = (blocked, reason)
+
+    def set_fit_range_display(self, x_min, x_max):
+        self.last_fit_range = (x_min, x_max)
 
     def dock_title(self):
         return self._title
@@ -367,7 +383,9 @@ def _set_default_ui_scale() -> None:
     settings.setValue("ui/scale", 1.0)
 
 
-def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplication) -> None:
+def test_mainwindow_smoke_paths(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowser)
     monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanel)
     monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanel)
@@ -382,10 +400,11 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     window._on_fit()
     window._on_fourier()
     window._on_fit_parameters()
-    # _on_fourier now enters the frequency domain (so the user sees the Fourier
-    # plot, not the time view); the rest of this smoke path asserts time-domain
-    # fit propagation, so return to the time view first.
+    # Time-domain fits display the range owned by the time plot in µs.
+    window._plot_panel.set_fit_range(0.1, 0.9)
     window._plot_workspace.set_active_domain("time")
+    assert window._fit_panel.last_fit_range == (0.1, 0.9)
+    assert window._multi_group_fit_window.last_fit_range == (0.1, 0.9)
 
     ds = MuonDataset(
         time=np.array([0.0, 1.0]),
@@ -394,8 +413,11 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
         metadata={"run_number": 42, "field_comment_candidate": 150.0, "field_header": 0.0},
     )
     window._data_browser.add_dataset(ds)
+    window._on_group_selected("g1")
+    assert window._plot_panel.active_label_group == "g1"
     window._on_dataset_selected(42)
     assert window._fit_panel.last_dataset is ds
+    assert window._plot_panel.active_label_group is None
 
     choice = window._maybe_apply_comment_field(ds, "dummy.nxs", apply_to_all=True)
     assert choice == "yes_to_all"
@@ -436,6 +458,7 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     }
     window._on_global_fit_completed(results_dict, SimpleNamespace())
     assert "Batch fit completed" in window.statusBar().currentMessage()
+    assert "Traceback (most recent call last):" not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("platform", ["win32", "darwin"])
