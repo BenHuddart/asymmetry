@@ -121,6 +121,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Export every visible fit curve in plot text and GLE exports, with a separate
   file for each fit and one data table per dataset.
 
+### Added
+
+- Write unexpected errors and crash tracebacks to a log file, show unexpected
+  errors in the window, and add Help → Open Log Folder.
+
 ### Fixed
 
 - Open **Grouping** on runs with missing detectors in the authored grouping,

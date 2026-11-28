@@ -694,7 +694,7 @@
     "src/asymmetry/core/project/schema.py": 1720,
     "src/asymmetry/core/simulate.py": 2058,
     "src/asymmetry/core/workflow/survey.py": 1625,
-    "src/asymmetry/gui/mainwindow.py": 17088,
+    "src/asymmetry/gui/mainwindow.py": 17082,
     "src/asymmetry/gui/panels/alc_panel.py": 1500,
     "src/asymmetry/gui/panels/data_browser.py": 5447,
     "src/asymmetry/gui/panels/fit/global_tab.py": 6332,

@@ -38,6 +38,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
+    QDesktopServices,
     QGuiApplication,
     QIcon,
     QKeySequence,
@@ -278,6 +279,7 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.core.utils.perf import set_perf_logging
+from asymmetry.gui.crash_log import open_log_folder
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import (
     autosave_interval_minutes,
@@ -1361,8 +1363,12 @@ class MainWindow(QMainWindow):
 
         # Help
         help_menu = mb.addMenu("&Help")
-        help_menu.addAction("&Documentation", self._on_open_docs)
-        help_menu.addAction("&Report an Issue…", self._on_report_issue)
+        for label, url in (
+            ("&Documentation", "https://benhuddart.github.io/asymmetry/"),
+            ("&Report an Issue…", "https://github.com/BenHuddart/asymmetry/issues"),
+        ):
+            help_menu.addAction(label, partial(QDesktopServices.openUrl, QUrl(url)))
+        help_menu.addAction("Open &Log Folder", open_log_folder)
         help_menu.addSeparator()
         help_menu.addAction("&About…", self._on_about)
 
@@ -9652,18 +9658,6 @@ class MainWindow(QMainWindow):
                 "(details: Setup → User Functions…)",
                 tag="user-fn",
             )
-
-    def _on_open_docs(self) -> None:
-        """Open the online documentation in the default browser."""
-        from PySide6.QtGui import QDesktopServices
-
-        QDesktopServices.openUrl(QUrl("https://benhuddart.github.io/asymmetry/"))
-
-    def _on_report_issue(self) -> None:
-        """Open the GitHub issue tracker in the default browser."""
-        from PySide6.QtGui import QDesktopServices
-
-        QDesktopServices.openUrl(QUrl("https://github.com/BenHuddart/asymmetry/issues"))
 
     def _on_about(self) -> None:
         """Show the About dialog with version, links, contact, and license."""
