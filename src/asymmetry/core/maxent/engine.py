@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fitting.spectral import (
     default_frequency_model,
     seed_peak_parameters_from_dataset,
@@ -673,11 +674,7 @@ def _resolve_auto_steering_core(
     if axis is None:
         return resolved
     time_us, bin_width, base_bunch = axis
-    mask = np.ones(time_us.size, dtype=bool)
-    if resolved.t_min_us is not None:
-        mask &= time_us >= float(resolved.t_min_us)
-    if resolved.t_max_us is not None:
-        mask &= time_us <= float(resolved.t_max_us)
+    mask = time_window_mask(time_us, resolved.t_min_us, resolved.t_max_us)
     usable_times = time_us[mask]
     if usable_times.size == 0 or bin_width <= 0.0:
         return resolved
@@ -761,11 +758,7 @@ def estimate_maxent_workload(
         )
 
     time_us, _bin_width, base_bunch = axis
-    mask = np.ones(time_us.size, dtype=bool)
-    if resolved_config.t_min_us is not None:
-        mask &= time_us >= float(resolved_config.t_min_us)
-    if resolved_config.t_max_us is not None:
-        mask &= time_us <= float(resolved_config.t_max_us)
+    mask = time_window_mask(time_us, resolved_config.t_min_us, resolved_config.t_max_us)
     usable = int(np.count_nonzero(mask))
     maxent_bunch = _parse_positive_int(resolved_config.time_binning_factor)
     effective_bunch = max(1, base_bunch * maxent_bunch)
@@ -1141,10 +1134,7 @@ def _maxent_input_from_group_signals(
         signal = group_signal.signal
         sigma = group_signal.sigma
         mask = np.isfinite(time) & np.isfinite(signal) & np.isfinite(sigma) & (sigma > 0.0)
-        if resolved_config.t_min_us is not None:
-            mask &= time >= float(resolved_config.t_min_us)
-        if resolved_config.t_max_us is not None:
-            mask &= time <= float(resolved_config.t_max_us)
+        mask &= time_window_mask(time, resolved_config.t_min_us, resolved_config.t_max_us)
         if not np.any(mask):
             continue
         # 1/σ²-weighted mean: the maximum-likelihood estimate of the constant

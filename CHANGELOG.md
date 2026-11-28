@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Disable F–B fitting when bunching or the fit window leaves no bins, and show
   the reason in the status bar.
+- Keep endpoint bins when a time-domain window bound differs from the bin
+  centre by floating-point rounding.
 
 - Show how to fit the three-field Al-LLZ measurements and check the sensitivity
   of the activation energy to the temperature interval and plateau estimate.

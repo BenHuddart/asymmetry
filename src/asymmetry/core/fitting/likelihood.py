@@ -15,6 +15,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from asymmetry.core.data.ratio_validity import ObservationReport, RatioReason
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fitting.spectral_weights import (
     SpectralWeighting,
     SpectralWeightPolicy,
@@ -49,11 +50,7 @@ def _observation_arrays(
     if arrays[0].size == 0:
         raise FitInputError("fit observations contain no points")
     if t_min is not None or t_max is not None:
-        mask = np.ones(arrays[0].shape, dtype=bool)
-        if t_min is not None:
-            mask &= arrays[0] >= t_min
-        if t_max is not None:
-            mask &= arrays[0] <= t_max
+        mask = time_window_mask(arrays[0], t_min, t_max)
         arrays = tuple(array[mask] for array in arrays)
         if arrays[0].size == 0:
             raise FitInputError("fit observations contain no points in the fit window")
@@ -149,11 +146,7 @@ class GaussianSelection:
 
 def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
     """Select a requested fit window and known usable histogram observations."""
-    mask = np.ones(dataset.n_points, dtype=bool)
-    if t_min is not None:
-        mask &= dataset.time >= t_min
-    if t_max is not None:
-        mask &= dataset.time <= t_max
+    mask = dataset.window_mask(t_min, t_max)
     report = None
     if dataset.ratio_validity is not None:
         validity = dataset.ratio_validity.select(mask)

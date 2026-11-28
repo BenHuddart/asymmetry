@@ -18,15 +18,3 @@ def group_time_grid(histograms, grouping, indices, alignment, window):
     edges = window.first + np.arange(size + 1) * factor
     time = (np.arange(size * factor) + float(window.first - t0)) * width + residual
     return time.reshape(-1, factor).mean(axis=1), edges
-
-
-def time_range_mask(time, time_range):
-    """Select merged centres, retaining upstream estimator dependencies separately."""
-    mask = np.ones(time.size, dtype=bool)
-    if time_range is not None:
-        lower, upper = time_range
-        if lower is not None:
-            mask &= time >= float(lower)
-        if upper is not None:
-            mask &= time <= float(upper)
-    return mask

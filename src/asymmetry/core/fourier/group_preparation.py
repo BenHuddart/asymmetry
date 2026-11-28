@@ -9,11 +9,12 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fourier.group_background import (
     _apply_group_background_correction,
     group_background_payload,
 )
-from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
+from asymmetry.core.fourier.group_time import group_time_grid
 from asymmetry.core.instruments.readouts import require_run_readouts
 from asymmetry.core.instruments.resolution import InstrumentContext, resolve_instrument
 from asymmetry.core.transform.background import (
@@ -312,7 +313,7 @@ def prepare_group_counts(
             grouping, t0_bin=t0, first_good_bin=window.first, last_good_bin=window.last
         )
         time, edges = group_time_grid(histograms, local_grouping, indices, alignment, window)
-        mask = time_range_mask(time, time_range)
+        mask = time_window_mask(time, *(time_range or (None, None)))
         windows = [BinWindow(int(edges[i]), int(edges[i + 1]) - 1) for i in np.flatnonzero(mask)]
         if background:
             payload = group_background_payload(local_grouping, group_id)

@@ -20,6 +20,7 @@ from asymmetry.core import computation
 from asymmetry.core.data.acquisition import SourceBinding
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.instruments.source import SourceAssessment
 
 if TYPE_CHECKING:
@@ -405,8 +406,19 @@ class MuonDataset:
             run=self.run,
         )
 
+    def window_mask(self, lower: float | None, upper: float | None) -> NDArray[np.bool_]:
+        """Select centres with the window semantics of the dataset's coordinate axis."""
+        if self.metadata.get("plot_domain") != "frequency":
+            return time_window_mask(self.time, lower, upper)
+        mask = np.ones(self.n_points, dtype=bool)
+        if lower is not None:
+            mask &= self.time >= lower
+        if upper is not None:
+            mask &= self.time <= upper
+        return mask
+
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
-        """Return a copy restricted to [t_min, t_max].
+        """Return a copy restricted to the inclusive range [t_min, t_max].
 
         Like :meth:`merge_curve_bins`, the copy shares this dataset's :class:`~asymmetry.core.data.dataset.Run` and so
         keeps its raw histograms: correct in-process, but it means a windowed
@@ -415,11 +427,7 @@ class MuonDataset:
         """
         from scipy.sparse import eye
 
-        mask = np.ones(self.n_points, dtype=bool)
-        if t_min is not None:
-            mask &= self.time >= t_min
-        if t_max is not None:
-            mask &= self.time <= t_max
+        mask = self.window_mask(t_min, t_max)
         return MuonDataset(
             computation_revision=self.computation_revision,
             effective_recipe=self.effective_recipe.curve_operation(

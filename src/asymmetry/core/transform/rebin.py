@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.transform.counting_noise import CountingNoise, bin_matrix, combine_noise
 from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, linear_combination_variance
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
@@ -188,16 +189,7 @@ class BinningSpec:
                 boundaries.append(index)
             edges = np.asarray(boundaries, dtype=np.intp)
         edges = edges[:: self.merge]
-        if self.time_range is not None and edges.size > 1:
-            times = t_start_us + (edges[:-1] + edges[1:] - 1) * 0.5 * bin_width_us
-            lower, upper = self.time_range
-            mask = np.ones(times.shape, dtype=bool)
-            if lower is not None:
-                mask &= times >= lower
-            if upper is not None:
-                mask &= times <= upper
-            selected = np.flatnonzero(mask)
-            edges = edges[:1] if not selected.size else edges[selected[0] : selected[-1] + 2]
+        edges = _crop_binning_edges(edges, t_start_us, bin_width_us, self.time_range)
         for first, stop, merge in self.selections:
             edges = edges[first : stop + 1 : merge]
         return edges
@@ -236,6 +228,14 @@ def _target_width_us(mode: str, t_us: float, bin0_us: float, bin10_us: float) ->
     return bin0_us * np.exp(max(t_us, 0.0) / MUON_LIFETIME_US)
 
 
+def _crop_binning_edges(edges, t_start_us, bin_width_us, time_range):
+    if time_range is None or edges.size <= 1:
+        return edges
+    times = t_start_us + (edges[:-1] + edges[1:] - 1) * 0.5 * bin_width_us
+    selected = np.flatnonzero(time_window_mask(times, *time_range))
+    return edges[:1] if not selected.size else edges[selected[0] : selected[-1] + 2]
+
+
 def fb_binning_edges(
     counts: ForwardBackwardCounts | ForwardBackwardLayout,
     binning: BinningSpec,
@@ -248,16 +248,7 @@ def fb_binning_edges(
     residual = (counts.common_t0_bin + 0.5) * width - counts.t0_time_us
     t_start = (window.first - counts.common_t0_bin) * width + residual
     edges = binning.edges(window.last - window.first + 1, width, t_start)
-    if time_range is not None and edges.size > 1:
-        times = t_start + (edges[:-1] + edges[1:] - 1) * 0.5 * width
-        lower, upper = time_range
-        mask = np.ones(times.shape, dtype=bool)
-        if lower is not None:
-            mask &= times >= lower
-        if upper is not None:
-            mask &= times <= upper
-        selected = np.flatnonzero(mask)
-        edges = edges[:1] if not selected.size else edges[selected[0] : selected[-1] + 2]
+    edges = _crop_binning_edges(edges, t_start, width, time_range)
     return edges + window.first, t_start
 
 

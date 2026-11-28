@@ -434,6 +434,10 @@ restrict which time bins enter the cost function:
        dataset, model.function, params, t_min=0.1, t_max=5.0,
    )
 
+The time-domain **Fit range** includes bin centres on both bounds and up to
+1e-12 μs outside either bound to allow for floating-point rounding. Asymmetry
+keeps the requested bounds as entered.
+
 The two common reasons to clip the range are (a) early-time bins
 contaminated by deadtime or finite-pulse-width effects, and (b)
 late-time bins where the signal has decayed into the background and adds

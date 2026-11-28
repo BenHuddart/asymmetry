@@ -6,8 +6,9 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
-from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
+from asymmetry.core.fourier.group_time import group_time_grid
 from asymmetry.core.transform.fb_counts import linear_combination_variance
 from asymmetry.core.transform.grouping import (
     effective_group_indices,
@@ -91,7 +92,7 @@ def build_group_signal_dataset(
         _, trimmed_counts = rebin_counts(
             np.arange(trimmed_counts.size), trimmed_counts, bunch_factor
         )
-    mask = time_range_mask(time, time_range)
+    mask = time_window_mask(time, *(time_range or (None, None)))
     time, trimmed_counts, variance = time[mask], trimmed_counts[mask], variance[mask]
 
     scale = np.ones_like(trimmed_counts, dtype=np.float64)

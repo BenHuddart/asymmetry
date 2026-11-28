@@ -7,6 +7,7 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.reduction_recipe import numerical_recipe
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fitting.likelihood import GaussianObservations, dataset_observations
 from asymmetry.core.fitting.spectral_weights import SpectralWeightPolicy, spectral_weight_policy
 from asymmetry.core.fourier.uncertainty import FIT_UNCERTAINTY_SCOPE
@@ -68,12 +69,12 @@ def fit_input_attribution(
         digest.update(str(values.shape).encode())
         digest.update(values.tobytes())
     support = dataset.time if dataset is not None else observations.time
-    inside = np.ones(support.size, dtype=bool)
-    if window is not None:
-        if window[0] is not None:
-            inside &= support >= window[0]
-        if window[1] is not None:
-            inside &= support <= window[1]
+    lower, upper = window if window is not None else (None, None)
+    inside = (
+        dataset.window_mask(lower, upper)
+        if dataset is not None
+        else time_window_mask(support, lower, upper)
+    )
     support = support[inside]
     digest.update(np.ascontiguousarray(support, dtype="<f8").tobytes())
     if dataset is not None and dataset.ratio_validity is not None:

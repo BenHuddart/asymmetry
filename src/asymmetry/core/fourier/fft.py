@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fourier.apodisation import (
     ApodisationEarlySignalWarning,
     early_signal_apodisation_loss,
@@ -350,11 +351,7 @@ def _prepare_fft_core(
     signal = np.asarray(asymmetry, dtype=np.float64)
     err = np.asarray(error, dtype=np.float64) if error is not None else None
     if t_min is not None or t_max is not None:
-        mask = np.ones(times.size, dtype=bool)
-        if t_min is not None:
-            mask &= times >= t_min
-        if t_max is not None:
-            mask &= times <= t_max
+        mask = time_window_mask(times, t_min, t_max)
         times, signal = times[mask], signal[mask]
         err = None if err is None else err[mask]
     signal = signal.copy()
