@@ -10,8 +10,9 @@ import pytest
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.ratio_validity import RatioReason, RatioValidity
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.experiment_design import aic_weights
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
@@ -24,7 +25,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     RunResidualDiagnostic,
 )
-from asymmetry.core.fitting.input_attribution import fit_input_attribution
+from asymmetry.core.fitting.input_attribution import fit_input_attribution, saved_fit_matches
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations
 from asymmetry.core.fitting.model_comparison import (
     AT_BOUND_RELATIVE_TOLERANCE,
@@ -49,6 +50,7 @@ from asymmetry.core.fitting.model_comparison import (
     summarise_single_candidates,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.representation.base import FitSlot
 
 # ---------------------------------------------------------------------------
@@ -829,6 +831,35 @@ def test_saved_fit_curves_span_the_window_and_carry_residuals() -> None:
     # A fit with no recorded window is drawn over the whole record.
     legacy = saved_fit_curves(_saved("l", chi_squared=80.0, window=None), _dataset(701))
     assert (legacy.fit[0][0], legacy.fit[0][-1]) == (0.0, 8.0)
+
+
+@pytest.mark.parametrize("keep_first", [True, False])
+@pytest.mark.parametrize("with_validity", [True, False])
+def test_saved_fit_draws_one_retained_centre_at_an_open_window_edge(keep_first, with_validity):
+    time = np.arange(1.0, 4.0)
+    data = MuonDataset(
+        time,
+        np.array([3.0, 4.0, 5.0]),
+        np.ones(3),
+        ratio_validity=RatioValidity([RatioReason.USABLE] * 3) if with_validity else None,
+    )
+    endpoint = time[0] if keep_first else time[-1]
+    lower = None if keep_first else np.nextafter(endpoint, np.inf)
+    upper = np.nextafter(endpoint, -np.inf) if keep_first else None
+    model = CompositeModel(["Constant"])
+    parameters = ParameterSet([Parameter(model.param_names[0], 2.0, fixed=True)])
+    result = FitEngine().fit(data, model.function, parameters, t_min=lower, t_max=upper)
+    slot = FitSlot(
+        model=model.to_dict(),
+        result=fit_result_summary(result),
+        fit_range={"min": lower, "max": upper},
+    )
+
+    assert saved_fit_matches(slot, data)
+    curves = saved_fit_curves(slot, data)
+    assert np.all(np.diff(curves.fit[0]) >= 0)
+    np.testing.assert_array_equal(curves.residuals[0], [endpoint])
+    np.testing.assert_array_equal(curves.residuals[1], [endpoint])
 
 
 def test_legacy_saved_fits_without_structured_results_are_listed_unranked() -> None:

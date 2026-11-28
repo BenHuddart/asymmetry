@@ -6,7 +6,11 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.input_attribution import saved_fit_matches
+from asymmetry.core.fitting.model_comparison import saved_fit_curves
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.representation.base import FitSlot
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -191,6 +195,83 @@ def test_global_recovery_and_selected_observations():
     results, globals_ = result
     assert all(r.success for r in results.values())
     assert globals_["Lambda"].value == pytest.approx(0.7, abs=2e-4)
+
+
+def test_fit_window_tolerance_preserves_exact_causal_support():
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    first_arrival = -0.162
+    time = np.array([np.nextafter(first_arrival, -np.inf), first_arrival, 0.0, 1.0])
+    data = MuonDataset(time, np.full(4, 3.0), np.ones(4))
+    model = CompositeModel(["Constant"], time_response=TimeResponse("double_delta", 0.324))
+    parameters = ParameterSet([Parameter(model.param_names[0], 3.0, fixed=True)])
+    engine = FitEngine()
+
+    fit = engine.fit(data, model.function, parameters, t_min=first_arrival)
+    assert fit.success
+    np.testing.assert_array_equal(fit.residual_time, time[1:])
+    assert fit.input_attribution["min"] == first_arrival
+    slot = FitSlot(
+        model=model.to_dict(),
+        result=fit_result_summary(fit),
+        fit_range={"min": first_arrival, "max": None},
+    )
+    assert saved_fit_matches(slot, data)
+    curves = saved_fit_curves(slot, data)
+    assert curves.fit[0][0] == first_arrival
+    np.testing.assert_array_equal(curves.residuals[0], time[1:])
+    with pytest.raises(ValueError, match="before the first arrival"):
+        engine.fit(data, model.function, parameters, t_min=time[0])
+
+
+def test_array_and_preselected_plot_fits_share_causal_window_selection():
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    first_arrival = -0.162
+    time = np.array([np.nextafter(first_arrival, -np.inf), first_arrival, 0.0, 1.0])
+    data = MuonDataset(time, np.full(4, 3.0), np.ones(4))
+    model = CompositeModel(["Constant"], time_response=TimeResponse("double_delta", 0.324))
+    parameters = ParameterSet([Parameter(model.param_names[0], 3.0, fixed=True)])
+    engine = FitEngine()
+    bounds = (first_arrival, time[-1])
+    array_fit = engine.fit_arrays(
+        time,
+        data.asymmetry,
+        data.error,
+        model.function,
+        parameters,
+        t_min=bounds[0],
+        t_max=bounds[1],
+    )
+    crop = data.time_range(*bounds)
+    crop.metadata["fit_range"] = bounds
+    plot_fit = engine.fit(crop, model.function, parameters)
+
+    assert array_fit.success and plot_fit.success
+    np.testing.assert_array_equal(array_fit.residual_time, time[1:])
+    np.testing.assert_array_equal(plot_fit.residual_time, time[1:])
+
+
+def test_saved_curve_can_draw_a_first_arrival_retained_beyond_the_upper_bound():
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    first_arrival = -0.162
+    upper = np.nextafter(first_arrival, -np.inf)
+    lower = np.nextafter(upper, -np.inf)
+    data = MuonDataset(np.array([-1.0, first_arrival, 0.0]), np.full(3, 3.0), np.ones(3))
+    model = CompositeModel(["Constant"], time_response=TimeResponse("double_delta", 0.324))
+    parameters = ParameterSet([Parameter(model.param_names[0], 3.0, fixed=True)])
+    fit = FitEngine().fit(data, model.function, parameters, t_min=lower, t_max=upper)
+    slot = FitSlot(
+        model=model.to_dict(),
+        result=fit_result_summary(fit),
+        fit_range={"min": lower, "max": upper},
+    )
+
+    assert saved_fit_matches(slot, data)
+    curves = saved_fit_curves(slot, data)
+    np.testing.assert_array_equal(curves.fit[0], first_arrival)
+    np.testing.assert_array_equal(curves.residuals[0], [first_arrival])
 
 
 @pytest.mark.parametrize(

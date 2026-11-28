@@ -436,7 +436,8 @@ restrict which time bins enter the cost function:
 
 The time-domain **Fit range** includes bin centres on both bounds and up to
 1e-12 μs outside either bound to allow for floating-point rounding. Asymmetry
-keeps the requested bounds as entered.
+keeps the requested bounds as entered. With a double-pulse time response,
+only centres at or after the first arrival can be added by this margin.
 
 The two common reasons to clip the range are (a) early-time bins
 contaminated by deadtime or finite-pulse-width effects, and (b)

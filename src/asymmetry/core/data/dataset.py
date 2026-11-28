@@ -406,10 +406,12 @@ class MuonDataset:
             run=self.run,
         )
 
-    def window_mask(self, lower: float | None, upper: float | None) -> NDArray[np.bool_]:
+    def window_mask(
+        self, lower: float | None, upper: float | None, *, support_start: float | None = None
+    ) -> NDArray[np.bool_]:
         """Select centres with the window semantics of the dataset's coordinate axis."""
         if self.metadata.get("plot_domain") != "frequency":
-            return time_window_mask(self.time, lower, upper)
+            return time_window_mask(self.time, lower, upper, support_start=support_start)
         mask = np.ones(self.n_points, dtype=bool)
         if lower is not None:
             mask &= self.time >= lower

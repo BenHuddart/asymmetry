@@ -70,7 +70,13 @@ def shortlist(scores: Mapping[str, float]) -> tuple[str, ...]:
 
 
 def normalised_residuals(
-    dataset: MuonDataset, curve: Curve, *, result=None, observation_report=None
+    dataset: MuonDataset,
+    curve: Curve,
+    *,
+    result=None,
+    observation_report=None,
+    window: tuple[float | None, float | None] | None = None,
+    support_start: float | None = None,
 ) -> Curve:
     """``(y − f(t)) / σ`` on the dataset's own time grid within the curve's span, f linearly interpolated."""
     if (
@@ -83,15 +89,16 @@ def normalised_residuals(
     if result is not None and result.observation_report is not None:
         return np.array([], dtype=float), np.array([], dtype=float)
     curve_time, curve_value = curve
+    bounds = (curve_time[0], curve_time[-1]) if window is None else window
     if observation_report is not None or dataset.metadata.get("plot_domain") == "frequency":
-        observations = dataset_observations(dataset, curve_time[0], curve_time[-1])
+        observations = dataset_observations(dataset, *bounds, support_start=support_start)
         sigma = observations.stated_sigma
         if sigma is None:
             return np.array([], dtype=float), np.array([], dtype=float)
         model = np.interp(observations.time, curve_time, curve_value)
         return observations.time, (observations.values - model) / sigma
     time = np.asarray(dataset.time, dtype=float)
-    inside = dataset.window_mask(curve_time[0], curve_time[-1])
+    inside = dataset.window_mask(*bounds, support_start=support_start)
     t = time[inside]
     model = np.interp(t, curve_time, curve_value)
     residual = (np.asarray(dataset.asymmetry, dtype=float)[inside] - model) / np.asarray(
@@ -387,15 +394,27 @@ def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
         return None
     model, values = drawable
     window = slot.fit_range or {"min": None, "max": None}
-    x_min = float(np.min(dataset.time)) if window["min"] is None else window["min"]
-    x_max = float(np.max(dataset.time)) if window["max"] is None else window["max"]
+    lower, upper = window["min"], window["max"]
+    x_min = float(np.min(dataset.time)) if lower is None else lower
+    x_max = float(np.max(dataset.time)) if upper is None else upper
+    if x_min > x_max:
+        if lower is None:
+            x_max = x_min
+        elif upper is None:
+            x_min = x_max
+    current = saved_fit_matches(slot, dataset)
+    first_arrival = model.time_response.first_arrival_us
     curve = dense_fit_curve(model, values, x_min, x_max)
     return RunCurves(
         curve,
         normalised_residuals(
-            dataset, curve, observation_report=(slot.result or {}).get("observation_report")
+            dataset,
+            curve,
+            observation_report=(slot.result or {}).get("observation_report"),
+            window=(lower, upper),
+            support_start=first_arrival,
         )
-        if saved_fit_matches(slot, dataset)
+        if current
         else (np.array([]), np.array([])),
     )
 

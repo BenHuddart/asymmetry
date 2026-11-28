@@ -54,6 +54,35 @@ def test_open_time_crop_uses_a_fixed_absolute_margin(bound):
     assert not time_window_mask(time, np.nextafter(bound, np.inf), bound).any()
 
 
+def test_time_crop_checks_the_represented_distance_to_each_bound():
+    bound = 10.0
+    outside = np.array([bound - TIME_WINDOW_ATOL_US, bound + TIME_WINDOW_ATOL_US])
+    assert np.all(np.abs(outside - bound) > TIME_WINDOW_ATOL_US)
+    inside = np.nextafter(outside, bound)
+    time = np.array([outside[0], inside[0], bound, inside[1], outside[1]])
+    np.testing.assert_array_equal(time_window_mask(time, bound, bound), [0, 1, 1, 1, 0])
+
+
+def test_time_crop_preserves_open_and_nonfinite_bound_semantics():
+    time = np.array([-np.inf, 0, np.inf, np.nan])
+    np.testing.assert_array_equal(time_window_mask(time, None, None), [1, 1, 1, 1])
+    np.testing.assert_array_equal(time_window_mask(time, -np.inf, np.inf), [1, 1, 1, 0])
+    np.testing.assert_array_equal(time_window_mask(time, np.inf, None), [0, 0, 1, 0])
+    np.testing.assert_array_equal(time_window_mask(time, None, -np.inf), [1, 0, 0, 0])
+    assert not time_window_mask(time, np.nan, None).any()
+    assert not time_window_mask(time, None, np.nan).any()
+
+
+def test_count_skip_window_keeps_inclusive_centres_under_roundoff():
+    time = np.arange(5) * 0.125
+    skip = np.nextafter(time[[1, 3]], [np.inf, -np.inf])
+    _, mask = count_time_selection(0, 4, 1, 0, 0.125, 0, None, None, skip)
+    np.testing.assert_array_equal(mask, [1, 0, 0, 0, 1])
+    for disabled in (skip[::-1], (time[2], time[2])):
+        _, mask = count_time_selection(0, 4, 1, 0, 0.125, 0, None, None, disabled)
+        assert mask.all()
+
+
 def test_time_crop_preserves_bounds_and_aligns_observation_support():
     time = np.arange(1.0, 6.0)
     values, errors = time * 8, time / 4

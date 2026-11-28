@@ -10,11 +10,18 @@ from asymmetry.core.data.reduction_recipe import numerical_recipe
 from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fitting.likelihood import GaussianObservations, dataset_observations
 from asymmetry.core.fitting.spectral_weights import SpectralWeightPolicy, spectral_weight_policy
+from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fourier.uncertainty import FIT_UNCERTAINTY_SCOPE
 
 
 def fit_input_attribution(
-    observations, dataset=None, *, window=None, error_oversampling=1.0, coupled_unit_weights=False
+    observations,
+    dataset=None,
+    *,
+    window=None,
+    error_oversampling=1.0,
+    coupled_unit_weights=False,
+    support_start=None,
 ):
     """Capture sampled values, errors and omission support without archiving arrays.
 
@@ -71,7 +78,7 @@ def fit_input_attribution(
     support = dataset.time if dataset is not None else observations.time
     lower, upper = window if window is not None else (None, None)
     inside = (
-        dataset.window_mask(lower, upper)
+        dataset.window_mask(lower, upper, support_start=support_start)
         if dataset is not None
         else time_window_mask(support, lower, upper)
     )
@@ -109,7 +116,10 @@ def saved_fit_matches(slot, dataset):
     from asymmetry.core.fitting.likelihood import gaussian_selection
 
     window = {"min": recorded["min"], "max": recorded["max"]}
-    selection = gaussian_selection(dataset, window["min"], window["max"])
+    support_start = TimeResponse.from_dict((slot.model or {}).get("time_response")).first_arrival_us
+    selection = gaussian_selection(
+        dataset, window["min"], window["max"], support_start=support_start
+    )
     mask = selection.mask
     if not selection.used or not (
         np.isfinite(dataset.time[mask]).all() and np.isfinite(dataset.asymmetry[mask]).all()
@@ -119,12 +129,15 @@ def saved_fit_matches(slot, dataset):
         np.isfinite(dataset.error[mask]).all() and np.all(dataset.error[mask] > 0)
     ):
         return False
-    observations = dataset_observations(dataset, window["min"], window["max"])
+    observations = dataset_observations(
+        dataset, window["min"], window["max"], support_start=support_start
+    )
     current = fit_input_attribution(
         observations,
         dataset,
         window=(window["min"], window["max"]),
         error_oversampling=recorded.get("error_oversampling", 1.0),
+        support_start=support_start,
     )
     return current["identity"] == recorded["identity"] and same_source_context(current, recorded)
 

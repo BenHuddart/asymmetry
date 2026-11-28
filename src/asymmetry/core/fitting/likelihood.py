@@ -40,7 +40,7 @@ class FitInputError(ValueError):
 
 
 def _observation_arrays(
-    *values: ArrayLike, t_min=None, t_max=None
+    *values: ArrayLike, t_min=None, t_max=None, support_start=None
 ) -> tuple[NDArray[np.float64], ...]:
     arrays = tuple(np.array(value, dtype=float, copy=True) for value in values)
     if any(array.ndim != 1 for array in arrays):
@@ -50,7 +50,7 @@ def _observation_arrays(
     if arrays[0].size == 0:
         raise FitInputError("fit observations contain no points")
     if t_min is not None or t_max is not None:
-        mask = time_window_mask(arrays[0], t_min, t_max)
+        mask = time_window_mask(arrays[0], t_min, t_max, support_start=support_start)
         arrays = tuple(array[mask] for array in arrays)
         if arrays[0].size == 0:
             raise FitInputError("fit observations contain no points in the fit window")
@@ -76,6 +76,7 @@ class GaussianObservations:
     t_max: InitVar[float | None] = None
     report: ObservationReport | None = None
     spectral_weighting: SpectralWeighting | None = None
+    support_start: InitVar[float | None] = None
 
     @property
     def stated_sigma(self) -> NDArray[np.float64] | None:
@@ -99,9 +100,14 @@ class GaussianObservations:
             )
         return None
 
-    def __post_init__(self, t_min, t_max):
+    def __post_init__(self, t_min, t_max, support_start):
         time, values, sigma = _observation_arrays(
-            self.time, self.values, self.sigma, t_min=t_min, t_max=t_max
+            self.time,
+            self.values,
+            self.sigma,
+            t_min=t_min,
+            t_max=t_max,
+            support_start=support_start,
         )
         for name, array in (("time", time), ("value", values), ("uncertainty", sigma)):
             invalid = ~np.isfinite(array)
@@ -144,9 +150,9 @@ class GaussianSelection:
         return int(np.count_nonzero(self.mask))
 
 
-def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
+def gaussian_selection(dataset, t_min=None, t_max=None, *, support_start=None) -> GaussianSelection:
     """Select a requested fit window and known usable histogram observations."""
-    mask = dataset.window_mask(t_min, t_max)
+    mask = dataset.window_mask(t_min, t_max, support_start=support_start)
     report = None
     if dataset.ratio_validity is not None:
         validity = dataset.ratio_validity.select(mask)
@@ -155,7 +161,7 @@ def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
     return GaussianSelection(mask, report)
 
 
-def dataset_observations(dataset, t_min=None, t_max=None):
+def dataset_observations(dataset, t_min=None, t_max=None, *, support_start=None):
     """Resolve spectral weights or known histogram support before validation."""
     if dataset.metadata.get("plot_domain") == "frequency":
         mask = gaussian_selection(dataset, t_min, t_max).mask
@@ -182,8 +188,9 @@ def dataset_observations(dataset, t_min=None, t_max=None):
             run_number=dataset.run_number,
             t_min=t_min,
             t_max=t_max,
+            support_start=support_start,
         )
-    selection = gaussian_selection(dataset, t_min, t_max)
+    selection = gaussian_selection(dataset, t_min, t_max, support_start=support_start)
     if selection.report is not None and not selection.used:
         raise FitInputError(
             f"run {dataset.run_number}: no usable Gaussian observations. "

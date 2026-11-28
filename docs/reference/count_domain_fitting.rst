@@ -272,11 +272,12 @@ Three optional controls refine the fit window without splitting the run; each
 is off by default and, when off, leaves the fit numerically unchanged.
 
 * **Skip window (μs)** — drop an interior window of bins from the fit. Set the
-  two fields so the upper bound exceeds the lower; the bins inside are removed
-  (endpoints inclusive). Use it to reject a laser or RF artefact, a spike, or
-  any localised corruption — the fitted parameters then match what the clean
-  data alone would give, where leaving the artefact in pulls the amplitude. The
-  label distinguishes this *drop* from the MaxEnt *de-weight* window of the same
+  two fields so the upper bound exceeds the lower. Asymmetry drops bin centres
+  inside the window, on its endpoints, and up to 1e-12 μs outside either bound
+  to allow for floating-point rounding. Use it to reject a laser or RF artefact,
+  a spike, or any localised corruption. The fitted parameters then match what
+  the clean data alone would give, where leaving the artefact in pulls the
+  amplitude. The label distinguishes this *drop* from the MaxEnt *de-weight* window of the same
   units (see :doc:`exclusions`).
 * **Fit t₀ offset** — add a free time-zero offset that shifts the model time
   axis. Enable it when a small time-zero error is suspected; on clean data it

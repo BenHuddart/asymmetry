@@ -44,7 +44,7 @@ def count_time_selection(first, last, factor, axis_start, width, residual, t_min
         time = time[: size // factor * factor].reshape(-1, factor).mean(axis=1)
     mask = time_window_mask(time, t_min, t_max)
     if exclude is not None and float(exclude[1]) > float(exclude[0]):
-        mask &= ~((time >= float(exclude[0])) & (time <= float(exclude[1])))
+        mask &= ~time_window_mask(time, float(exclude[0]), float(exclude[1]))
     return time, mask
 
 

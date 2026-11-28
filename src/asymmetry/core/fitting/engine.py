@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.fit_quality import reduced_statistic
+from asymmetry.core.fitting.fit_scale import AsymmetryScaleWarning, warn_on_scale_mismatch
 from asymmetry.core.fitting.global_covariance import (
     CurvatureUnavailableError,
     member_jacobian_sparsity,
@@ -49,17 +50,6 @@ from asymmetry.core.transform.corrections import (
 )
 
 
-class AsymmetryScaleWarning(UserWarning):
-    """Emitted when fit seeds and data appear to be on different asymmetry scales.
-
-    The classic trap: fraction-scale seeds are fitted to a ``MuonDataset`` whose
-    ``asymmetry`` is on the **percent** scale (``×100``). The fit either
-    converges to a degenerate amplitude or to the wrong minimum. See
-    :class:`asymmetry.core.data.dataset.MuonDataset` and its
-    ``asymmetry_percent`` / ``asymmetry_fraction`` accessors.
-    """
-
-
 class FixedFrequencyFieldMismatchWarning(UserWarning):
     """Emitted when a fit pins a precession frequency far from γ_μ·B(field).
 
@@ -75,10 +65,6 @@ class FixedFrequencyFieldMismatchWarning(UserWarning):
     """
 
 
-#: Magnitude heuristic for scale advice, not an estimator bound: signed counts
-#: and general beta can give fraction-scale values beyond [-1, 1].
-_FRACTION_SCALE_CEILING = 1.5
-
 #: Relative gap between a *fixed* frequency seed and γ_μ·B(field) above which the
 #: pin is flagged. 2% comfortably clears fit/rounding noise while still catching
 #: the few-percent vortex-state diamagnetic shift that inflates σ.
@@ -92,15 +78,6 @@ _FIXED_FREQ_FIELD_REL_TOLERANCE = 0.02
 #: would be a false positive.
 _MIN_REFERENCE_MHZ = 0.1
 
-#: Minimum peak ratio (on top of a fraction/percent boundary crossing) before a
-#: mismatch is flagged — keeps near-boundary noise quiet without masking the
-#: ~100× percent-vs-fraction trap.
-_SCALE_MISMATCH_RATIO = 10.0
-
-#: Span (max − min) of a seeded curve over the window, relative to its peak,
-#: below which the curve is flat and carries no amplitude to compare.
-_FLAT_SEED_RELATIVE_SPAN = 1e-6
-
 #: ``stacklevel`` for the pre-fit advisory guards, so each warning is attributed
 #: to the *user's* call site rather than to engine internals. Counts three frames
 #: of engine: the guard helper itself, :meth:`FitEngine._fit_core`, and the
@@ -108,55 +85,19 @@ _FLAT_SEED_RELATIVE_SPAN = 1e-6
 _ADVISORY_STACKLEVEL = 4
 
 
-def _warn_on_scale_mismatch(
-    time: NDArray[np.float64],
-    asymmetry: NDArray[np.float64],
-    model_wrapper: Callable[..., NDArray[np.float64]],
-    initial_values: Sequence[float],
-) -> None:
-    """Warn at a fraction/percent boundary crossing, never for poor seeds alone.
+def _first_model_arrival(model_fn):
+    from asymmetry.core.fitting.composite import CompositeModel
 
-    Compare peak magnitudes: a decaying model's median measures its tail.
-    A peak at most 1.5 is fraction-like; a larger peak can only be percent.
-    Constant seed curves have no amplitude scale and are not judged.
-    Advisory evaluation failures never change fitting outcomes."""
-    try:
-        asym = np.asarray(asymmetry, dtype=np.float64)
-        data_finite = asym[np.isfinite(asym) & (asym != 0.0)]
-        if data_finite.size == 0:
-            return
-        model_vals = np.asarray(model_wrapper(time, *initial_values), dtype=np.float64)
-        model_finite = model_vals[np.isfinite(model_vals) & (model_vals != 0.0)]
-        if model_finite.size == 0:
-            return
-        data_mag = float(np.max(np.abs(data_finite)))
-        model_mag = float(np.max(np.abs(model_finite)))
-        if data_mag <= 0.0 or model_mag <= 0.0:
-            return
-        if float(np.ptp(model_finite)) <= _FLAT_SEED_RELATIVE_SPAN * model_mag:
-            return
-        low, high = sorted((data_mag, model_mag))
-        straddles_scale = low <= _FRACTION_SCALE_CEILING < high
-        ratio = high / low
-        if not straddles_scale or ratio < _SCALE_MISMATCH_RATIO:
-            return
-    except Exception:  # noqa: BLE001 - a guard must never break the fit it guards
-        return
+    if inspect.ismethod(model_fn) and isinstance(model_fn.__self__, CompositeModel):
+        return model_fn.__self__.time_response.first_arrival_us
+    return None
 
-    data_is_larger = data_mag > model_mag
-    likely = (
-        "data looks percent-scale while the seeds look fraction-scale"
-        if data_is_larger
-        else "data looks fraction-scale while the seeds look percent-scale"
-    )
-    warnings.warn(
-        f"Asymmetry scale mismatch: the data magnitude (~{data_mag:.3g}) and the "
-        f"seeded model magnitude (~{model_mag:.3g}) differ by ~{ratio:.0f}×, so {likely}. "
-        "Loaded MuonDataset.asymmetry is on the percent scale (×100); seed amplitudes "
-        "to match, or pass ds.asymmetry_fraction / ds.asymmetry_percent explicitly.",
-        AsymmetryScaleWarning,
-        stacklevel=_ADVISORY_STACKLEVEL,
-    )
+
+def _fit_window_for_model(dataset, t_min, t_max, support_start):
+    if support_start is not None and t_min is None and t_max is None:
+        # A plot fit can supply a preselected record with its literal fit bounds.
+        return dataset.metadata.get("fit_range", (None, None))
+    return t_min, t_max
 
 
 def _warn_on_fixed_frequency_far_from_field(
@@ -1233,6 +1174,7 @@ def _pack_coupled_block(
             global_uncertainties[pname] = sigma
 
     results: dict[int, FitResult] = {}
+    support_start = _first_model_arrival(block.model_fn)
     for ds in problem.block_fitted_datasets[block.key]:
         params = initial_params[ds.run_number]
 
@@ -1355,9 +1297,10 @@ def _pack_coupled_block(
             input_attribution=fit_input_attribution(
                 record,
                 ds,
-                window=(block.t_min, block.t_max),
+                window=_fit_window_for_model(ds, block.t_min, block.t_max, support_start),
                 error_oversampling=member_oversampling,
                 coupled_unit_weights=not unit_weights and ds.run_number in connected_runs,
+                support_start=support_start,
             ),
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=solution.success and global_model_error is None and invalid_model is None,
@@ -1536,7 +1479,9 @@ class FitEngine:
             raise FitInputError(
                 "fit(MuonDataset) requires Gaussian observations; use PoissonCounts"
             )
-        observations = _dataset_observations(dataset, t_min, t_max)
+        support_start = _first_model_arrival(model_fn)
+        window = _fit_window_for_model(dataset, t_min, t_max, support_start)
+        observations = _dataset_observations(dataset, *window, support_start=support_start)
         return self._fit_core(
             observations,
             model_fn,
@@ -1548,7 +1493,8 @@ class FitEngine:
             migrad_kwargs=migrad_kwargs,
             error_oversampling=error_oversampling,
             field_source=dataset,
-            input_window=(t_min, t_max),
+            input_window=window,
+            support_start=support_start,
         )
 
     def fit_arrays(
@@ -1586,7 +1532,13 @@ class FitEngine:
         if cost_factory is not None and cost_factory.objective is not Objective.GAUSSIAN:
             raise FitInputError("fit_arrays requires Gaussian observations; use PoissonCounts")
         observations = GaussianObservations(
-            time, asymmetry, error, run_number, t_min=t_min, t_max=t_max
+            time,
+            asymmetry,
+            error,
+            run_number,
+            t_min=t_min,
+            t_max=t_max,
+            support_start=_first_model_arrival(model_fn),
         )
         return self._fit_core(
             observations,
@@ -1640,6 +1592,7 @@ class FitEngine:
         error_oversampling: float,
         field_source: MuonDataset | None,
         input_window=None,
+        support_start=None,
     ) -> FitResult:
         """Minimize checked observations and retain their attribution."""
         gaussian = observations if isinstance(observations, GaussianObservations) else None
@@ -1648,7 +1601,11 @@ class FitEngine:
             error_oversampling, minos = 1.0, False
         cost_factory = GAUSSIAN_COST if gaussian is not None else POISSON_COST
         attribution = fit_input_attribution(
-            observations, field_source, window=input_window, error_oversampling=error_oversampling
+            observations,
+            field_source,
+            window=input_window,
+            error_oversampling=error_oversampling,
+            support_start=support_start,
         )
         time = observations.time
         if isinstance(observations, GaussianObservations):
@@ -1733,7 +1690,9 @@ class FitEngine:
         with warnings.catch_warnings(record=True) as caught_advisories:
             warnings.simplefilter("always")
             # Advisory guard: flag the percent-vs-fraction trap before fitting.
-            _warn_on_scale_mismatch(time, asymmetry, model_wrapper, initial_values)
+            warn_on_scale_mismatch(
+                time, asymmetry, model_wrapper, initial_values, stacklevel=_ADVISORY_STACKLEVEL
+            )
             # Advisory guard: flag a frequency pinned far from γ_μ·B(field) (the
             # TF fixed-frequency trap that inflates sigma). Skip in the rotating
             # frame: there the frequency seeds are *offsets* δν (lab = δν + ν₀),
@@ -2128,8 +2087,14 @@ class FitEngine:
         if observations is None:
             if cost_factory is not None and cost_factory.objective is not Objective.GAUSSIAN:
                 raise FitInputError("Poisson global fits require typed PoissonCounts observations")
+            support_start = _first_model_arrival(model_fn)
             observations = {
-                ds.run_number: _dataset_observations(ds, t_min, t_max) for ds in datasets
+                ds.run_number: _dataset_observations(
+                    ds,
+                    *_fit_window_for_model(ds, t_min, t_max, support_start),
+                    support_start=support_start,
+                )
+                for ds in datasets
             }
         objectives = {
             Objective.POISSON if isinstance(record, PoissonCounts) else Objective.GAUSSIAN
@@ -2435,11 +2400,15 @@ class FitEngine:
             [ps for block in blocks for ps in block.initial_params.values()], "Joint fitting"
         )
 
-        observations = {
-            ds.run_number: _dataset_observations(ds, block.t_min, block.t_max)
-            for block in blocks
-            for ds in block.datasets
-        }
+        observations = {}
+        for block in blocks:
+            support_start = _first_model_arrival(block.model_fn)
+            for ds in block.datasets:
+                observations[ds.run_number] = _dataset_observations(
+                    ds,
+                    *_fit_window_for_model(ds, block.t_min, block.t_max, support_start),
+                    support_start=support_start,
+                )
         problem = _build_coupled_problem(
             observations=observations,
             blocks=blocks,
