@@ -185,6 +185,7 @@ class Acquisition:
     combined_readouts: tuple[CombinedReadout, ...] = ()
     conditional_contributions: tuple[ConditionalContribution, ...] = ()
     require_file_labels: bool = False
+    previously_unmapped_revisions: tuple[str, ...] = ()
 
     def __post_init__(self):
         if any(
@@ -196,6 +197,11 @@ class Acquisition:
             )
         ):
             raise ValueError("Acquisition readout declarations require immutable tuples")
+        revisions = self.previously_unmapped_revisions
+        if not isinstance(revisions, tuple) or any(
+            not isinstance(revision, str) or not revision.strip() for revision in revisions
+        ):
+            raise ValueError("Acquisition history requires an immutable tuple of revisions")
         if self.beam is not None and not isinstance(self.beam, BeamDirection):
             raise ValueError("Acquisition beam requires a typed BeamDirection")
         if self.layout_key is not None and not self.layout_key.strip():
@@ -426,6 +432,9 @@ class InstrumentProfile:
                     "File grouping default requires an existing acquisition and preset"
                 )
         for config in self.detectors.acquisitions:
+            previous = _unique(config.previously_unmapped_revisions, "unmapped profile revisions")
+            if identity.revision in previous:
+                raise ValueError("The current revision already declares this acquisition")
             keys = _unique(tuple(channel.key for channel in config.channels), "channel keys")
             _unique(tuple(channel.ordinal for channel in config.channels), "channel ordinals")
             if not keys or any(

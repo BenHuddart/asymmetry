@@ -600,8 +600,9 @@ recommended preset clears the bar automatically. The **✕** dismisses it for th
 run only — a different transverse run still nudges, and a re-displayed dismissed
 run stays quiet.
 
-The recommendation is advisory: it is derived purely from the run's recorded
-field geometry (``field_direction``) and never changes a grouping on its own.
+The recommendation uses the recorded field geometry (``field_direction``) and
+requires a matched detector acquisition. Use **Open Grouping…** to review or
+apply the preset.
 
 .. _Editing target follows selection:
 

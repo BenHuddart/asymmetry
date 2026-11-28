@@ -38,14 +38,10 @@ def _hifi_dataset(
     field_direction: str = "Transverse",
     grouping_preset: str | None = None,
 ) -> MuonDataset:
-    """A minimal HiFi-flavoured run on the longitudinal (forward/backward) grouping.
-
-    ``detect_instrument`` keys off the ``instrument`` metadata, so two histograms
-    are enough to exercise the recommendation without building all 64 detectors.
-    """
+    """A 64-channel HiFi run on the longitudinal grouping."""
     counts = np.array([100.0, 96.0, 92.0, 88.0], dtype=float)
     grouping: dict = {
-        "groups": {1: [1], 2: [2]},
+        "groups": {1: list(range(1, 33)), 2: list(range(33, 65))},
         "forward_group": 1,
         "backward_group": 2,
         "alpha": 1.0,
@@ -65,8 +61,7 @@ def _hifi_dataset(
     run = Run(
         run_number=run_number,
         histograms=[
-            Histogram(counts=counts, bin_width=0.01),
-            Histogram(counts=counts * 0.8, bin_width=0.01),
+            Histogram(counts=counts * scale, bin_width=0.01) for scale in (1.0,) * 32 + (0.8,) * 32
         ],
         metadata=dict(metadata),
         grouping=grouping,

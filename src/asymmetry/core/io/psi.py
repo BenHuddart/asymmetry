@@ -21,7 +21,11 @@ from asymmetry.core.instrument import (
     preset_grouping_for_run,
 )
 from asymmetry.core.instruments.catalog import profile_by_key
-from asymmetry.core.instruments.resolution import assess_instrument, layout_key_for_selection
+from asymmetry.core.instruments.resolution import (
+    assess_instrument,
+    layout_key_for_selection,
+    resolve_instrument,
+)
 from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.psi_units import read_header_quantities
@@ -1075,32 +1079,7 @@ class PsiLoader(BaseLoader):
         selection = assess_instrument(
             n_hist, metadata=metadata, source_file=raw.source_file
         ).selection
-        layout_key = layout_key_for_selection(selection, n_hist) if selection is not None else None
-        groups, group_names, forward_gid, backward_gid = self._default_groups(
-            raw.histogram_labels,
-            n_hist,
-        )
-        preset_override = (
-            self._instrument_default_preset(
-                get_instrument_layout(layout_key), n_hist, labels=raw.histogram_labels
-            )
-            if layout_key is not None and replay is None
-            else None
-        )
-        preset_name: str | None = None
-        preset_projections: list[dict[str, Any]] = []
-        if preset_override is not None:
-            groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
-                preset_override
-            )
         grouping = {
-            "groups": groups,
-            "group_names": group_names,
-            "included_groups": {
-                int(gid): not self._is_non_positron_label(name) for gid, name in group_names.items()
-            },
-            "forward_group": forward_gid,
-            "backward_group": backward_gid,
             "alpha": 1.0,
             "bin_index_base": 0,
             "bunching_factor": 1,
@@ -1121,10 +1100,6 @@ class PsiLoader(BaseLoader):
                 else raw.instrument
             ),
         }
-        if preset_name is not None:
-            grouping["grouping_preset"] = preset_name
-            grouping["projections"] = preset_projections
-
         run = Run(
             run_number=int(raw.run_number),
             histograms=histograms,
@@ -1133,24 +1108,74 @@ class PsiLoader(BaseLoader):
             source_file=raw.source_file,
         )
         run = prepare_loaded_run(run, replay)
+        defer = replay is not None and replay.defer_grouping and replay.selects(run)
+        if defer and resolve_instrument(run).has_new_acquisition_map:
+            # An unmapped readout supplied raw bounds until the project
+            # assigned detector legs and its good-bin window.
+            common_t0 = max(t0_bins)
+            grouping.update(
+                t0_bin=common_t0,
+                first_good_bin=0,
+                last_good_bin=n_bins - 1,
+                t_good_offset=-common_t0,
+            )
+            empty = np.empty(0, dtype=np.float64)
+            return MuonDataset(time=empty, asymmetry=empty, error=empty, metadata=metadata, run=run)
+
+        layout_key = layout_key_for_selection(selection, n_hist) if selection is not None else None
+        preset_override = (
+            self._instrument_default_preset(
+                get_instrument_layout(layout_key), n_hist, labels=raw.histogram_labels
+            )
+            if layout_key is not None
+            else None
+        )
+        if preset_override is None:
+            groups, group_names, forward_gid, backward_gid = self._default_groups(
+                raw.histogram_labels,
+                n_hist,
+            )
+        else:
+            groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
+                preset_override
+            )
         quick = quick_asymmetry(
             histograms,
             {
-                key: grouping[key]
-                for key in ("groups", "forward_group", "backward_group", "t0_source")
+                "groups": groups,
+                "forward_group": forward_gid,
+                "backward_group": backward_gid,
+                "t0_source": grouping["t0_source"],
             },
             metadata=reference_observation_metadata(run),
+        )
+        grouping.update(quick.file_grouping)
+        if quick.window is None:
+            grouping.update(
+                first_good_bin=0, last_good_bin=n_bins - 1, t_good_offset=-quick.common_t0
+            )
+        if defer:
+            # The native pair supplies fallback clock bounds. The saved
+            # detector membership owns the reduction.
+            empty = np.empty(0, dtype=np.float64)
+            return MuonDataset(time=empty, asymmetry=empty, error=empty, metadata=metadata, run=run)
+
+        if preset_override is not None:
+            grouping.update(grouping_preset=preset_name, projections=preset_projections)
+        grouping.update(
+            groups=groups,
+            group_names=group_names,
+            included_groups={
+                gid: not self._is_non_positron_label(name) for gid, name in group_names.items()
+            },
+            forward_group=forward_gid,
+            backward_group=backward_gid,
         )
         window = quick.window.slice if quick.window is not None else slice(0, 0)
         time_axis, asymmetry, error = (
             a[window] for a in (quick.time, quick.asymmetry, quick.error)
         )
         metadata.update(quick.metadata)
-        grouping.update(quick.file_grouping)
-        if quick.window is None:
-            grouping.update(
-                first_good_bin=0, last_good_bin=n_bins - 1, t_good_offset=-quick.common_t0
-            )
         from asymmetry.core.transform.preparation import histogram_observation
 
         return MuonDataset(

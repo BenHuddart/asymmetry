@@ -401,10 +401,28 @@ class InstrumentContext:
             return False
         selected = self.recorded.selection
         current = self.observed.selection
-        return not (
-            isinstance(selected, InstrumentSelection)
-            and current is not None
-            and selected.identity == current.identity
+        if not isinstance(selected, InstrumentSelection) or current is None:
+            return True
+        if selected.identity == current.identity:
+            return False
+        return not self.has_new_acquisition_map
+
+    @property
+    def has_new_acquisition_map(self) -> bool:
+        """The current profile explicitly maps a readout unavailable at capture."""
+        selected = self.recorded.selection if self.recorded is not None else None
+        current = self.observed.selection
+        if (
+            not isinstance(selected, InstrumentSelection)
+            or current is None
+            or selected.profile_key != current.profile_key
+            or selected.acquisition != UnmappedAcquisition("incompatible")
+        ):
+            return False
+        return any(
+            config.key == current.acquisition
+            and selected.profile_revision in config.previously_unmapped_revisions
+            for config in profile_by_key(current.profile_key).detectors.acquisitions
         )
 
     @property

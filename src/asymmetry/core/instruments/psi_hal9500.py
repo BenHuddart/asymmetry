@@ -89,6 +89,7 @@ FORWARD_RING = replace(
     views=ACQUISITION.views[:1],
     layout_key="HAL-FORWARD",
     require_file_labels=True,
+    previously_unmapped_revisions=("1",),
 )
 
 TRANSVERSE = Preset(

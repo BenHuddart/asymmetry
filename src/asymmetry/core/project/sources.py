@@ -17,6 +17,7 @@ def sample_load_request(prepared, fact):
     from asymmetry.core.io.run_preparation import ReplayState
 
     source = fact.source
+    grouping = prepared.groupings.get(source.run_number)
     return (
         source.owner,
         fact.candidate_file,
@@ -25,6 +26,7 @@ def sample_load_request(prepared, fact):
             prepared.source_assessments.get(source.run_number),
             source.run_number,
             source.period_number,
+            defer_grouping=grouping is not None and "groups" in grouping.payload,
         ),
     )
 

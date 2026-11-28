@@ -12,13 +12,14 @@ import pytest
 pytestmark = [pytest.mark.io]
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.io import load
+from asymmetry.core.io import load, load_background_run
 from asymmetry.core.io.psi import (
     _FE_HEADER,
     PSI_HEADER_SAMPLE_SENSOR,
     PsiLoader,
     header_sensor_rejection,
 )
+from asymmetry.core.io.run_preparation import ReplayState
 from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
@@ -1029,6 +1030,7 @@ def test_hal_loaded_grouping_and_raw_header_survive_canonical_resolution() -> No
 
 
 _HAL_FORWARD_LABELS = (b"MV", *(f"F{i}".encode() for i in range(1, 9)))
+_HAL_FULL_LABELS = (*_HAL_FORWARD_LABELS, *(f"B{i}".encode() for i in range(1, 9)))
 
 
 def test_hal_forward_ring_loads_transverse_preset_and_reduces_f1_f5(tmp_path) -> None:
@@ -1055,21 +1057,31 @@ def test_hal_forward_ring_loads_transverse_preset_and_reduces_f1_f5(tmp_path) ->
     np.testing.assert_allclose(dataset.asymmetry, PERCENT_PER_FRACTION * (f1 - f5) / (f1 + f5))
 
 
-def test_synthetic_hal_full17_keeps_per_octant_preset(tmp_path) -> None:
+@pytest.mark.parametrize("load_mode", ["fresh", "replay", "reference"])
+def test_synthetic_hal_full17_keeps_per_octant_preset(tmp_path, load_mode):
     path = tmp_path / "tdc_hifi_00153.mdu"
-    labels = (*_HAL_FORWARD_LABELS, *(f"B{i}".encode() for i in range(1, 9)))
-    _write_psi_mdu(path, run_number=153, labels=labels)
+    _write_psi_mdu(path, run_number=153, labels=_HAL_FULL_LABELS)
 
-    run = load(path).run
+    match load_mode:
+        case "fresh":
+            dataset = load(path)
+        case "replay":
+            dataset = load(path, replay=ReplayState(run_number=153))
+        case "reference":
+            dataset = load_background_run({"source_file": str(path), "run_number": 153})
 
+    run = dataset.run
     assert run.instrument_choice.selection.identity == ("psi.hal9500", "full17")
     assert run.grouping["grouping_preset"] == "Per-octant"
     assert run.grouping["groups"] == {i: [i + 1, i + 9] for i in range(1, 9)}
+    assert (run.grouping["forward_group"], run.grouping["backward_group"]) == (1, 5)
+    assert dataset.n_points > 0
 
 
 @pytest.mark.parametrize(
     "name, labels",
     [
+        ("tdc_hifi_00686.mdu", _HAL_FORWARD_LABELS[:-1]),
         ("tdc_hifi_00686.mdu", (*_HAL_FORWARD_LABELS[:-1], b"B8")),
         ("tdc_hifi_00686.mdu", (*_HAL_FORWARD_LABELS[:-1], b"F7")),
         (
@@ -1080,6 +1092,7 @@ def test_synthetic_hal_full17_keeps_per_octant_preset(tmp_path) -> None:
         ("tdc_hifi_gps_00686.mdu", _HAL_FORWARD_LABELS),
     ],
     ids=[
+        "other-count",
         "other-label",
         "duplicate-label",
         "reordered",
