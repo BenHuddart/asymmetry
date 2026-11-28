@@ -61,7 +61,8 @@ to find the log.”
   stacks that can be captured after a native crash.
 
 Attach the relevant log files to a bug report opened through **Help → Report an
-Issue…**. Review them for local file paths before sharing.
+Issue…**. Review the local file paths and diagnostic summaries, such as
+reported reduced χ² values, before sharing.
 
 Main window layout
 ------------------

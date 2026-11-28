@@ -57,11 +57,12 @@ class LogPanel(QWidget):
 
     def log(self, message: str, *, tag: str = "") -> None:
         """Append a timestamped entry, optionally categorised by *tag*."""
+        message = str(message)
         session_log.info("%s%s", f"[{tag.upper()}] " if tag else "", message)
         timestamp = datetime.now().strftime("%H:%M:%S")
         ts_html = f'<span style="color:{tokens.TEXT_MUTED};">{timestamp}</span>'
         tag_html = self._tag_span(tag)
-        msg_html = _html.escape(str(message))
+        msg_html = _html.escape(message)
         self._text.append(f"{ts_html}&nbsp;&nbsp;{tag_html}{msg_html}")
         self._entry_count += 1
         self.entry_count_changed.emit(self._entry_count)

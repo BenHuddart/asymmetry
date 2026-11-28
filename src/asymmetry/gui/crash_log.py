@@ -7,9 +7,12 @@ import logging
 import platform
 import sys
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from traceback import format_exception
 from types import TracebackType
 
 from PySide6 import __version__ as pyside_version
@@ -30,6 +33,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from asymmetry import __version__
 from asymmetry.gui.utils import app_data
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 session_log = logging.getLogger(__name__)
 session_log.propagate = False
@@ -52,6 +60,46 @@ def open_log_folder() -> None:
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 
 
+@contextmanager
+def _log_file_lock(path: Path) -> Iterator[None]:
+    # Every process locks the same file even while the log itself is renamed.
+    with path.open("a+b") as stream:
+        fd = stream.fileno()
+        if sys.platform == "win32":
+            stream.seek(0)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
+class _SessionLogHandler(RotatingFileHandler):
+    def __init__(self, path: Path) -> None:
+        super().__init__(
+            path,
+            maxBytes=2 * 1024**2,
+            backupCount=2,
+            encoding="utf-8",
+            delay=True,
+            errors="backslashreplace",
+        )
+        self._lock_path = path.with_name(f".{path.name}.lock")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        with _log_file_lock(self._lock_path):
+            try:
+                super().emit(record)
+            finally:
+                # Other instances can rotate only after this handle has closed.
+                stream, self.stream = self.stream, None
+                if stream is not None:
+                    stream.close()
+
+
 class CrashLog(QObject):
     """Own the process-wide diagnostic hooks and native log for the GUI session."""
 
@@ -65,9 +113,7 @@ class CrashLog(QObject):
         directory = _log_directory()
         directory.mkdir(parents=True, exist_ok=True)
         self._path = directory / "asymmetry.log"
-        handler = RotatingFileHandler(
-            self._path, maxBytes=2 * 1024**2, backupCount=2, encoding="utf-8"
-        )
+        handler = _SessionLogHandler(self._path)
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         session_log.addHandler(handler)
         session_log.setLevel(logging.INFO)
@@ -98,7 +144,9 @@ class CrashLog(QObject):
         error: BaseException,
         traceback: TracebackType | None,
     ) -> None:
-        session_log.error("Uncaught Python exception", exc_info=(exc_type, error, traceback))
+        # Exception formatting can call user code, so complete it before locking the log file.
+        details = "".join(format_exception(exc_type, error, traceback)).rstrip("\n")
+        session_log.error("Uncaught Python exception\n%s", details)
         self._unexpected_error.emit(f"{exc_type.__name__}: {error}")
 
     def _handle_exception(
