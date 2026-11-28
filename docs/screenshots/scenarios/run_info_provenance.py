@@ -141,7 +141,7 @@ class LegacyNexusGroupingLogScenario(Scenario):
             window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             window.show()
             window._dock_log.show()
-            window.resizeDocks([window._dock_log], [150], Qt.Orientation.Vertical)
+            window.resizeDocks([window._dock_log], [190], Qt.Orientation.Vertical)
             window._log_panel.clear()
             with TemporaryDirectory() as directory:
                 source = Path(directory) / "synthetic-emu.nxs"

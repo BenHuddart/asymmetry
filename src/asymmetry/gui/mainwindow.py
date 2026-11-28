@@ -5558,13 +5558,8 @@ class MainWindow(QMainWindow):
     def _create_period_mapped_dataset(self, request: dict, grouping_result: dict) -> None:
         """Build and register the combined red/green dataset for a mapping."""
         run_numbers = [int(v) for v in request.get("period_run_numbers", [])]
-        siblings = [
-            ds
-            for run_number in run_numbers
-            for ds in self._data_browser.get_all_datasets()
-            if ds.run is not None and int(ds.run_number) == run_number
-        ]
-        if len(siblings) != len(run_numbers) or len(siblings) < 3:
+        siblings = [self._data_browser.get_dataset(number) for number in run_numbers]
+        if len(siblings) < 3 or any(ds is None or ds.run is None for ds in siblings):
             self.statusBar().showMessage(
                 "Period mapping skipped: per-period datasets are no longer loaded.", 8000
             )
@@ -5581,6 +5576,10 @@ class MainWindow(QMainWindow):
             return
         if mapped is None:
             self.statusBar().showMessage("Period mapping canceled.", 8000)
+            return
+        if collision := self._data_browser.source_collision((mapped,)):
+            self._log_panel.log(collision, tag="warn")
+            self.statusBar().showMessage(f"Period mapping failed: {collision}", 8000)
             return
         self._apply_grouping_settings_to_dataset(mapped, grouping_result)
         self._data_browser.add_dataset(mapped)

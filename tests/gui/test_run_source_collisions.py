@@ -37,6 +37,14 @@ def sources(tmp_path):
     return paths
 
 
+def _add_periods(path):
+    with h5py.File(path, "r+") as handle:
+        detector = handle["raw_data_1/instrument/detector_1"]
+        counts = np.stack([detector["counts"][()]] * 3)
+        del detector["counts"]
+        detector.create_dataset("counts", data=counts)
+
+
 @pytest.fixture
 def window(qapp, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *args: pytest.fail(str(args[2])))
@@ -108,11 +116,7 @@ def test_conflict_in_one_period_refuses_the_whole_file(window, sources):
     occupied_number = encode_period_run_number(44989, 2)
     with h5py.File(first, "r+") as handle:
         handle["raw_data_1/run_number"][()] = occupied_number
-    with h5py.File(second, "r+") as handle:
-        detector = handle["raw_data_1/instrument/detector_1"]
-        counts = np.stack([detector["counts"][()]] * 3)
-        del detector["counts"]
-        detector.create_dataset("counts", data=counts)
+    _add_periods(second)
     window._load_files([str(first)])
 
     window._load_files([str(second), str(other)])
@@ -124,6 +128,46 @@ def test_conflict_in_one_period_refuses_the_whole_file(window, sources):
         occupied_number: str(first),
         44990: str(other),
     }
+
+
+def test_mapping_periods_preserves_a_different_run_owner(window, sources, monkeypatch):
+    first, second, _ = sources
+    _add_periods(second)
+    window._load_files([str(first)])
+    original = window._data_browser.get_dataset(44989)
+    window._plot_panel.plot_fit(
+        original.time, np.full_like(original.time, 0.3), label="Original fit"
+    )
+    fit = window._plot_panel._fit_curves[44989]
+    window._load_files([str(second)])
+    original_rows = window._data_browser.get_all_datasets()
+    period_numbers = [encode_period_run_number(44989, period) for period in (1, 2, 3)]
+    assert [ds.run_number for ds in original_rows] == [44989, *period_numbers]
+    applied = []
+    monkeypatch.setattr(
+        window, "_apply_grouping_settings_to_dataset", lambda ds, _grouping: applied.append(ds)
+    )
+
+    window._create_period_mapped_dataset(
+        {
+            "period_run_numbers": period_numbers,
+            "source_run_number": 44989,
+            "mapping": {1: "red", 2: "green", 3: "ignore"},
+        },
+        {},
+    )
+
+    assert window._data_browser.get_all_datasets() == original_rows
+    assert window._data_browser.get_dataset(44989) is original
+    assert window._plot_panel._fit_curves[44989] is fit
+    assert applied == []
+    status = window.statusBar().currentMessage()
+    assert status.startswith("Period mapping failed:")
+    assert all(text in status for text in (str(first), str(second), "File → New Project"))
+    assert any(
+        all(str(path) in line for path in (first, second))
+        for line in window._log_panel.to_plain_text().splitlines()
+    )
 
 
 def test_symlink_to_the_same_file_keeps_the_reload_choice(window, sources, monkeypatch):
