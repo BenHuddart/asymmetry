@@ -3365,8 +3365,7 @@ def test_t0_line_and_verdict_agree_on_the_index_base(qapp: QApplication) -> None
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def invalid_hal_grouping_dataset() -> MuonDataset:
+def _invalid_hal_grouping_dataset() -> MuonDataset:
     """A forward-only HAL acquisition with a saved full-bank membership."""
     metadata = {"run_number": 686, "facility": "PSI", "instrument": "HIFI"}
     labels = ["MV", *(f"F{i}" for i in range(1, 9))]
@@ -3397,10 +3396,8 @@ def invalid_hal_grouping_dataset() -> MuonDataset:
     return MuonDataset(np.array([]), np.array([]), np.array([]), metadata=metadata, run=run)
 
 
-def test_invalid_hal_membership_can_be_repaired(
-    qapp: QApplication, invalid_hal_grouping_dataset: MuonDataset
-) -> None:
-    dialog = GroupingDialog([invalid_hal_grouping_dataset])
+def test_invalid_hal_membership_can_be_repaired(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_invalid_hal_grouping_dataset()])
     pane = dialog._preview_pane
     pane.flush()
     diagnostic = (
@@ -3428,13 +3425,12 @@ def test_invalid_hal_membership_can_be_repaired(
 
 def test_mainwindow_opens_grouping_for_invalid_hal_membership(
     qapp: QApplication,
-    invalid_hal_grouping_dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from asymmetry.gui.mainwindow import MainWindow
 
     window = MainWindow()
-    dataset = invalid_hal_grouping_dataset
+    dataset = _invalid_hal_grouping_dataset()
     window._data_browser.add_dataset(dataset)
     window._on_dataset_selected(dataset.run_number)
     opened = []

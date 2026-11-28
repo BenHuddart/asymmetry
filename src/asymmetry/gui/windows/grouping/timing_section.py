@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any
 
@@ -34,6 +34,14 @@ from asymmetry.gui.tasks import check_task_cancelled
 from asymmetry.gui.windows.grouping.channel_entries import shift_channel_entries
 
 _T0_STRATEGY_LABELS = {"prompt_peak": "prompt peak", "pulse_edge": "pulse-edge midpoint"}
+
+
+@dataclass(frozen=True)
+class _FileGoodWindowDisplay:
+    """Bounds shown by the controls, including an explicitly labelled fallback."""
+
+    bounds: tuple[int, int]
+    unavailable: bool = False
 
 
 class TimingControls:
@@ -111,18 +119,63 @@ class TimingControls:
 
         return grouping
 
-    def _file_good_window_for_preview_run(self) -> tuple[int, int]:
-        """Map the selected period file limits through current effective timing."""
+    def _file_good_window_for_preview_run(self) -> _FileGoodWindowDisplay:
+        """Display acquired bounds even when no common aligned file window exists."""
         run = self._t0_preview_run()
-        if len(self._selected_pair_payload()) < 2:
-            return run.grouping.get("first_good_bin", 0), run.grouping.get(
-                "last_good_bin", run.histograms[0].n_bins - 1
-            )
-        return run_file_good_window(
-            run,
-            self._good_window_grouping(inspect_file=True),
-            common_t0_bin=self._effective_t0_for_preview_run(),
+        stored = (
+            run.grouping.get("first_good_bin", 0),
+            run.grouping.get("last_good_bin", run.histograms[0].n_bins - 1),
         )
+        if len(self._selected_pair_payload()) < 2:
+            return _FileGoodWindowDisplay(stored)
+        try:
+            bounds = run_file_good_window(
+                run,
+                self._good_window_grouping(inspect_file=True),
+                common_t0_bin=self._effective_t0_for_preview_run(),
+            )
+        except ValueError:
+            return _FileGoodWindowDisplay(stored, unavailable=True)
+        if bounds[0] > bounds[1]:
+            return _FileGoodWindowDisplay(stored, unavailable=True)
+        return _FileGoodWindowDisplay(bounds)
+
+    def _refresh_good_window_line(self) -> None:
+        """Display the signed offset in μs and the mapped advisory file limits."""
+        if self._run is None or not self._run.histograms:
+            self._good_window_label.setText("")
+            return
+        offset = int(self._t_good_offset_spin.value())
+        bin_width = float(self._run.histograms[0].bin_width)
+        parts = [f"≈ {offset * bin_width:.3f} µs after t0"]
+        window = self._file_good_window_for_preview_run()
+        if window.unavailable:
+            parts.append("File good-data window unavailable")
+        elif self._current_good_window_mode() == "manual":
+            first, last = window.bounds
+            t0_bin = self._effective_t0_for_preview_run()
+            parts.append(
+                f"File: offset {first - t0_bin} · last bin {last + self._bin_index_base()}"
+            )
+        text = " · ".join(parts)
+        self._good_window_label.setText(text)
+        self._good_window_label.set_hover_text(text)
+
+    def _file_timing_needs_membership_repair(self) -> bool:
+        """An unusable selected pair displays the acquired fallback t0."""
+        return (
+            self._run is not None
+            and bool(self._run.histograms)
+            and self._editing_target() == "profile"
+            and self._current_t0_mode() == "from_file"
+            and "groups" not in self._good_window_grouping(inspect_file=True)
+        )
+
+    def _refresh_timing_after_membership_edit(self, needed_repair: bool) -> None:
+        """Replace the fallback t0 when the edited pair can use file timing."""
+        if needed_repair and not self._file_timing_needs_membership_repair():
+            self._seed_t0_spin_from_preview()
+        self._apply_good_window_mode_to_controls()
 
     def _common_t0_for_preview_run(
         self, detector_t0_bins: list[int] | None, *, period_mode: str | None = None

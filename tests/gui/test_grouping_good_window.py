@@ -2,15 +2,95 @@
 
 from __future__ import annotations
 
+import sys
+from dataclasses import replace
+
 import numpy as np
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
-from tests.gui.test_grouping_dialog import _set_good_window_mode
+from tests.gui.test_grouping_dialog import (
+    _invalid_hal_grouping_dataset,
+    _set_good_window_mode,
+    _wait_for_t0_detection,
+    _wait_until,
+)
 
 pytestmark = pytest.mark.gui
+
+
+def test_disjoint_spectator_window_preserves_invalid_membership_editor(qapp: QApplication) -> None:
+    dataset = _invalid_hal_grouping_dataset()
+    dataset.run.grouping["detector_first_good_bins"][0] = 35
+    dataset.run.grouping["detector_last_good_bins"][0] = 39
+
+    dialog = GroupingDialog([dataset])
+    pane = dialog._preview_pane
+    pane.flush()
+    _wait_until(lambda: "Detector(s) 10 do not exist" in pane._incomplete_banner.text())
+    assert not dialog._apply_btn.isEnabled()
+    assert "File good-data window unavailable" in dialog._good_window_label.text()
+    assert dialog._group_table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+
+def test_edit_to_disjoint_pair_reports_empty_window_without_slot_error(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = _invalid_hal_grouping_dataset()
+    dataset.run.grouping.update(
+        groups={1: [2], 2: [3], 3: [6]},
+        group_names={1: "F1", 2: "F2", 3: "F5"},
+        grouping_preset=None,
+        forward_group=1,
+        backward_group=3,
+    )
+    dataset.run.grouping["detector_first_good_bins"][2] = 36
+    dataset.run.grouping["detector_last_good_bins"][2] = 39
+    dialog = GroupingDialog([dataset])
+    pane = dialog._preview_pane
+    pane.flush()
+    _wait_until(dialog._apply_btn.isEnabled)
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args[1]))
+
+    dialog._group_table.item(2, 3).setText("3")
+    pane.flush()
+
+    assert not errors
+    _wait_until(lambda: "empty good-bin support" in pane._incomplete_banner.text())
+    assert not dialog._apply_btn.isEnabled()
+    assert "File good-data window unavailable" in dialog._good_window_label.text()
+
+
+@pytest.mark.parametrize("mode", ["from_file", "manual"])
+def test_repair_reseeds_file_timing_after_detection_finishes(qapp: QApplication, mode: str) -> None:
+    dataset = _invalid_hal_grouping_dataset()
+    dataset.run.histograms[0] = replace(dataset.run.histograms[0], t0_bin=12)
+    grouping = dataset.run.grouping
+    grouping["t0_bin"] = grouping["detector_t0_bins"][0] = 12
+    grouping["detector_first_good_bins"][0] += 4
+    grouping["detector_last_good_bins"][0] += 4
+    dialog = GroupingDialog([dataset])
+    _wait_for_t0_detection(dialog)
+    assert dialog._t0_spin.value() == 12
+    if mode == "manual":
+        dialog._t0_mode_combo.setCurrentIndex(dialog._t0_mode_combo.findData("manual"))
+        dialog._t0_spin.setValue(13)
+
+    for row in range(8):
+        dialog._group_table.item(row, 3).setText(str(row + 2))
+    dialog._preview_pane.flush()
+    _wait_until(dialog._apply_btn.isEnabled)
+
+    if mode == "from_file":
+        assert dialog._t0_spin.value() == 8
+        assert dialog._t_good_offset_spin.value() == 3
+        assert dialog._last_good_spin.value() == 32
+    else:
+        assert dialog._t0_spin.value() == 13
 
 
 def _good_window_dataset(

@@ -478,7 +478,10 @@ absent from the file is a preset/data mismatch: it cannot be trimmed or
 replaced implicitly. Select a matching preset or edit the channel list.
 Open **Grouping** to inspect the authored membership and the reduction
 diagnostic. The **From file** good-data window shows the acquired channels'
-file limits while the selected pair is unavailable.
+file limits while the selected pair is unavailable. If a common window cannot
+be formed, the controls show the stored run bounds and report
+**File good-data window unavailable**. After a membership repair, **From file**
+time zero uses the repaired pair's acquired timing.
 A saved request without a recorded acquired-channel count stays a per-run
 override; its largest requested ID does not establish the acquisition size.
 The preview reports the reason and disables **Apply** until the requested

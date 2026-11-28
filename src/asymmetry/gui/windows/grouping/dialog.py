@@ -2200,11 +2200,12 @@ class GroupingDialog(TimingControls, QDialog):
         )
         if payload is None:
             return
+        needed_repair = self._file_timing_needs_membership_repair()
         if self._apply_preset_payload_to_form(payload) is False:
             self._refresh_preset_selection()
             return
         self._mark_dirty()
-        self._apply_good_window_mode_to_controls()
+        self._refresh_timing_after_membership_edit(needed_repair)
         # _apply_preset_payload_to_form repopulates the group table with its
         # itemChanged signal blocked (see _populate_group_table), so the preview
         # needs one explicit refresh here rather than relying on the old
@@ -2578,7 +2579,7 @@ class GroupingDialog(TimingControls, QDialog):
         if delta and self._current_good_window_mode() == "manual":
             self._seed_good_window_mode_from_draft()
         elif delta and self._editing_target() == "profile":
-            self._set_good_window_spins(*self._file_good_window_for_preview_run())
+            self._set_good_window_spins(*self._file_good_window_for_preview_run().bounds)
 
     # -- good-window policy (t_good Offset + Last Good Bin) ---------------
 
@@ -2659,7 +2660,7 @@ class GroupingDialog(TimingControls, QDialog):
             and self._run.histograms
         ):
             t0_bin = self._effective_t0_for_preview_run()
-            file_first, file_last = self._file_good_window_for_preview_run()
+            file_first, file_last = self._file_good_window_for_preview_run().bounds
             values = []
             for offset, fallback in (
                 (policy.first_offset_bins, file_first),
@@ -2697,7 +2698,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._t_good_offset_spin.setReadOnly(not manual)
         self._last_good_spin.setReadOnly(not manual)
         if not manual and self._run is not None and self._run.histograms:
-            self._set_good_window_spins(*self._file_good_window_for_preview_run())
+            self._set_good_window_spins(*self._file_good_window_for_preview_run().bounds)
         self._refresh_good_window_line()
 
     def _on_good_window_mode_changed(self, *args: object) -> None:
@@ -2729,23 +2730,6 @@ class GroupingDialog(TimingControls, QDialog):
             self._draft.good_window_policy = replace(policy, **{key: value})
             spin.setSpecialValueText("")
             self._mark_dirty()
-
-    def _refresh_good_window_line(self) -> None:
-        """Display the signed offset in μs and the mapped advisory file limits."""
-        if self._run is None or not self._run.histograms:
-            self._good_window_label.setText("")
-            return
-        offset = int(self._t_good_offset_spin.value())
-        bin_width = float(self._run.histograms[0].bin_width)
-        parts = [f"≈ {offset * bin_width:.3f} µs after t0"]
-        if self._current_good_window_mode() == "manual":
-            t0_bin = self._effective_t0_for_preview_run()
-            file_first, file_last = self._file_good_window_for_preview_run()
-            base = self._bin_index_base()
-            parts.append(f"File: offset {file_first - t0_bin} · last bin {file_last + base}")
-        text = " · ".join(parts)
-        self._good_window_label.setText(text)
-        self._good_window_label.set_hover_text(text)
 
     def _set_t0_mode_combo(self, mode: str) -> None:
         """Select *mode* in the t0 mode combo without emitting change signals."""
@@ -4130,6 +4114,7 @@ class GroupingDialog(TimingControls, QDialog):
                 item.setData(Qt.ItemDataRole.BackgroundRole, None)
                 item.setToolTip(_DETECTORS_CELL_TIP)
                 item.setText(", ".join(str(d) for d in ids))
+            needed_repair = self._file_timing_needs_membership_repair()
             self._groups[gid] = [d - 1 for d in ids]
         else:
             return
@@ -4138,7 +4123,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._update_vector_mode_controls()
         self._refresh_preset_selection()
         if item.column() == 3:
-            self._apply_good_window_mode_to_controls()
+            self._refresh_timing_after_membership_edit(needed_repair)
 
     def _current_included_groups(self) -> dict[int, bool]:
         """Return the include-checkbox state from the group table."""
