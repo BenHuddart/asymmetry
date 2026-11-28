@@ -130,6 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refuse to load a different file with an occupied run number, keeping the
+  original data and fits and identifying both files in the log.
 - Keep a newly loaded run's own instrument and grouping when the project's grouping belongs to
   another instrument, and show grouping errors in the plot instead of the previous run's data.
 - Open **Grouping** on runs with missing detectors in the authored grouping,

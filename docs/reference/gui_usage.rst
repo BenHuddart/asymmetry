@@ -126,9 +126,10 @@ Loading data
 Multiple file selection
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-1. Click **File → Open** (or toolbar "Open" button)
-2. Select one or multiple supported data files (use Ctrl+Click or Shift+Click)
-3. All selected files will be loaded into the data browser
+1. Choose **File → Open Data File(s)…** or use the toolbar's **Open** button.
+2. Select one or more supported data files using Ctrl+Click or Shift+Click.
+3. Check the **LOG** for files that could not be loaded, including
+   :ref:`run-number-conflicts`.
 
 The data browser shows:
 

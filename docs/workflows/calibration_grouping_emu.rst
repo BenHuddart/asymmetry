@@ -57,12 +57,15 @@ correction separately.
 Step 1 — Load a run
 --------------------
 
-Open a run from **File → Open** (or drag it onto the window). The Data
-Browser lists one row per run; the central plot shows the
-currently-selected run's asymmetry. Loading several files at once is fine —
-any run of this instrument assigned to the profile follows what you build below
-automatically, with no separate step to push it out to the rest of the
-series.
+Use **File → Open Data File(s)…** to load ``MUSR00044989`` in one project
+tab. Choose **File → New Project** and load the EMU files together in the
+new tab. The MuSR and EMU files numbered 44989 need separate tabs because
+each project has one dataset per run number. See :ref:`run-number-conflicts`
+for the message shown if both files are opened in the same tab.
+
+Use the MuSR tab for the detector-grouping example in step 2. Switch to
+the EMU tab for the calibration and steering-current exercises. Any EMU
+run assigned to the profile follows the settings you build below.
 
 Step 2 — Open the Grouping window
 -----------------------------------
