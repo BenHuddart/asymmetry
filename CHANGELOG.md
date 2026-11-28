@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Write unexpected errors and crash tracebacks to a log file, show unexpected
+  errors in the window, and add Help → Open Log Folder.
+
 - Report fitted frequency spacings descriptively and require a separate
   model comparison to assess spectral line multiplicity.
 - Use fitted frequency covariance for CLI line-spacing uncertainties and

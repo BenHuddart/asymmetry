@@ -8,6 +8,7 @@ from datetime import datetime
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
+from asymmetry.gui.crash_log import session_log
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 
@@ -56,6 +57,7 @@ class LogPanel(QWidget):
 
     def log(self, message: str, *, tag: str = "") -> None:
         """Append a timestamped entry, optionally categorised by *tag*."""
+        session_log.info("%s%s", f"[{tag.upper()}] " if tag else "", message)
         timestamp = datetime.now().strftime("%H:%M:%S")
         ts_html = f'<span style="color:{tokens.TEXT_MUTED};">{timestamp}</span>'
         tag_html = self._tag_span(tag)
