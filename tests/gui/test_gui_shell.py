@@ -494,14 +494,43 @@ def test_startup_splash_survives_until_the_window_paints(qapp):
     window.close()
 
 
-def test_startup_splash_precedes_analysis_imports():
-    script = """
+def _run_startup_script(tmp_path, script):
+    isolated_app_data = """
 import sys
+from pathlib import Path
+from asymmetry.gui.utils import app_data
+
+data_dir = Path(sys.argv[1])
+app_data.app_data_dir = lambda: data_dir
+"""
+    return subprocess.run(
+        [sys.executable, "-c", isolated_app_data + script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_startup_splash_precedes_analysis_imports(tmp_path):
+    script = """
+import faulthandler
+import sys
+import threading
+
 from asymmetry.gui import app
+from asymmetry.gui.crash_log import CrashLog
+
+original_exception_hook = sys.excepthook
+original_thread_hook = threading.excepthook
 
 show_splash = app._create_splash_screen
 
 def check_splash(qapp, logo):
+    assert qapp.findChild(CrashLog) is not None
+    assert sys.excepthook is not original_exception_hook
+    assert threading.excepthook is not original_thread_hook
+    assert faulthandler.is_enabled()
+    assert (data_dir / "logs" / "asymmetry.log").is_file()
     assert show_splash(qapp, logo).isVisible()
     imported = {"matplotlib", "scipy", "asymmetry.gui.mainwindow"} & sys.modules.keys()
     assert not imported, f"Already imported at splash: {sorted(imported)}"
@@ -512,14 +541,12 @@ app._create_splash_screen = check_splash
 sys.argv = ["asymmetry-gui", "--smoke-test"]
 app.main()
 """
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
-    )
+    result = _run_startup_script(tmp_path, script)
     assert result.returncode == 0, result.stderr
     assert "Splash shown" in result.stdout
 
 
-def test_startup_splash_accepts_input_while_dependencies_load():
+def test_startup_splash_accepts_input_while_dependencies_load(tmp_path):
     script = """
 import sys
 from threading import Event, current_thread, main_thread
@@ -589,15 +616,13 @@ app._prepare_startup = check_project
 sys.argv = ["asymmetry-gui", "--smoke-test"]
 app.main()
 """
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
-    )
+    result = _run_startup_script(tmp_path, script)
     assert result.returncode == 0, result.stderr
     assert "Splash handled input during loading" in result.stdout
     assert "Initial project created" in result.stdout
 
 
-def test_startup_dependency_failure_exits_without_a_project():
+def test_startup_dependency_failure_exits_without_a_project(tmp_path):
     script = """
 import sys
 from traceback import extract_tb
@@ -618,9 +643,7 @@ except RuntimeError as error:
 else:
     raise AssertionError("Startup did not raise the original error")
 """
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
-    )
+    result = _run_startup_script(tmp_path, script)
     assert result.returncode == 0, result.stderr
     assert "Original startup error reached the caller" in result.stdout
 

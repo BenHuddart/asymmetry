@@ -42,6 +42,28 @@ The splash screen displays **Loading analysis tools...** while Asymmetry
 loads the analysis tools in the background. Click the splash to dismiss it
 while loading continues. It also closes when the first project window opens.
 
+.. _gui-diagnostic-logs:
+
+Diagnostic logs
+---------------
+
+Choose **Help → Open Log Folder** to open the logs under the platform's
+application-data directory. When an unexpected error reaches the window,
+**Unexpected Error** shows the exception and the path to the log. The message
+reads “The traceback is in the application log.” and “Use Help → Open Log Folder
+to find the log.”
+
+* ``asymmetry.log`` records the application and runtime versions, Python
+  tracebacks, Qt warnings and errors, and the messages shown in the **Log
+  Panel**. These messages can include local file paths and diagnostic summaries.
+  Asymmetry rotates this file as it grows.
+* ``native-crash.log`` records the start of each session and any Python thread
+  stacks that can be captured after a native crash.
+
+Attach the relevant log files to a bug report opened through **Help → Report an
+Issue…**. Review the local file paths and diagnostic summaries, such as
+reported reduced χ² values, before sharing.
+
 Main window layout
 ------------------
 

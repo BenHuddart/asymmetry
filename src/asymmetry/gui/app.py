@@ -309,10 +309,15 @@ def main() -> None:
 
     from PySide6.QtWidgets import QApplication
 
+    from asymmetry.gui.crash_log import CrashLog
+
     if smoke_test:
         _install_smoke_qt_message_filter()
 
     app = QApplication(sys.argv)
+    app.setApplicationName("Asymmetry")
+    app.setOrganizationName("Asymmetry")
+    CrashLog(app)
 
     # Guard the QScreen wrappers' lifetime: PySide's .screen() bindings can
     # let the Python GC delete the live C++ QScreen (the FB↔FFT crash). Pins
@@ -328,8 +333,6 @@ def main() -> None:
 
     apply_bench_style(app)
     app.setWindowIcon(_load_app_icon())
-    app.setApplicationName("Asymmetry")
-    app.setOrganizationName("Asymmetry")
 
     from asymmetry.gui.styles.fonts import register_bundled_fonts
 
