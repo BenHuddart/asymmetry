@@ -144,10 +144,22 @@ class InstrumentResolution:
 
 
 def selection_for_profile(
-    profile: InstrumentProfile, count: int, origin: str
+    profile: InstrumentProfile, count: int, origin: str, *, labels: tuple[str, ...] = ()
 ) -> InstrumentSelection:
     matches = [
-        config.key for config in profile.detectors.acquisitions if len(config.channels) == count
+        config.key
+        for config in profile.detectors.acquisitions
+        if len(config.channels) == count
+        and (
+            not config.require_file_labels
+            or (
+                len(labels) == count
+                and all(
+                    labels[channel.ordinal - 1] in channel.file_labels
+                    for channel in config.channels
+                )
+            )
+        )
     ]
     acquisition = (
         matches[0]
@@ -197,6 +209,8 @@ def assess_instrument(
     }
     if metadata.get("psi_format"):
         facilities.add("PSI")
+    acquired_labels = next((metadata[key] for key in ACQUIRED_LABEL_KEYS if metadata.get(key)), ())
+    labels = tuple(acquired_labels) if isinstance(acquired_labels, (list, tuple)) else ()
     found = []
     hints = [
         (key, metadata[key], False)
@@ -260,7 +274,9 @@ def assess_instrument(
             ]
         for profile in matches:
             found.append(
-                selection_for_profile(profile, count, "filename" if filename else "metadata")
+                selection_for_profile(
+                    profile, count, "filename" if filename else "metadata", labels=labels
+                )
             )
     label_metadata = {
         key: metadata[key]
@@ -274,7 +290,7 @@ def assess_instrument(
                 (config.layout_key or profile.identity.layout_key) == label_key
                 for config in profile.detectors.acquisitions
             ):
-                found.append(selection_for_profile(profile, count, "labels"))
+                found.append(selection_for_profile(profile, count, "labels", labels=labels))
     candidates = tuple({candidate.identity: candidate for candidate in found}.values())
     contrary = bool(
         facilities
@@ -385,10 +401,42 @@ class InstrumentContext:
             return False
         selected = self.recorded.selection
         current = self.observed.selection
-        return not (
-            isinstance(selected, InstrumentSelection)
-            and current is not None
-            and selected.identity == current.identity
+        if not isinstance(selected, InstrumentSelection) or current is None:
+            return True
+        if selected.identity == current.identity:
+            return False
+        return not self.has_new_acquisition_map
+
+    @property
+    def has_new_acquisition_map(self) -> bool:
+        """The current profile explicitly maps a readout unavailable at capture."""
+        selected = self.recorded.selection if self.recorded is not None else None
+        current = self.observed.selection
+        if (
+            not isinstance(selected, InstrumentSelection)
+            or current is None
+            or selected.profile_key != current.profile_key
+            or selected.acquisition != UnmappedAcquisition("incompatible")
+        ):
+            return False
+        recorded = tuple(
+            (key.removeprefix("grouping_overrides."), value)
+            for key, value in normalized_evidence(self.recorded.evidence)
+        )
+        observed = dict(normalized_evidence(self.observed.evidence))
+        recorded_labels = {value for key, value in recorded if key in ACQUIRED_LABEL_KEYS}
+        observed_labels = {observed[key] for key in ACQUIRED_LABEL_KEYS if key in observed}
+        recorded_counts = {value for key, value in recorded if key == "histogram_count"}
+        if (
+            (recorded_counts and recorded_counts != {observed.get("histogram_count")})
+            or (recorded_labels and recorded_labels != observed_labels)
+            or (not recorded_labels and selected.origin != "legacy")
+        ):
+            return False
+        return any(
+            config.key == current.acquisition
+            and selected.profile_revision in config.previously_unmapped_revisions
+            for config in profile_by_key(current.profile_key).detectors.acquisitions
         )
 
     @property

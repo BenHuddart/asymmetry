@@ -125,6 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Write unexpected errors and crash tracebacks to a log file, show unexpected
   errors in the window, and add Help → Open Log Folder.
+- Open HAL-9500 files with the nine-channel forward-ring readout using
+  **Transverse (opposed pairs)** and F1/F5 asymmetry.
 
 ### Fixed
 

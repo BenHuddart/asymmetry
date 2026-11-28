@@ -118,7 +118,6 @@ these 18 runs alone.
 
 ## Acquisition coverage
 
-The full **Per-octant** preset requires the backward-ring channels. For these
-files, group the acquired positron detectors explicitly before computing a
-spectrum. The unpublished load/browse and order-parameter scenarios also
-need that preparation before they can display the intended signal.
+The files load with **Transverse (opposed pairs)**, one group per acquired
+forward detector and F1/F5 as the asymmetry pair. The FFT and MaxEnt scenarios
+check the grouping through the same controls used in the walkthrough.

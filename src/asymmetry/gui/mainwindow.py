@@ -2778,16 +2778,12 @@ class MainWindow(QMainWindow):
             if ds is not None and ds.run is not None
         }
         if dataset is not None and dataset.run is not None and len(distinct_runs) <= 1:
-            grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
-            try:
-                recommended = recommend_grouping_preset_for_run(
-                    n_histograms=len(dataset.run.histograms),
-                    metadata=dataset.metadata,
-                    source_file=dataset.run.source_file,
-                    current_preset=grouping.get("grouping_preset"),
-                )
-            except Exception:
-                recommended = None
+            recommended = recommend_grouping_preset_for_run(
+                n_histograms=len(dataset.run.histograms),
+                metadata=dataset.metadata,
+                current_preset=dataset.run.grouping.get("grouping_preset"),
+                instrument_context=resolve_instrument(dataset.run),
+            )
             if recommended is not None:
                 run_key = (int(dataset.run_number), recommended)
 
