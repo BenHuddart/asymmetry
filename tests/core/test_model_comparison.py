@@ -862,6 +862,30 @@ def test_saved_fit_draws_one_retained_centre_at_an_open_window_edge(keep_first, 
     np.testing.assert_array_equal(curves.residuals[1], [endpoint])
 
 
+@pytest.mark.parametrize(
+    ("time", "lower", "display_lower", "first"),
+    [
+        (np.array([1 - 1.5e-12, 1 - 0.75e-12, 2, 3]), 1.0, 1.0, 1),
+        (np.array([0.167999994, 0.2, 0.3]), 0.167999994, 0.168, 0),
+    ],
+)
+def test_saved_fit_residuals_use_only_verified_recorded_support(time, lower, display_lower, first):
+    data = MuonDataset(time, np.full(time.size, 3.0), np.ones(time.size))
+    model = CompositeModel(["Constant"])
+    parameters = ParameterSet([Parameter(model.param_names[0], 2.0, fixed=True)])
+    fit = FitEngine().fit(data, model.function, parameters, t_min=lower)
+    slot = FitSlot(
+        model=model.to_dict(),
+        result=fit_result_summary(fit),
+        fit_range={"min": display_lower, "max": None},
+    )
+
+    assert saved_fit_matches(slot, data)
+    curves = saved_fit_curves(slot, data)
+    np.testing.assert_array_equal(curves.residuals[0], time[first:])
+    np.testing.assert_array_equal(curves.residuals[1], fit.residuals)
+
+
 def test_legacy_saved_fits_without_structured_results_are_listed_unranked() -> None:
     """A v5-era slot (result HTML only) or a model-only slot lists and draws from its table."""
     table = [

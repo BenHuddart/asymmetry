@@ -177,6 +177,15 @@ class EffectiveReductionRecipe:
         value.setdefault("curve_operations", []).append({"operation": operation, **parameters})
         return self.from_dict(value)
 
+    def selected_time_windows(self) -> tuple[tuple[float | None, float | None], ...]:
+        """Literal windows selecting the current centres since their last transform."""
+        windows = []
+        for step in reversed(self.to_dict().get("curve_operations", ())):
+            if step["operation"] != "select_time_centres":
+                break
+            windows.append((step["t_min"], step["t_max"]))
+        return tuple(reversed(windows))
+
 
 def source_reference(metadata: dict | None) -> dict:
     """Retain available acquisition references without manufacturing content identity."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from functools import wraps
+from inspect import ismethod, unwrap
 
 import numpy as np
 from numpy.typing import NDArray
@@ -129,8 +129,31 @@ class TimeResponse:
         if self.mode == "off":
             return source
 
-        @wraps(source)
-        def prediction(time, **parameters):
-            return self.evaluate(source, time, **parameters)
+        return TimeResponseFunction(source, self)
 
-        return prediction
+
+@dataclass(frozen=True)
+class TimeResponseFunction:
+    """Callable source with its authored time response available to selectors."""
+
+    source: Callable
+    time_response: TimeResponse
+
+    @property
+    def __wrapped__(self):
+        return self.source
+
+    def __call__(self, time, **parameters):
+        return self.time_response.evaluate(self.source, time, **parameters)
+
+
+def first_model_arrival(model_fn: Callable) -> float | None:
+    """Return the exact first arrival for known model callables and wrappers."""
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    fn = unwrap(model_fn, stop=lambda value: isinstance(value, TimeResponseFunction))
+    if isinstance(fn, TimeResponseFunction):
+        return fn.time_response.first_arrival_us
+    if ismethod(fn) and isinstance(fn.__self__, CompositeModel):
+        return fn.__self__.time_response.first_arrival_us
+    return None

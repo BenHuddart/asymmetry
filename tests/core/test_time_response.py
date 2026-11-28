@@ -4,12 +4,15 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.fitting.asymmetry_global import fit_global
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.input_attribution import saved_fit_matches
 from asymmetry.core.fitting.model_comparison import saved_fit_curves
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.rrf_offset import rrf_offset_model
 from asymmetry.core.representation.base import FitSlot
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -222,6 +225,8 @@ def test_fit_window_tolerance_preserves_exact_causal_support():
     np.testing.assert_array_equal(curves.residuals[0], time[1:])
     with pytest.raises(ValueError, match="before the first arrival"):
         engine.fit(data, model.function, parameters, t_min=time[0])
+    with pytest.raises(ValueError, match="before the first arrival"):
+        engine.fit(data.time_range(time[0]), model.function, parameters)
 
 
 def test_array_and_preselected_plot_fits_share_causal_window_selection():
@@ -272,6 +277,75 @@ def test_saved_curve_can_draw_a_first_arrival_retained_beyond_the_upper_bound():
     curves = saved_fit_curves(slot, data)
     np.testing.assert_array_equal(curves.fit[0], first_arrival)
     np.testing.assert_array_equal(curves.residuals[0], [first_arrival])
+
+
+def test_saved_residual_evaluates_at_the_second_birth_discontinuity():
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    time = np.array([np.nextafter(0.162, -np.inf), 0.3, 0.4, 0.5])
+    model = CompositeModel(["Exponential"], time_response=TimeResponse("double_delta", 0.324))
+    values = dict(zip(model.param_names, (10.0, 5.0), strict=True))
+    parameters = ParameterSet(
+        [Parameter(name, value, fixed=True) for name, value in values.items()]
+    )
+    data = MuonDataset(time, model.function(time, **values), np.ones(time.size))
+    fit = FitEngine().fit(data, model.function, parameters, t_min=0.162)
+    slot = FitSlot(
+        model=model.to_dict(), result=fit_result_summary(fit), fit_range={"min": 0.162, "max": None}
+    )
+
+    assert saved_fit_matches(slot, data)
+    _, residuals = saved_fit_curves(slot, data).residuals
+    np.testing.assert_array_equal(residuals, np.zeros(time.size))
+
+
+@pytest.mark.parametrize(
+    "route", ["engine_global", "public_global", "preselected", "recipe", "compose", "rrf"]
+)
+def test_window_preserves_causal_support_across_inference_routes(route):
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    birth = -0.162
+    time = np.array([np.nextafter(birth, -np.inf), birth, 0.0, 1.0])
+    data = MuonDataset(time, np.full(time.size, 3.0), np.ones(time.size))
+    response = TimeResponse("double_delta", 0.324)
+    model = CompositeModel(
+        ["Oscillatory" if route == "rrf" else "Constant"], time_response=response
+    )
+    parameters = ParameterSet([Parameter(name, 1.0, fixed=True) for name in model.param_names])
+    engine = FitEngine()
+    global_names = list(model.param_names)
+    if route == "engine_global":
+        members, _ = engine.global_fit(
+            [data], model.function, global_names, [], {data.run_number: parameters}, t_min=birth
+        )
+        fit = members[data.run_number]
+    elif route == "public_global":
+        fit = fit_global(
+            [data],
+            model.function,
+            global_params=global_names,
+            local_params=[],
+            initial_params=parameters,
+            t_min=birth,
+        ).dataset_results[0]
+    elif route in ("preselected", "recipe"):
+        if route == "recipe":
+            data.effective_recipe = EffectiveReductionRecipe.from_dict({"version": 1})
+        crop = data.time_range(birth).time_range(t_max=1.0)
+        fit = engine.fit(crop, model.function, parameters)
+    elif route == "compose":
+
+        def source(time, **kwargs):
+            return np.full_like(time, 2.0)
+
+        fit = engine.fit(data, response.compose(source), parameters, t_min=birth)
+    else:
+        fit = engine.fit(data, rrf_offset_model(model, 2.0), parameters, t_min=birth)
+
+    assert fit.success
+    np.testing.assert_array_equal(fit.residual_time, time[1:])
+    assert fit.input_attribution["min"] == birth
 
 
 @pytest.mark.parametrize(

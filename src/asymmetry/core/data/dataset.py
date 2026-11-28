@@ -227,6 +227,10 @@ class MuonDataset:
 
     effective_recipe: EffectiveReductionRecipe | None = field(default=None, repr=False)
     computation_revision: str | None = None
+    #: Literal centre crops on curves without a reduction recipe.
+    _curve_time_windows: tuple[tuple[float | None, float | None], ...] = field(
+        default=(), repr=False
+    )
 
     # Convenience -------------------------------------------------------
 
@@ -407,16 +411,31 @@ class MuonDataset:
         )
 
     def window_mask(
-        self, lower: float | None, upper: float | None, *, support_start: float | None = None
+        self,
+        lower: float | None,
+        upper: float | None,
+        *,
+        support_start: float | None = None,
+        exact: bool = False,
     ) -> NDArray[np.bool_]:
-        """Select centres with the window semantics of the dataset's coordinate axis."""
-        if self.metadata.get("plot_domain") != "frequency":
-            return time_window_mask(self.time, lower, upper, support_start=support_start)
+        """Select centres on this axis or reconstruct exact recorded support."""
+        time = np.asarray(self.time)
+        if not exact and self.metadata.get("plot_domain") != "frequency":
+            mask = time_window_mask(time, lower, upper, support_start=support_start)
+            if support_start is not None:
+                windows = (
+                    self._curve_time_windows
+                    if self.effective_recipe is None
+                    else self.effective_recipe.selected_time_windows()
+                )
+                for bounds in windows:
+                    mask &= time_window_mask(time, *bounds, support_start=support_start)
+            return mask
         mask = np.ones(self.n_points, dtype=bool)
         if lower is not None:
-            mask &= self.time >= lower
+            mask &= time >= lower
         if upper is not None:
-            mask &= self.time <= upper
+            mask &= time <= upper
         return mask
 
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
@@ -432,6 +451,9 @@ class MuonDataset:
         mask = self.window_mask(t_min, t_max)
         return MuonDataset(
             computation_revision=self.computation_revision,
+            _curve_time_windows=(*self._curve_time_windows, (t_min, t_max))
+            if self.effective_recipe is None
+            else (),
             effective_recipe=self.effective_recipe.curve_operation(
                 "select_time_centres",
                 t_min=t_min,

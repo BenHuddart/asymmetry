@@ -43,6 +43,7 @@ from asymmetry.core.fitting.spectral_weights import (
     spectral_oversampling_correction,
     spectral_weight_policy,
 )
+from asymmetry.core.fitting.time_response import first_model_arrival
 from asymmetry.core.transform.corrections import (
     correction_metadata,
     correction_warnings,
@@ -83,21 +84,6 @@ _MIN_REFERENCE_MHZ = 0.1
 #: of engine: the guard helper itself, :meth:`FitEngine._fit_core`, and the
 #: public entry point (:meth:`FitEngine.fit` / :meth:`FitEngine.fit_arrays`).
 _ADVISORY_STACKLEVEL = 4
-
-
-def _first_model_arrival(model_fn):
-    from asymmetry.core.fitting.composite import CompositeModel
-
-    if inspect.ismethod(model_fn) and isinstance(model_fn.__self__, CompositeModel):
-        return model_fn.__self__.time_response.first_arrival_us
-    return None
-
-
-def _fit_window_for_model(dataset, t_min, t_max, support_start):
-    if support_start is not None and t_min is None and t_max is None:
-        # A plot fit can supply a preselected record with its literal fit bounds.
-        return dataset.metadata.get("fit_range", (None, None))
-    return t_min, t_max
 
 
 def _warn_on_fixed_frequency_far_from_field(
@@ -1174,7 +1160,6 @@ def _pack_coupled_block(
             global_uncertainties[pname] = sigma
 
     results: dict[int, FitResult] = {}
-    support_start = _first_model_arrival(block.model_fn)
     for ds in problem.block_fitted_datasets[block.key]:
         params = initial_params[ds.run_number]
 
@@ -1297,10 +1282,9 @@ def _pack_coupled_block(
             input_attribution=fit_input_attribution(
                 record,
                 ds,
-                window=_fit_window_for_model(ds, block.t_min, block.t_max, support_start),
+                window=(block.t_min, block.t_max),
                 error_oversampling=member_oversampling,
                 coupled_unit_weights=not unit_weights and ds.run_number in connected_runs,
-                support_start=support_start,
             ),
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=solution.success and global_model_error is None and invalid_model is None,
@@ -1479,9 +1463,9 @@ class FitEngine:
             raise FitInputError(
                 "fit(MuonDataset) requires Gaussian observations; use PoissonCounts"
             )
-        support_start = _first_model_arrival(model_fn)
-        window = _fit_window_for_model(dataset, t_min, t_max, support_start)
-        observations = _dataset_observations(dataset, *window, support_start=support_start)
+        observations = _dataset_observations(
+            dataset, t_min, t_max, support_start=first_model_arrival(model_fn)
+        )
         return self._fit_core(
             observations,
             model_fn,
@@ -1493,8 +1477,6 @@ class FitEngine:
             migrad_kwargs=migrad_kwargs,
             error_oversampling=error_oversampling,
             field_source=dataset,
-            input_window=window,
-            support_start=support_start,
         )
 
     def fit_arrays(
@@ -1538,7 +1520,7 @@ class FitEngine:
             run_number,
             t_min=t_min,
             t_max=t_max,
-            support_start=_first_model_arrival(model_fn),
+            support_start=first_model_arrival(model_fn),
         )
         return self._fit_core(
             observations,
@@ -1592,7 +1574,6 @@ class FitEngine:
         error_oversampling: float,
         field_source: MuonDataset | None,
         input_window=None,
-        support_start=None,
     ) -> FitResult:
         """Minimize checked observations and retain their attribution."""
         gaussian = observations if isinstance(observations, GaussianObservations) else None
@@ -1605,7 +1586,6 @@ class FitEngine:
             field_source,
             window=input_window,
             error_oversampling=error_oversampling,
-            support_start=support_start,
         )
         time = observations.time
         if isinstance(observations, GaussianObservations):
@@ -2087,11 +2067,12 @@ class FitEngine:
         if observations is None:
             if cost_factory is not None and cost_factory.objective is not Objective.GAUSSIAN:
                 raise FitInputError("Poisson global fits require typed PoissonCounts observations")
-            support_start = _first_model_arrival(model_fn)
+            support_start = first_model_arrival(model_fn)
             observations = {
                 ds.run_number: _dataset_observations(
                     ds,
-                    *_fit_window_for_model(ds, t_min, t_max, support_start),
+                    t_min,
+                    t_max,
                     support_start=support_start,
                 )
                 for ds in datasets
@@ -2402,11 +2383,12 @@ class FitEngine:
 
         observations = {}
         for block in blocks:
-            support_start = _first_model_arrival(block.model_fn)
+            support_start = first_model_arrival(block.model_fn)
             for ds in block.datasets:
                 observations[ds.run_number] = _dataset_observations(
                     ds,
-                    *_fit_window_for_model(ds, block.t_min, block.t_max, support_start),
+                    block.t_min,
+                    block.t_max,
                     support_start=support_start,
                 )
         problem = _build_coupled_problem(

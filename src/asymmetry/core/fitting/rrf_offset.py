@@ -41,6 +41,7 @@ callers and pins the engine path's equivalence.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import wraps
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -140,6 +141,7 @@ def offset_model_function(
     """
     offset_items = tuple(offsets.items())
 
+    @wraps(base_fn)
     def wrapped(t: NDArray, **params: float) -> NDArray[np.float64]:
         shifted = dict(params)
         for name, off in offset_items:
