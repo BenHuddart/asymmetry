@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         FitWizardRecommendation,
     )
     from asymmetry.core.fitting.global_fit_wizard import GlobalCandidateAssessment
+    from asymmetry.core.fitting.likelihood import GaussianObservations
     from asymmetry.core.representation.base import FitSlot
 
 Curve = tuple[NDArray[np.float64], NDArray[np.float64]]
@@ -383,6 +384,26 @@ def saved_fit_model(slot: FitSlot) -> tuple[CompositeModel, dict[str, float]] | 
     return model, {name: values[name] for name in model.param_names}
 
 
+def saved_fit_curve_bounds(
+    slot: FitSlot, dataset: MuonDataset, observations: GaussianObservations | None
+) -> tuple[float, float]:
+    """Include verified fitted bin centres in the drawable saved window."""
+    window = slot.fit_range or {"min": None, "max": None}
+    lower, upper = window["min"], window["max"]
+    x_min = float(np.min(dataset.time)) if lower is None else lower
+    x_max = float(np.max(dataset.time)) if upper is None else upper
+    if observations is not None:
+        return min(x_min, float(observations.time.min())), max(
+            x_max, float(observations.time.max())
+        )
+    if x_min > x_max:
+        if lower is None:
+            x_max = x_min
+        elif upper is None:
+            x_min = x_max
+    return x_min, x_max
+
+
 def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
     """A saved single fit's dense curve over its window, and its normalised residuals.
 
@@ -395,17 +416,8 @@ def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
     if drawable is None:
         return None
     model, values = drawable
-    window = slot.fit_range or {"min": None, "max": None}
-    lower, upper = window["min"], window["max"]
-    x_min = float(np.min(dataset.time)) if lower is None else lower
-    x_max = float(np.max(dataset.time)) if upper is None else upper
-    if x_min > x_max:
-        if lower is None:
-            x_max = x_min
-        elif upper is None:
-            x_min = x_max
-    curve = dense_fit_curve(model, values, x_min, x_max)
     observations = saved_fit_observations(slot, dataset)
+    curve = dense_fit_curve(model, values, *saved_fit_curve_bounds(slot, dataset, observations))
     sigma = observations.stated_sigma if observations is not None else None
     if sigma is None:
         return RunCurves(curve, (np.array([]), np.array([])))

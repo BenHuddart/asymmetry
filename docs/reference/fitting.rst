@@ -718,7 +718,7 @@ available as historical parameter values and models. Run an explicit refit to
 record a current result. Saving or exporting preserves the revision of a
 historical result.
 Saved-fit residuals evaluate the model at the verified fitted bin centres.
-The displayed fit curve uses its own sampling grid.
+The displayed curve uses its own sampling grid and spans those centres.
 This compatibility check changes neither the objective nor the statistical
 meaning of its uncertainties. See :doc:`project_files` for saved history and
 :doc:`agent_workflow` for persistent work-directory recomputation.

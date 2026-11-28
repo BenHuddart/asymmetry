@@ -1,5 +1,7 @@
 """Independent count-ratio targets for ordinary double-pulse predictions."""
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -297,6 +299,67 @@ def test_saved_residual_evaluates_at_the_second_birth_discontinuity():
     assert saved_fit_matches(slot, data)
     _, residuals = saved_fit_curves(slot, data).residuals
     np.testing.assert_array_equal(residuals, np.zeros(time.size))
+
+
+def test_saved_curve_includes_fitted_centres_when_display_bounds_round_before_birth():
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    birth = -0.1626
+    time = np.array([birth, -0.1625756, -0.1625512, 1.0])
+    data = MuonDataset(time, np.full(time.size, 3.0), np.ones(time.size))
+    model = CompositeModel(["Constant"], time_response=TimeResponse("double_delta", 0.3252))
+    parameters = ParameterSet([Parameter(model.param_names[0], 3.0, fixed=True)])
+    result = FitEngine().fit(
+        data, model.function, parameters, t_min=np.nextafter(birth, np.inf), t_max=time[2]
+    )
+    slot = FitSlot(
+        model=model.to_dict(),
+        result=fit_result_summary(result),
+        fit_range={"min": -0.163, "max": -0.163},
+    )
+
+    assert saved_fit_matches(slot, data)
+    curves = saved_fit_curves(slot, data)
+    assert (curves.fit[0][0], curves.fit[0][-1]) == (birth, time[2])
+    np.testing.assert_array_equal(curves.residuals[0], time[:3])
+    np.testing.assert_array_equal(curves.residuals[1], np.zeros(3))
+
+
+@pytest.mark.parametrize("with_recipe", [False, True])
+def test_factor_one_rebin_retains_the_literal_causal_crop(with_recipe):
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    birth = -0.162
+    time = np.array([birth - 0.75e-12, birth - 0.5e-12, birth, 0.0, 1.0])
+    recipe = EffectiveReductionRecipe.from_dict({"version": 1}) if with_recipe else None
+    data = MuonDataset(time, np.full(time.size, 3.0), np.ones(time.size), effective_recipe=recipe)
+    model = CompositeModel(["Constant"], time_response=TimeResponse("double_delta", 0.324))
+    parameters = ParameterSet([Parameter(model.param_names[0], 3.0, fixed=True)])
+    crop = data.time_range(birth)
+
+    copied = crop.merge_curve_bins(1)
+    result = FitEngine().fit(copied, model.function, parameters)
+    np.testing.assert_array_equal(result.residual_time, time[2:])
+    merged = crop.merge_curve_bins(2)
+    assert merged.time[0] < birth
+    with pytest.raises(ValueError, match="before the first arrival"):
+        FitEngine().fit(merged, model.function, parameters)
+
+
+def test_partial_model_keeps_the_exact_first_arrival_guard():
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    birth = -0.162
+    time = np.array([np.nextafter(birth, -np.inf), birth, 0.0, 1.0])
+    data = MuonDataset(time, np.full(time.size, 3.0), np.ones(time.size))
+    model = CompositeModel(["Constant"], time_response=TimeResponse("double_delta", 0.324))
+    parameters = ParameterSet([Parameter(model.param_names[0], 3.0, fixed=True)])
+    wrapped = partial(model.function)
+
+    fit = FitEngine().fit(data, wrapped, parameters, t_min=birth)
+    np.testing.assert_array_equal(fit.residual_time, time[1:])
+    with pytest.raises(ValueError, match="before the first arrival"):
+        FitEngine().fit(data, wrapped, parameters, t_min=time[0])
 
 
 @pytest.mark.parametrize(

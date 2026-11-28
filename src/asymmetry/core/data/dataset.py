@@ -393,6 +393,7 @@ class MuonDataset:
             )
         return MuonDataset(
             computation_revision=computation.COMPUTATION_REVISION,
+            _curve_time_windows=self._curve_time_windows if factor == 1 else (),
             effective_recipe=self.effective_recipe.curve_operation(
                 "mean_curve_bins",
                 factor=int(factor),

@@ -181,7 +181,10 @@ class EffectiveReductionRecipe:
         """Literal windows selecting the current centres since their last transform."""
         windows = []
         for step in reversed(self.to_dict().get("curve_operations", ())):
-            if step["operation"] != "select_time_centres":
+            operation = step["operation"]
+            if operation == "mean_curve_bins" and step["factor"] == 1:
+                continue
+            if operation != "select_time_centres":
                 break
             windows.append((step["t_min"], step["t_max"]))
         return tuple(reversed(windows))

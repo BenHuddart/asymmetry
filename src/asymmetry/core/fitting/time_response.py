@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from inspect import ismethod, unwrap
 
 import numpy as np
@@ -152,6 +153,8 @@ def first_model_arrival(model_fn: Callable) -> float | None:
     from asymmetry.core.fitting.composite import CompositeModel
 
     fn = unwrap(model_fn, stop=lambda value: isinstance(value, TimeResponseFunction))
+    if isinstance(fn, partial):
+        return first_model_arrival(fn.func)
     if isinstance(fn, TimeResponseFunction):
         return fn.time_response.first_arrival_us
     if ismethod(fn) and isinstance(fn.__self__, CompositeModel):
