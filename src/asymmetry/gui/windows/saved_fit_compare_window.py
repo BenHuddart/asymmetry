@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QCloseEvent
@@ -54,11 +55,9 @@ class SavedFitCompareWindow(QDialog):
         self._dataset: MuonDataset | None = None
         self._fits: tuple[tuple[FitSlot, str], ...] = ()
         self._open_id: str | None = None
-        #: Built curves by fit id, with the slot they were built from: a fit
-        #: re-run in place keeps its id but not its curve.
-        self._curves: dict[str, tuple[FitSlot, RunCurves]] = {}
-        #: Slots whose curves a worker is building, by fit id.
-        self._building: dict[str, FitSlot] = {}
+        #: Curves or a display message, with the slot they belong to.
+        self._curves: dict[str, tuple[FitSlot, RunCurves | str]] = {}
+        self._building: set[str] = set()
         self._tasks = TaskRunner(self)
 
         layout = QVBoxLayout(self)
@@ -77,6 +76,8 @@ class SavedFitCompareWindow(QDialog):
 
         self._panel = ModelComparePanel(continue_text=OPEN_A_TEXT)
         self._panel.curves_required.connect(self._build_curves)
+        self._panel.a_changed.connect(self._update_curve_status)
+        self._panel.b_changed.connect(self._update_curve_status)
         self._panel.continue_requested.connect(self.open_requested)
         layout.addWidget(self._panel, 1)
         self._status = QLabel("")
@@ -116,7 +117,7 @@ class SavedFitCompareWindow(QDialog):
         curves = {
             fit_id: run_curves
             for fit_id, (slot, run_curves) in self._curves.items()
-            if live.get(fit_id) is slot
+            if live.get(fit_id) is slot and isinstance(run_curves, RunCurves)
         }
         return summarise_saved_fits(
             self._fits,
@@ -134,46 +135,52 @@ class SavedFitCompareWindow(QDialog):
         if a_key not in keys:
             a_key = self._open_id if self._open_id in keys else None
         self._panel.set_candidates(summaries, self._metric.currentText(), a_key=a_key)
+        self._update_curve_status()
+
+    def _update_curve_status(self, *_args) -> None:
+        for fit_id in (self._panel.a_key(), self._panel.b_key()):
+            entry = self._curves.get(fit_id)
+            if entry is not None and isinstance(entry[1], str):
+                self._status.setText(entry[1])
+                return
+        self._status.clear()
 
     def _build_curves(self, fit_id: str) -> None:
         """Build one fit's dense curve and residuals on a worker (D9)."""
-        slot = next(slot for slot, _name in self._fits if slot.fit_id == fit_id)
-        if self._building.get(fit_id) is slot:
+        slot = next((slot for slot, _name in self._fits if slot.fit_id == fit_id), None)
+        if slot is None or fit_id in self._building or fit_id in self._curves:
             return
-        self._building[fit_id] = slot
-        if saved_fit_model(slot) is None:
-            self._status.setText(
-                "That fit was saved without fitted values to draw; its data is shown alone."
-            )
-            return
+        self._building.add(fit_id)
         dataset = self._dataset
 
-        def _materialise(_worker: object) -> tuple[MuonDataset, FitSlot, RunCurves | None]:
-            return dataset, slot, saved_fit_curves(slot, dataset)
+        def _materialise(_worker: object) -> RunCurves | str:
+            if saved_fit_model(slot) is None:
+                return "That fit was saved without fitted values to draw; its data is shown alone."
+            curves = saved_fit_curves(slot, dataset)
+            if curves is None:
+                return "The saved fit window is outside the model's supported range."
+            return curves
 
         self._tasks.start(
             _materialise,
-            on_finished=self._on_curves_built,
-            on_error=self._on_curves_failed,
+            on_finished=partial(self._on_curves_built, dataset, slot),
+            on_error=partial(self._on_curves_failed, dataset, slot),
         )
 
-    def _on_curves_built(self, result: object) -> None:
-        """GUI-thread relay: keep the curves and redraw A and B with them.
-
-        Residuals taken against a record the host has since replaced are dropped.
-        """
-        dataset, slot, run_curves = result
+    def _on_curves_built(
+        self, dataset: MuonDataset, slot: FitSlot, result: RunCurves | str
+    ) -> None:
+        """Publish one outcome for the binding that requested it."""
         if dataset is not self._dataset:
             return
-        if run_curves is None:
-            self._status.setText("The saved fit window is outside the model's supported range.")
-            return
-        self._curves[slot.fit_id] = (slot, run_curves)
-        self._panel.refresh_curves(self._summaries())
+        self._building.remove(slot.fit_id)
+        self._curves[slot.fit_id] = (slot, result)
+        if isinstance(result, RunCurves):
+            self._panel.refresh_curves(self._summaries())
+        self._update_curve_status()
 
-    def _on_curves_failed(self, message: str) -> None:
-        """A fit that cannot be drawn keeps showing its data alone; it is not retried."""
-        self._status.setText(f"Could not draw that fit: {message}")
+    def _on_curves_failed(self, dataset: MuonDataset, slot: FitSlot, message: str) -> None:
+        self._on_curves_built(dataset, slot, f"Could not draw that fit: {message}")
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         self._tasks.shutdown()

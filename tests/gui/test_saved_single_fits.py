@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -234,7 +235,9 @@ def test_saved_single_overlay_includes_only_verified_centres_beyond_rounded_boun
     assert panel.get_fit_range() == (lower, upper)
 
 
-def test_opening_historical_fit_with_prearrival_window_restores_form_without_overlay(mw, qapp):
+def test_opening_historical_fit_with_prearrival_window_restores_form_without_overlay(
+    mw, qapp, monkeypatch
+):
     panel = mw._plot_panel
     dataset = mw._data_browser.get_dataset(_RUN)
     birth = -0.1626
@@ -247,7 +250,7 @@ def test_opening_historical_fit_with_prearrival_window_restores_form_without_ove
     _fit(mw, _GAUSS)
 
     _, fit_set = _fit_set(mw)
-    historical = fit_set.fits[0]
+    historical, current = fit_set.fits
     historical.fit_range = {"min": -0.163, "max": -0.163}
     historical.result["computation_revision"] = "21"
     overlay_id = SAVED_FIT_ID_PREFIX + historical.fit_id
@@ -267,6 +270,24 @@ def test_opening_historical_fit_with_prearrival_window_restores_form_without_ove
     wait_for(lambda: bool(compare._status.text()), qapp)
     assert compare._status.text() == "The saved fit window is outside the model's supported range."
     assert compare.panel.a_key() == historical.fit_id
+
+    compare.panel.set_a(current.fit_id)
+    current_status = compare._status.text()
+    compare.panel.set_b(historical.fit_id)
+    assert compare._status.text() == "The saved fit window is outside the model's supported range."
+    compare.panel.set_b(None)
+    unpinned_status = compare._status.text()
+    compare.panel.set_b(historical.fit_id)
+
+    exceptions = []
+    monkeypatch.setattr(
+        sys, "excepthook", lambda _type, value, _traceback: exceptions.append(value)
+    )
+    _tab(mw).saved_fit_delete_requested.emit(historical.fit_id)
+    assert not exceptions
+    assert compare.panel.a_key() == current.fit_id
+    assert compare.panel.b_key() is None
+    assert (current_status, unpinned_status, compare._status.text()) == ("", "", "")
 
 
 def test_rename_then_delete_down_to_no_fit(mw) -> None:
