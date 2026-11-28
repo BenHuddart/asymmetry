@@ -128,6 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep a newly loaded run's own instrument and grouping when the project's grouping belongs to
+  another instrument, and show grouping errors in the plot instead of the previous run's data.
 - Open **Grouping** on runs with missing detectors in the authored grouping,
   show the preview diagnostic, and let users repair the membership.
 

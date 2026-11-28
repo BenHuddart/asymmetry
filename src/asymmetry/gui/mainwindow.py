@@ -143,6 +143,7 @@ from asymmetry.core.instrument import (
 from asymmetry.core.instruments.resolution import (
     InstrumentConflictError,
     RecordedInstrumentChoice,
+    layout_key_for_selection,
     resolve_instrument,
 )
 from asymmetry.core.io import background_reference_for_grouping, resolve_background_reference
@@ -636,6 +637,15 @@ def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) ->
             grouping[key] = payload.get(key)
         else:
             grouping.pop(key, None)
+
+
+def _mapped_instrument_identity(run: Run | None) -> tuple[str, str] | None:
+    if run is None:
+        return None
+    selection = resolve_instrument(run).selection
+    if selection is None or layout_key_for_selection(selection, len(run.histograms)) is None:
+        return None
+    return selection.identity
 
 
 def _included_groups_key(grouping: dict) -> tuple:
@@ -2897,7 +2907,7 @@ class MainWindow(QMainWindow):
 
             render_mode = "single"
             self._plot_panel.plot_dataset(targets[0])
-        except CorrectionUnavailableError as exc:
+        except (CorrectionUnavailableError, InvalidGroupingError) as exc:
             render_mode = "unavailable"
             rendered_targets = []
             self._plot_panel.show_message(str(exc))
@@ -3812,7 +3822,7 @@ class MainWindow(QMainWindow):
         loaded_run_numbers: list[int] = []
         apply_comment_field_to_all = False
         overwrite_existing_to_all = False
-        auto_grouping_payload = self._get_project_grouping_template()
+        project_grouping = self._get_project_grouping_template()
         auto_grouping_attempts = 0
         auto_grouping_applied = 0
 
@@ -3890,33 +3900,11 @@ class MainWindow(QMainWindow):
                             dataset.metadata["correction_error"] = str(exc)
                         dataset.metadata.pop("grouping_overrides", None)
                         self._assign_dataset_profile(dataset, inherited_profile.name)
-                    elif auto_grouping_payload is not None:
+                    elif project_grouping is not None:
                         auto_grouping_attempts += 1
-                        grouping_payload = dict(auto_grouping_payload.payload)
-                        # Acquisition normalisers and exposures never follow a template.
-                        for per_run_key in self._PER_RUN_NORMALISER_KEYS:
-                            grouping_payload.pop(per_run_key, None)
-                        active_axis = None
-                        if hasattr(self._plot_panel, "get_current_polarization_axis"):
-                            active_axis = self._normalize_vector_axis(
-                                self._plot_panel.get_current_polarization_axis()
-                            )
-                        if active_axis and active_axis != "ALL":
-                            grouping_payload["vector_axis"] = active_axis
-
-                        try:
-                            applied, _ = self._apply_grouping_settings_to_dataset(
-                                dataset,
-                                PreparedGrouping(
-                                    grouping_payload, auto_grouping_payload.instrument_choice
-                                ),
-                            )
-                        except InvalidGroupingError as exc:
-                            dataset.run.grouping = dataset.run.grouping | exc.grouping
-                            dataset.metadata["correction_error"] = str(exc)
-                            applied = False
-                        if applied:
-                            auto_grouping_applied += 1
+                        auto_grouping_applied += self._apply_project_grouping_template(
+                            dataset, *project_grouping
+                        )
 
                     self._data_browser.add_dataset(dataset)
                     if dataset:
@@ -3930,20 +3918,11 @@ class MainWindow(QMainWindow):
 
                 break
 
-        # F8: an OS file picker can return a multi-file selection out of run
-        # order, leaving the browser's insertion order scrambled so a later
-        # shift-range selection is silently non-contiguous. Pick a sane initial
-        # indicator — sort by run number — unless the user already chose a sort
-        # or the rows are already in order. Runs before the selection below so
-        # the just-loaded run is selected in the ordered view.
+        # Contiguous browser selections follow run order unless the user chose a sort.
         if hasattr(self._data_browser, "sort_by_run_number_if_unordered"):
             self._data_browser.sort_by_run_number_if_unordered()
 
-        # Select the last successfully loaded run in the browser: this drives
-        # the standard selection pipeline (_on_dataset_selected), which stores
-        # the OUTGOING dataset's Fourier/MaxEnt panel state before switching —
-        # assigning _current_dataset directly would attribute the old panel
-        # state to the new run — and then plots and syncs availability.
+        # Browser selection saves the previous run's Fourier and MaxEnt state before switching.
         if last_dataset:
             run_number = int(last_dataset.run_number)
             if hasattr(self._data_browser, "select_runs"):
@@ -3979,7 +3958,7 @@ class MainWindow(QMainWindow):
         elif failed > 0:
             self.statusBar().showMessage(f"Failed to load {failed} file(s)")
 
-        if auto_grouping_payload is not None and auto_grouping_attempts > 0:
+        if auto_grouping_attempts:
             skipped = auto_grouping_attempts - auto_grouping_applied
             self._log_panel.log(
                 "Auto-applied existing project grouping to "
@@ -4066,7 +4045,7 @@ class MainWindow(QMainWindow):
             return answer
         return QMessageBox.StandardButton.No
 
-    def _get_project_grouping_template(self) -> PreparedGrouping | None:
+    def _get_project_grouping_template(self) -> tuple[dict, tuple[str, str] | None] | None:
         """Use the highest run number as the template for newly imported files."""
         browser_datasets: list = []
         if hasattr(self._data_browser, "get_all_datasets"):
@@ -4086,17 +4065,42 @@ class MainWindow(QMainWindow):
         ranked.sort(key=lambda item: item[0], reverse=True)
         for _, dataset in ranked:
             payload = self._extract_grouping_overrides(dataset)
-            if isinstance(payload, dict) and isinstance(payload.get("groups"), dict):
-                if not payload["groups"]:
-                    continue
-                payload.pop("nexus_grouping_declaration", None)
-                payload.pop("grouping_provenance", None)
-                context = resolve_instrument(dataset.run)
-                choice = context.recorded
-                if choice is None and context.selection is not None:
-                    choice = RecordedInstrumentChoice(context.selection, context.observed.evidence)
-                return PreparedGrouping(payload, choice)
+            if payload and isinstance(payload.get("groups"), dict) and payload["groups"]:
+                return payload, _mapped_instrument_identity(dataset.run)
         return None
+
+    def _apply_project_grouping_template(
+        self, dataset: MuonDataset, payload: dict, identity: tuple[str, str] | None
+    ) -> bool:
+        if identity is None or identity != _mapped_instrument_identity(dataset.run):
+            self._log_panel.log(
+                f"Run {dataset.run_label}: skipped project grouping because the instrument or "
+                "detector configuration does not match the template.",
+                tag="grouping",
+            )
+            return False
+
+        # Acquisition normalisers and declaration provenance belong to the imported file.
+        local_keys = (
+            *self._PER_RUN_NORMALISER_KEYS,
+            "nexus_grouping_declaration",
+            "grouping_provenance",
+        )
+        grouping = {key: value for key, value in payload.items() if key not in local_keys}
+        axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        if axis and axis != "ALL":
+            grouping["vector_axis"] = axis
+        try:
+            applied, _ = self._apply_grouping_settings_to_dataset(
+                dataset, PreparedGrouping(grouping)
+            )
+            return applied
+        except InvalidGroupingError as exc:
+            dataset.metadata["correction_error"] = str(exc)
+            self._log_panel.log(
+                f"Run {dataset.run_label}: Corrections incomplete: {exc}", tag="grouping"
+            )
+            return False
 
     def _load_file(self, path: str, *, replay: ReplayState | None = None):
         started_at = time.perf_counter()
@@ -5071,24 +5075,21 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None:
             return False, {}
+        candidate = run
         if isinstance(grouping_result, PreparedGrouping):
             if grouping_result.instrument_choice is not None:
-                run.instrument_choice = grouping_result.instrument_choice
+                candidate = replace(run, instrument_choice=grouping_result.instrument_choice)
             grouping_result = grouping_result.payload
         else:
             grouping_result = calibration_values(grouping_result)
-        context = resolve_instrument(run)
+        context = resolve_instrument(candidate)
         if context.requires_choice:
             raise InvalidGroupingError(str(InstrumentConflictError(context)), grouping_result)
-        self._reduction_cache.invalidate_run(run)
         existing_grouping = dict(run.grouping) if isinstance(run.grouping, dict) else {}
 
-        groups_raw = grouping_result.get("groups", {})
-        if not isinstance(groups_raw, dict):
-            groups_raw = {}
-
+        groups_raw = grouping_result.get("groups")
         groups: dict[int, list[object]] = {}
-        for key, values in groups_raw.items():
+        for key, values in groups_raw.items() if isinstance(groups_raw, dict) else ():
             try:
                 gid = int(key)
             except (TypeError, ValueError):
@@ -5234,9 +5235,60 @@ class MainWindow(QMainWindow):
         )
 
         if not run.histograms:
-            source_last_bin = len(source_time) - 1
-            lo = max(0, first_good)
-            hi = min(source_last_bin, last_good)
+            grouping = dict(existing_grouping)
+            if groups:
+                grouping["groups"] = groups
+                grouping["forward_group"] = forward_gid
+                grouping["backward_group"] = backward_gid
+            grouping["alpha"] = float(alpha if alpha > 0 else 1.0)
+            _sync_grouping_keys(grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
+            if axis_pairs:
+                grouping["alpha_x"] = float(vector_alphas.get("P_x", grouping["alpha"]))
+                grouping["alpha_y"] = float(vector_alphas.get("P_y", grouping["alpha"]))
+                grouping["alpha_z"] = float(vector_alphas.get("P_z", grouping["alpha"]))
+            grouping["t0_bin"] = t0_bin
+            grouping["t_good_offset"] = t_good_offset
+            grouping["first_good_bin"] = first_good
+            grouping["last_good_bin"] = last_good
+            grouping["bin_index_base"] = bin_index_base
+            grouping["bunching_factor"] = bunch_factor
+            grouping["deadtime_correction"] = bool(
+                grouping_result.get("deadtime_correction", False)
+            )
+            grouping["deadtime_mode"] = deadtime_mode
+            if grouping_result.get("deadtime_method"):
+                grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
+            else:
+                grouping.pop("deadtime_method", None)
+            _sync_grouping_keys(grouping, grouping_result, DEADTIME_SETTING_KEYS)
+            grouping.pop("deadtime_source_path", None)
+            grouping.pop("deadtime_loaded_us", None)
+            if deadtime_mode != "from_file":
+                if isinstance(grouping_result.get("dead_time_us"), list):
+                    grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
+            grouping["background_correction"] = use_background
+            _sync_grouping_keys(grouping, grouping_result, REDUCTION_SETTING_KEYS)
+            if not use_background:
+                grouping.pop("background_method", None)
+                grouping.pop("background_values", None)
+            grouping["period_mode"] = period_mode
+            group_names = grouping_result.get("group_names")
+            if isinstance(group_names, dict) and group_names:
+                grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
+            included_groups = grouping_result.get("included_groups")
+            if isinstance(included_groups, dict):
+                grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
+            self._store_vector_axis(grouping, vector_axis if axis_pairs else None)
+            self._store_projections(grouping, projections_to_store)
+            preset_name = grouping_result.get("grouping_preset")
+            if preset_name:
+                grouping["grouping_preset"] = str(preset_name)
+            else:
+                grouping.pop("grouping_preset", None)
+            grouping.pop("grouping_provenance", None)
+            grouping = merge_grouping_request(existing_grouping, grouping_result) | grouping
+            self._preserve_per_run_normalisers(grouping, existing_grouping, grouping_result)
+            lo, hi = max(0, first_good), min(len(source_time) - 1, last_good)
             if lo <= hi:
                 time_out = source_time[lo : hi + 1].copy()
                 asym_out = source_asymmetry[lo : hi + 1].copy()
@@ -5248,66 +5300,10 @@ class MainWindow(QMainWindow):
                         err_out,
                         bunch_factor,
                     )
-                dataset.time = time_out
-                dataset.asymmetry = asym_out
-                dataset.error = err_out
+                dataset.time, dataset.asymmetry, dataset.error = time_out, asym_out, err_out
 
-            if not isinstance(run.grouping, dict):
-                run.grouping = {}
-            if groups:
-                run.grouping["groups"] = groups
-                run.grouping["forward_group"] = forward_gid
-                run.grouping["backward_group"] = backward_gid
-            run.grouping["alpha"] = float(alpha if alpha > 0 else 1.0)
-            _sync_grouping_keys(run.grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
-            if axis_pairs:
-                run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run.grouping["alpha"]))
-                run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run.grouping["alpha"]))
-                run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run.grouping["alpha"]))
-            run.grouping["t0_bin"] = t0_bin
-            run.grouping["t_good_offset"] = t_good_offset
-            run.grouping["first_good_bin"] = first_good
-            run.grouping["last_good_bin"] = last_good
-            run.grouping["bin_index_base"] = bin_index_base
-            run.grouping["bunching_factor"] = bunch_factor
-            run.grouping["deadtime_correction"] = bool(
-                grouping_result.get("deadtime_correction", False)
-            )
-            run.grouping["deadtime_mode"] = deadtime_mode
-            if grouping_result.get("deadtime_method"):
-                run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
-            else:
-                run.grouping.pop("deadtime_method", None)
-            _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
-            run.grouping.pop("deadtime_source_path", None)
-            run.grouping.pop("deadtime_loaded_us", None)
-            if deadtime_mode != "from_file":
-                if isinstance(grouping_result.get("dead_time_us"), list):
-                    run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
-            run.grouping["background_correction"] = use_background
-            _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
-            if not use_background:
-                run.grouping.pop("background_method", None)
-                run.grouping.pop("background_values", None)
-            run.grouping["period_mode"] = period_mode
-            group_names = grouping_result.get("group_names")
-            if isinstance(group_names, dict) and group_names:
-                run.grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
-            included_groups = grouping_result.get("included_groups")
-            if isinstance(included_groups, dict):
-                run.grouping["included_groups"] = {
-                    int(k): bool(v) for k, v in included_groups.items()
-                }
-            self._store_vector_axis(run.grouping, vector_axis if axis_pairs else None)
-            self._store_projections(run.grouping, projections_to_store)
-            preset_name = grouping_result.get("grouping_preset")
-            if preset_name:
-                run.grouping["grouping_preset"] = str(preset_name)
-            else:
-                run.grouping.pop("grouping_preset", None)
-            run.grouping.pop("grouping_provenance", None)
-            run.grouping = merge_grouping_request(existing_grouping, grouping_result) | run.grouping
-            self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
+            self._reduction_cache.invalidate_run(run)
+            run.grouping, run.instrument_choice = grouping, candidate.instrument_choice
             dataset.metadata.pop("correction_error", None)
             return True, {str(period_mode): CorrectionOutcomes()}
 
@@ -5427,7 +5423,7 @@ class MainWindow(QMainWindow):
         facility = resolve_facility(
             metadata=run.metadata,
             grouping=reduction_grouping,
-            instrument_choice=run.instrument_choice,
+            instrument_choice=candidate.instrument_choice,
         ) or resolve_facility(metadata=dataset.metadata)
         reference = (
             self._resolve_background_reference(reduction_grouping)
@@ -5447,28 +5443,20 @@ class MainWindow(QMainWindow):
             deadtime_mode=deadtime_mode,
             use_background=use_background,
             facility=facility,
-            metadata=reference_observation_metadata(run),
+            metadata=reference_observation_metadata(candidate),
             reference_resolver=partial(background_reference_for_grouping, reference),
         )
-        time_axis, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
         outcomes = reduced.corrections
         for key in ("background_method", "background_values", "background_details"):
             grouping.pop(key, None)
         grouping.update(background_grouping_metadata(outcomes))
 
         observation = capture_histogram_observation(
-            replace(run, grouping=reduction_grouping),
+            replace(candidate, grouping=reduction_grouping),
             facility=facility,
             reference=reference,
             parent=self,
         )
-        dataset.metadata = reduced.metadata_with_alignment(dataset.metadata)
-        dataset.effective_recipe = reduced.effective_recipe
-        dataset.computation_revision = reduced.computation_revision
-        dataset.histogram_observation = observation
-        dataset.ratio_validity = reduced.ratio_validity
-        dataset.time, dataset.asymmetry, dataset.error = map(np.copy, (time_axis, asymmetry, error))
-
         grouping.update(
             {
                 "groups": groups,
@@ -5507,8 +5495,17 @@ class MainWindow(QMainWindow):
             grouping["grouping_preset"] = str(preset_name)
         else:
             grouping.pop("grouping_preset", None)
-        run.grouping = grouping
-        dataset.metadata.pop("correction_error", None)
+        metadata = reduced.metadata_with_alignment(dataset.metadata)
+        metadata.pop("correction_error", None)
+        time, asymmetry, error = map(np.copy, (reduced.time, reduced.asymmetry, reduced.error))
+        self._reduction_cache.invalidate_run(run)
+        run.grouping, run.instrument_choice = grouping, candidate.instrument_choice
+        dataset.metadata = metadata
+        dataset.effective_recipe = reduced.effective_recipe
+        dataset.computation_revision = reduced.computation_revision
+        dataset.histogram_observation = observation
+        dataset.ratio_validity = reduced.ratio_validity
+        dataset.time, dataset.asymmetry, dataset.error = time, asymmetry, error
         self._capture_time_results([dataset])
         return True, outcomes
 
