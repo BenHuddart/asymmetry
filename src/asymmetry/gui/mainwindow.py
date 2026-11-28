@@ -2134,14 +2134,12 @@ class MainWindow(QMainWindow):
         """Refresh fit blocking when the active plot workspace tab changes."""
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
-            if hasattr(self._fit_panel, "set_domain"):
-                self._fit_panel.set_domain("frequency")
+            self._fit_panel.set_domain("frequency")
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
             self._set_frequency_fit_datasets_for_selection()
             self._refresh_fourier_staleness()
         else:
-            if hasattr(self._fit_panel, "set_domain"):
-                self._fit_panel.set_domain("time")
+            self._fit_panel.set_domain("time")
             if self._current_dataset is not None:
                 self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
                 if self._grouped_fit_surface_active():
@@ -2149,6 +2147,7 @@ class MainWindow(QMainWindow):
                         self._single_fit_dataset(self._current_dataset)
                     )
             self._update_selected_datasets()
+            self._sync_fit_range_from_active_plot()
         self._refresh_time_view_selector()
         self._refresh_vector_axis_selector()
         self._update_fit_block_state()
@@ -9700,8 +9699,7 @@ class MainWindow(QMainWindow):
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._active_group_context = None
-        if hasattr(self._plot_panel, "set_active_label_group"):
-            self._plot_panel.set_active_label_group(None)
+        self._plot_panel.set_active_label_group(None)
         try:
             dataset = self._data_browser.get_dataset(run_number)
             if dataset:
@@ -9722,29 +9720,20 @@ class MainWindow(QMainWindow):
                 self._render_current_selection_plot()
                 self._sync_frequency_plot_for_current_dataset()
                 self._refresh_vector_axis_selector()
-                if self._plot_workspace.active_domain() == "frequency":
-                    if hasattr(self._fit_panel, "set_domain"):
-                        self._fit_panel.set_domain("frequency")
+                domain = self._plot_workspace.active_domain()
+                self._fit_panel.set_domain(domain)
+                if domain == "frequency":
                     self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
                     self._set_frequency_fit_datasets_for_selection()
-                    _fit_range = self._frequency_plot_panel.get_fit_range()
                 else:
-                    if hasattr(self._fit_panel, "set_domain"):
-                        self._fit_panel.set_domain("time")
                     self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
-                    _fit_range = self._plot_panel.get_fit_range()
-                if hasattr(self._fit_panel, "set_fit_range_display"):
-                    self._fit_panel.set_fit_range_display(*_fit_range)
                 if self._grouped_fit_surface_active():
                     # Binding the grouped surfaces rebuilds their per-group
                     # tables (FFT-seeded) — ~25 ms per switch — so only the
                     # visible surface tracks the selection; _sync_fit_dock_mode
                     # binds the window when the groups view is entered.
                     self._multi_group_fit_window.set_dataset(self._single_fit_dataset(dataset))
-                if self._multi_group_fit_window is not None and hasattr(
-                    self._multi_group_fit_window, "set_fit_range_display"
-                ):
-                    self._multi_group_fit_window.set_fit_range_display(*_fit_range)
+                self._sync_fit_range_from_active_plot()
                 self._log_panel.log(f"Selected run {run_number}")
                 self.statusBar().showMessage(f"Viewing run {run_number}")
                 self._update_fit_block_state()
@@ -9892,6 +9881,16 @@ class MainWindow(QMainWindow):
         self._refresh_maxent_domain_enabled()
         # Refresh the trend panel for the newly-active representation.
         self._refresh_trend_panel()
+
+    def _sync_fit_range_from_active_plot(self) -> None:
+        """Show the fit window owned by the plot in the active domain."""
+        frequency = self._plot_workspace.active_domain() == "frequency"
+        plot = self._frequency_plot_panel if frequency else self._plot_panel
+        fit_range = plot.get_fit_range()
+        self._fit_panel.set_fit_range_display(*fit_range)
+        self._fit_panel.refresh_saved_fits()
+        if self._multi_group_fit_window is not None:
+            self._multi_group_fit_window.set_fit_range_display(*fit_range)
 
     def _on_fit_range_changed(self, x_min: float, x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""

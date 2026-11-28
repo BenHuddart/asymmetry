@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.gui]
@@ -24,6 +25,9 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.representation import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
@@ -154,3 +158,84 @@ def test_range_guides_follow_the_visible_tab(win: MainWindow, qapp: QApplication
     win._fit_panel._tabs.setCurrentWidget(win._fit_panel._single_tab)
     qapp.processEvents()
     assert win._plot_panel._fit_guide_window() == pytest.approx((0.10, 5.00))
+
+
+@pytest.mark.parametrize(
+    ("frequency_view", "time_view", "spectrum_type"),
+    [
+        ("frequency", "fb_asymmetry", RepresentationType.FREQ_FFT),
+        ("maxent", "fb_asymmetry", RepresentationType.FREQ_MAXENT),
+        ("frequency", "groups", RepresentationType.FREQ_FFT),
+    ],
+)
+def test_returning_to_time_restores_the_open_single_fit_range(
+    win: MainWindow, frequency_view: str, time_view: str, spectrum_type: RepresentationType
+) -> None:
+    run_number = 500
+    bin_width = 0.016
+    time = np.arange(640) * bin_width
+    asymmetry = 0.2 * np.exp(-time / 2.0)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(1e4 * (1 + asymmetry), bin_width, 0),
+            Histogram(1e4 * (1 - asymmetry), bin_width, 0),
+        ],
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": time.size - 1,
+        },
+    )
+    win._data_browser.add_dataset(
+        MuonDataset(time, asymmetry, np.full_like(time, 0.01), {"run_number": run_number}, run)
+    )
+    win._data_browser.select_runs([run_number])
+    win._plot_panel.set_fit_range(0.168, 8.0)
+    tab = win._fit_panel._single_tab
+    tab._set_composite_model(CompositeModel(["Exponential"]))
+    tab._run_fit()
+    assert tab.wait_for_fit()
+    rep = win._project_model.representation(run_number, RepresentationType.TIME_FB_ASYMMETRY)
+    fit_set = rep.fit_set(None)
+    (saved_fit,) = fit_set.fits
+    assert fit_set.open_id == saved_fit.fit_id
+    assert saved_fit.fit_range == {"min": 0.168, "max": 8.0}
+    assert not tab._saved_fit_hint.text().startswith("Edited")
+    win._fit_panel.set_batch_fit_range(0.4, 6.25)
+
+    # A cached spectrum exercises the real view render without a transform worker.
+    frequency = np.linspace(0.0, 31.25, 64)
+    win._frequency_cache(spectrum_type)[run_number] = [
+        MuonDataset(
+            frequency,
+            np.ones_like(frequency),
+            np.full_like(frequency, 0.01),
+            {
+                "run_number": run_number,
+                "plot_domain": "frequency",
+                "fourier_display": "(Power)^1/2",
+            },
+        )
+    ]
+    win._domain_buttons_by_token[frequency_view].click()
+    assert win._plot_workspace.active_view() == frequency_view
+    assert win._fit_panel.single_fit_window() == {"min": 0.0, "max": 31.25}
+    if time_view == "groups":
+        win._frequency_plot_panel.set_fit_range(0.25, 29.5)
+
+    win._domain_buttons_by_token[time_view].click()
+    assert win._plot_workspace.active_view() == time_view
+    assert win._fit_panel.single_fit_window() == saved_fit.fit_range
+    assert not tab._saved_fit_hint.text().startswith("Edited")
+    assert fit_set.open_id == saved_fit.fit_id
+    assert tuple(fit_set.fits) == (saved_fit,)
+    assert win._fit_panel.batch_fit_range() == pytest.approx((0.4, 6.25))
+    if time_view == "groups":
+        grouped = win._multi_group_fit_window
+        assert win._fit_stack.currentWidget() is grouped
+        for grouped_tab in grouped._grouped_tabs():
+            assert grouped_tab.fit_range_bounds() == pytest.approx((0.168, 8.0))

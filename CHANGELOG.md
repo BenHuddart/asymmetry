@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Open HAL-9500 files with the nine-channel forward-ring readout using
-  **Transverse (opposed pairs)** and F1/F5 asymmetry.
-
 - Report fitted frequency spacings descriptively and require a separate
   model comparison to assess spectral line multiplicity.
 - Use fitted frequency covariance for CLI line-spacing uncertainties and
@@ -128,11 +125,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Write unexpected errors and crash tracebacks to a log file, show unexpected
   errors in the window, and add Help → Open Log Folder.
+- Open HAL-9500 files with the nine-channel forward-ring readout using
+  **Transverse (opposed pairs)** and F1/F5 asymmetry.
 
 ### Fixed
 
 - Open **Grouping** on runs with missing detectors in the authored grouping,
   show the preview diagnostic, and let users repair the membership.
+- Returning from the FFT or MaxEnt view no longer replaces the time-domain fit
+  range with the frequency range.
 
 ## [0.29.0] - 2026-11-25
 
