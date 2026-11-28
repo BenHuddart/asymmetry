@@ -476,11 +476,16 @@ Applying reports, in the LOG and the status bar, how many runs the profile
 reached and which overrides were updated. A preset that requires channels
 absent from the file is a preset/data mismatch: it cannot be trimmed or
 replaced implicitly. Select a matching preset or edit the channel list.
-Raw histograms remain available, and invalid saved settings remain editable.
+Open **Grouping** to inspect the authored membership and the reduction
+diagnostic. The **From file** good-data window shows the acquired channels'
+file limits while the selected pair is unavailable. If a common window cannot
+be formed, the controls show the stored run bounds and report
+**File good-data window unavailable**. After a membership repair, **From file**
+time zero uses the repaired pair's acquired timing.
 A saved request without a recorded acquired-channel count stays a per-run
 override; its largest requested ID does not establish the acquisition size.
-The preview reports **Preview unavailable:** with the reason and disables
-**Apply** until the requested groups can be formed.
+The preview reports the reason and disables **Apply** until the requested
+groups can be formed.
 
 Channel membership
 ~~~~~~~~~~~~~~~~~~
@@ -1916,9 +1921,9 @@ separately qualified channel order, angular convention, and grouping defaults.
 
    A file exporting only the forward ring (``MV, F1…F8``) lacks the
    backward channels required by **Per-octant**. The authored preset and raw
-   histograms remain accessible, with reduction explicitly unavailable.
-   Choose an explicit grouping appropriate to the acquired channels; Asymmetry
-   does not infer an equivalent preset or discard the absent bank.
+   histograms remain accessible through **Analysis → Grouping...**. The
+   **Incomplete preview** message identifies the missing detector. Edit the
+   **Detector Indices (1-based)** cells to use only the acquired channels.
 
 PSI GPS
 ~~~~~~~

@@ -126,6 +126,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Write unexpected errors and crash tracebacks to a log file, show unexpected
   errors in the window, and add Help → Open Log Folder.
 
+### Fixed
+
+- Open **Grouping** on runs with missing detectors in the authored grouping,
+  show the preview diagnostic, and let users repair the membership.
+
 ## [0.29.0] - 2026-11-25
 
 - Derive the analytic RF comparison helper directly from spin perturbation theory,
