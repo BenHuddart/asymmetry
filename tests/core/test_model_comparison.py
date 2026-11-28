@@ -220,6 +220,22 @@ def test_normalised_residuals_use_the_dataset_grid_within_the_curve_span() -> No
     np.testing.assert_allclose(r, np.full_like(t, 2.0))
 
 
+@pytest.mark.parametrize(
+    ("domain", "selected"), [("time", slice(1, 4)), ("frequency", slice(2, 3))]
+)
+def test_normalised_residuals_use_the_fit_window_endpoint_rule(domain, selected):
+    time = np.arange(1.0, 6.0)
+    values = time * 4
+    error = time / 2
+    dataset = MuonDataset(time, values, error, {"plot_domain": domain})
+    bounds = np.nextafter(time[[1, 3]], [np.inf, -np.inf])
+
+    coordinates, residuals = normalised_residuals(dataset, (bounds, np.array([1.0, 1.0])))
+
+    np.testing.assert_array_equal(coordinates, time[selected])
+    np.testing.assert_array_equal(residuals, ((values - 1) / error)[selected])
+
+
 # ---------------------------------------------------------------------------
 # Parameter flags (D8)
 # ---------------------------------------------------------------------------

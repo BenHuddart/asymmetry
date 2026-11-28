@@ -713,8 +713,9 @@ Execution compatibility of saved fits
 Asymmetry also checks the captured scientific-computation revision alongside the
 actual fitted observations and objective before verified saved-fit ranking,
 automatic replacement, or current residuals. Old or unknown executions remain
-available as historical parameter values and models. Refitting records a new
-execution; saving or exporting a historical result preserves its revision.
+available as historical parameter values and models. Run an explicit refit to
+record a current result. Saving or exporting preserves the revision of a
+historical result.
 This compatibility check changes neither the objective nor the statistical
 meaning of its uncertainties. See :doc:`project_files` for saved history and
 :doc:`agent_workflow` for persistent work-directory recomputation.

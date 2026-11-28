@@ -91,7 +91,7 @@ def normalised_residuals(
         model = np.interp(observations.time, curve_time, curve_value)
         return observations.time, (observations.values - model) / sigma
     time = np.asarray(dataset.time, dtype=float)
-    inside = (time >= curve_time[0]) & (time <= curve_time[-1])
+    inside = dataset.window_mask(curve_time[0], curve_time[-1])
     t = time[inside]
     model = np.interp(t, curve_time, curve_value)
     residual = (np.asarray(dataset.asymmetry, dtype=float)[inside] - model) / np.asarray(
