@@ -217,6 +217,7 @@ def edit_detector_layout(self) -> None:
     edited_alpha = prepare_readout_change(self, result)
     if edited_alpha is None:
         return
+    needed_repair = self._file_timing_needs_membership_repair()
     self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
     self._exclude_edit.setModified(True)
     result_projections = result.get("projections")
@@ -261,4 +262,5 @@ def edit_detector_layout(self) -> None:
     # The editor may have switched instrument, so the preset list too.
     self._rebuild_preset_combo()
     self._refresh_editing_strip()
+    self._refresh_timing_after_membership_edit(needed_repair)
     self._refresh_preview()
