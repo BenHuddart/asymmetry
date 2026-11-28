@@ -46,8 +46,7 @@ class AlcFieldScanScenario(Scenario):
         window._data_browser.create_data_group(
             [int(ds.run_number) for ds in datasets], name="ALC scan — 2000–5000 G"
         )
-        # Multi-select every run so the fit panel's batch (which the scan build
-        # reads) is populated.
+        # Build Scan uses the Data Browser selection.
         window._data_browser._table.selectAll()
         _process_events_for(milliseconds=200)
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Build the integral scan from the runs selected in the Data Browser, even
+  while a Batch series is open.
+
 - Report fitted frequency spacings descriptively and require a separate
   model comparison to assess spectral line multiplicity.
 - Use fitted frequency covariance for CLI line-spacing uncertainties and

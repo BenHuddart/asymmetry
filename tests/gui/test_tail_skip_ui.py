@@ -108,7 +108,7 @@ def test_integral_scan_series_and_restored_provenance_keep_skip(qapp):
         window._plot_workspace.set_active_view("integral_scan")
         for dataset in datasets:
             dataset.histogram_observation = histogram_observation(dataset.run)
-        window._fit_panel.set_datasets(datasets)
+        window._data_browser.select_runs([11, 12])
         window._on_scan_requested()
         series = window._project_model.batch(window._alc_scan_series_id)
         for summary in series.results_by_run.values():

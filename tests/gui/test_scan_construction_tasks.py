@@ -6,11 +6,12 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform.preparation import histogram_observation
 from tests.core.test_scan_estimators import two_bin_run
+from tests.gui.scan_fit_helpers import load_scan_selection
 
 pytestmark = pytest.mark.gui
 
 
-def scan_datasets():
+def scan_datasets(*run_numbers):
     return [
         MuonDataset(
             np.arange(2.0),
@@ -20,7 +21,7 @@ def scan_datasets():
             metadata=dict(run.metadata),
             histogram_observation=histogram_observation(run),
         )
-        for run in (two_bin_run(13001), two_bin_run(13002))
+        for run in map(two_bin_run, run_numbers or (13001, 13002))
     ]
 
 
@@ -29,7 +30,7 @@ def test_actual_gui_action_records_count_integral_percent(qapp):
 
     window = MainWindow()
     window._plot_workspace.set_active_view("integral_scan")
-    window._fit_panel.set_datasets(scan_datasets())
+    load_scan_selection(window, *scan_datasets())
     window._alc_fit_panel._rf_difference_check.setChecked(True)
     window._on_scan_requested()
     assert [p["value"] for p in window._alc_scan_points] == pytest.approx(
@@ -45,41 +46,56 @@ def test_actual_gui_action_records_count_integral_percent(qapp):
 
 
 @pytest.mark.parametrize(
-    "action",
+    ("action", "rf_mode"),
     [
-        "success",
-        "cancel",
-        "error",
-        "selection",
-        "field",
-        "window",
-        "mode",
-        "project",
-        "close",
-        "supersede",
+        ("success", False),
+        ("cancel", False),
+        ("error", False),
+        ("selection", False),
+        ("selection", True),
+        ("selection_restored", False),
+        ("selection_unchanged", False),
+        ("field", False),
+        ("window", False),
+        ("mode", False),
+        ("project", False),
+        ("close", False),
+        ("supersede", False),
     ],
 )
-def test_scan_heartbeat_and_atomic_publication(qapp, monkeypatch, action):
+def test_scan_heartbeat_and_atomic_publication(qapp, monkeypatch, action, rf_mode):
     import threading
 
     from PySide6.QtCore import QThread, QTimer
 
     import asymmetry.core.transform.integral as integral
+    from asymmetry.core.representation import RepresentationType
+    from asymmetry.core.representation.series import FitSeries
     from asymmetry.gui.mainwindow import MainWindow
 
     window = MainWindow()
     window._plot_workspace.set_active_view("integral_scan")
-    datasets = scan_datasets()
+    datasets = scan_datasets(13001, 13002, 13003)
     for dataset in datasets:
         window._data_browser.add_dataset(dataset)
+    selection = [13001, 13002]
+    batch = FitSeries(
+        "batch-held",
+        RepresentationType.TIME_FB_ASYMMETRY,
+        member_run_numbers=selection.copy(),
+        canonical_model="Constant",
+    )
+    window._project_model.add_batch(batch)
+    window._on_series_open_requested(batch.batch_id)
     window._plot_panel.set_fit_range(0, 1)
-    window._data_browser._table.selectAll()
-    window._on_new_series_from_selection()
-    crops = window._fit_panel.batch_datasets()
-    assert crops[0] is not datasets[0]
-    assert crops[0].run is datasets[0].run
+    window._data_browser.select_runs(selection)
+    window._alc_fit_panel._rf_difference_check.setChecked(rf_mode)
     window._on_scan_requested()
-    previous = window._alc_scan_series_id
+    previous = window._project_model.batch(window._alc_scan_series_id)
+    view = window._alc_scan_view
+    view._add_region()
+    analysis = view.analysis_state()
+    assert analysis["regions"]
     original = integral.reduce_period_integral
     started, released = threading.Event(), threading.Event()
     calls = []
@@ -105,8 +121,12 @@ def test_scan_heartbeat_and_atomic_publication(qapp, monkeypatch, action):
         timer.stop()
         if action == "cancel":
             window._scan_controller.jobs[0].cancel()
-        elif action == "selection":
-            window._fit_panel.set_datasets(scan_datasets())
+        elif action in {"selection", "selection_restored"}:
+            window._data_browser.select_runs([13002, 13003])
+            if action == "selection_restored":
+                window._data_browser.select_runs(selection)
+        elif action == "selection_unchanged":
+            window._data_browser.select_runs(selection)
         elif action == "field":
             window._data_browser._table.item(0, 3).setText("200")
         elif action == "window":
@@ -131,10 +151,14 @@ def test_scan_heartbeat_and_atomic_publication(qapp, monkeypatch, action):
     assert len(ticks) >= 3
     assert all(calls)
     assert not window._scan_controller.jobs
-    if action in {"success", "supersede"}:
-        assert window._alc_scan_series_id != previous
+    if action in {"success", "supersede", "selection_unchanged"}:
+        assert window._alc_scan_series_id != previous.batch_id
     elif action not in {"project", "close"}:
-        assert window._alc_scan_series_id == previous
+        assert window._alc_scan_series_id == previous.batch_id
+        assert window._project_model.batches == {batch.batch_id: batch, previous.batch_id: previous}
+        assert view.analysis_state() == analysis
+    if action in {"selection", "selection_restored"}:
+        assert len(calls) == 1  # the changed selection cancels the remaining reduction
     if action == "success":
         assert len(calls) == 2  # one correction/reduction per selected run
     if action == "error":
@@ -148,17 +172,12 @@ def test_actual_browser_field_edit_rebuilds_at_current_coordinate(qapp):
 
     window = MainWindow()
     datasets = scan_datasets()
-    for dataset in datasets:
-        window._data_browser.add_dataset(dataset)
     window._plot_workspace.set_active_view("integral_scan")
     window._plot_panel.set_fit_range(0, 1)
-    window._data_browser._table.selectAll()
-    window._on_new_series_from_selection()
-    crop = window._fit_panel.batch_datasets()[0]
-    assert crop is not datasets[0]
+    load_scan_selection(window, *datasets)
     window._data_browser._table.item(0, 3).setText("200")
-    assert crop.metadata["field"] == 100
-    assert crop.run.metadata["field"] == 200
+    assert datasets[0].histogram_observation.source.metadata["field"] == 100
+    assert datasets[0].run.metadata["field"] == 200
     window._on_scan_requested()
     points = {point["run"]: point for point in window._alc_scan_points}
     assert points[13001]["field"] == 200
@@ -176,7 +195,7 @@ def test_gui_curve_only_request_explains_unavailable_replay(qapp):
         for n in (1, 2)
     ]
     window._plot_workspace.set_active_view("integral_scan")
-    window._fit_panel.set_datasets(curves)
+    load_scan_selection(window, *curves)
     window._on_scan_requested()
     assert not window._alc_scan_points
     assert "source run" in window._log_panel.to_plain_text()

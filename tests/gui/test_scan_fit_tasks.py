@@ -6,7 +6,7 @@ from PySide6.QtCore import QThread
 
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
 from asymmetry.gui.mainwindow import MainWindow
-from tests.gui.scan_fit_helpers import wait_for_fit
+from tests.gui.scan_fit_helpers import load_scan_selection, wait_for_fit
 from tests.gui.test_integral_scan_gui import _ds, _set_regions
 from tests.gui.test_rf_scan_panel_gui import _rf_datasets
 
@@ -24,7 +24,7 @@ def prepare_scan(window, kind):
             for i, x in enumerate(np.linspace(50, 350, 31))
             for a in [0.1 - 0.05 * np.exp(-0.5 * ((x - 200) / 20) ** 2)]
         ]
-    window._fit_panel.set_datasets(datasets)
+    load_scan_selection(window, *datasets)
     window._on_scan_requested()
     if kind != "rf":
         _set_regions(window._alc_scan_view, [(50, 125), (275, 350)])
@@ -353,7 +353,8 @@ def test_actual_inputs_cancel_held_fit(change, tmp_path, qapp, monkeypatch):
         elif change == "exclude":
             window._on_alc_point_toggled(window._alc_scan_points[0]["run"])
         elif change == "selection":
-            window._fit_panel.set_datasets(window._fit_panel.batch_datasets()[:-1])
+            selected = window._data_browser.get_selected_datasets()
+            window._data_browser.select_runs([ds.run_number for ds in selected[:-1]])
         elif change == "model":
             view._baseline_model_combo.setCurrentText("Constant")
         elif change == "rf_mode":

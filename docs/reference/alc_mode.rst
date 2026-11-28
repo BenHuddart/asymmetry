@@ -165,10 +165,10 @@ Step 1 — Build the scan
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 #. **Load and multi-select the runs.** Load the field-scan runs, then select
-   them all in the **Data Browser**: click the first row and **Shift-click** the
-   last (the scan is built from the current selection, exactly like a batch
-   fit). The Data Browser resolves the **B (G)** column from each run's field;
-   that column becomes the scan's field axis.
+   them all in the **Data Browser** by clicking the first row and **Shift-click**
+   the last. **Build Scan** uses the current selection even when a **Batch**
+   series is open. The **B (G)** column gives each run's field and becomes the
+   scan's field axis.
 #. **Select the Integral scan representation.** Click **Integral scan** in the
    toolbar's Time-domain cluster. The central area switches to the scan view
    (empty until you build), and the **Fit** dock shows the build panel.

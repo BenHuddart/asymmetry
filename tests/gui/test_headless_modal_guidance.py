@@ -20,7 +20,7 @@ import time
 import numpy as np
 import pytest
 
-from tests.gui.scan_fit_helpers import wait_for_fit
+from tests.gui.scan_fit_helpers import load_scan_selection, wait_for_fit
 
 pytestmark = [pytest.mark.gui]
 
@@ -101,7 +101,7 @@ def test_scan_requested_under_two_runs_logs_without_modal(mainwindow: MainWindow
     """<2 selected runs: guidance must reach the log, not a blocking modal."""
     mw = mainwindow
     mw._plot_workspace.set_active_view("integral_scan")
-    mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0)])  # one run only
+    load_scan_selection(mw, _ds(11, 110.0, 90.0, 100.0))  # one run only
 
     start = time.monotonic()
     mw._on_scan_requested()  # must return promptly (no_modals guards blocking)
