@@ -32,15 +32,16 @@ throwaway synthetic run numbers internally, and returns a :class:`GlobalFitResul
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitEngine, FitResult, _dataset_observations
+from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_quality import reduced_statistic
+from asymmetry.core.fitting.likelihood import dataset_observations
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.time_response import first_model_arrival
 
 
 @dataclass
@@ -260,21 +261,14 @@ def fit_global(
     synthetic_to_key: dict[int, Hashable] = {}
     engine_datasets: list[MuonDataset] = []
     engine_initial: dict[int, ParameterSet] = {}
+    support_start = first_model_arrival(model_fn)
     observations = {}
     for index, (key, ds) in enumerate(pairs):
         synthetic_run = index
-        observations[index] = _dataset_observations(ds, t_min, t_max)
+        observations[index] = dataset_observations(ds, t_min, t_max, support_start=support_start)
         synthetic_to_key[synthetic_run] = key
         metadata = {**dict(ds.metadata), "run_number": synthetic_run}
-        engine_datasets.append(
-            MuonDataset(
-                time=np.asarray(ds.time, dtype=float),
-                asymmetry=np.asarray(ds.asymmetry, dtype=float),
-                error=np.asarray(ds.error, dtype=float),
-                metadata=metadata,
-                run=None,
-            )
-        )
+        engine_datasets.append(replace(ds, metadata=metadata, run=None))
         engine_initial[synthetic_run] = initial_by_key[key]
 
     engine = fit_engine or FitEngine()

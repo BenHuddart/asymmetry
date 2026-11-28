@@ -84,13 +84,12 @@ from asymmetry.core.fitting import (
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.cross_group import CrossGroupFitRun, run_cross_group_fit_from_config
-from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_count
+from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
 from asymmetry.core.fitting.fit_quality import recorded_statistic
 from asymmetry.core.fitting.input_attribution import saved_fit_matches
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
 )
-from asymmetry.core.fitting.model_comparison import saved_fit_model
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterGroupData,
@@ -352,6 +351,7 @@ from asymmetry.gui.utils.reference_timing import (
     prepare_reference_timing,
 )
 from asymmetry.gui.utils.run_sources import dataset_source_file, normalise_source_path
+from asymmetry.gui.utils.saved_fit_overlays import restore_saved_fit_overlay
 from asymmetry.gui.utils.scientific_input import map_period_inputs
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
@@ -11564,21 +11564,6 @@ class MainWindow(QMainWindow):
             open_id=fit_set.open_id,
         )
 
-    def _saved_fit_curve_payload(
-        self, slot: FitSlot, name: str, axis_key: str | None
-    ) -> tuple | None:
-        """Draw a historical model over its recorded window."""
-        drawable = saved_fit_model(slot)
-        if drawable is None:
-            return None
-        model, values = drawable
-        window = slot.fit_range or {"min": None, "max": None}
-        record = self._bound_record()
-        x_min = float(np.min(record.time)) if window["min"] is None else window["min"]
-        x_max = float(np.max(record.time)) if window["max"] is None else window["max"]
-        x, y = dense_fit_curve(model, values, x_min, x_max)
-        return (x, y, name, (), None, model.formula_string(), axis_key)
-
     def _bound_record(self) -> MuonDataset:
         """The bound run's whole record in the active domain, before the fit-range crop."""
         if self._plot_workspace.active_domain() == "frequency":
@@ -11587,7 +11572,6 @@ class MainWindow(QMainWindow):
         return self._get_full_fit_context()[0]
 
     def _sync_saved_fit_overlays(self) -> None:
-        """Reuse evaluated alternate fits under their own fit IDs and projections."""
         bound = self._bound_saved_fits()
         if bound is None:
             self._refresh_saved_fit_compare()
@@ -11612,16 +11596,15 @@ class MainWindow(QMainWindow):
         if not open_fit.is_empty():
             labels[SINGLE_FIT_ID] = f"Single fit · {representation.fit_name(open_fit)}"
         panel.set_fit_labels(labels)
-        for plot_id, (key, slot) in wanted.items():
-            if plot_id in stored:
-                continue
-            payload = self._saved_fit_curve_payload(slot, representation.fit_name(slot), key)
-            if payload is not None:
-                panel.set_global_fits({run_number: payload}, fit_id=plot_id)
+        if wanted:
+            record = self._bound_record()
+            for plot_id, (key, slot) in wanted.items():
+                restore_saved_fit_overlay(
+                    panel, record, projection, key, slot, representation.fit_name(slot), plot_id
+                )
         self._refresh_saved_fit_compare()
 
     def _on_saved_fit_compare_requested(self) -> None:
-        """Open (or raise) the Compare window over the bound run's saved fits (D2)."""
         if self._saved_fit_compare_window is None:
             window = SavedFitCompareWindow(self)
             window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -11637,10 +11620,7 @@ class MainWindow(QMainWindow):
         self._saved_fit_compare_window = None
 
     def _refresh_saved_fit_compare(self) -> None:
-        """Point an open Compare window at the bound run's saved fits as they now stand.
-
-        An unbound view closes the comparison; its selected fit is unavailable.
-        """
+        """Close Compare when the selected projection has no fit input."""
         window = self._saved_fit_compare_window
         if window is None:
             return
@@ -11657,26 +11637,19 @@ class MainWindow(QMainWindow):
         )
 
     def _on_saved_fit_open_requested(self, fit_id: str) -> None:
-        """Open one of the bound run's saved fits: its form, its window and its curve."""
         run_number, representation, projection = self._bound_saved_fits()
         fit_set = representation.fit_set(projection)
         fit_set.open(fit_id)
         slot = fit_set.open_fit()
         panel = self._plot_panel_for_rep(representation.rep_type)
-        payload = self._saved_fit_curve_payload(slot, "Fit", projection)
-        if payload is None:
-            panel.clear_run_fit(run_number, SINGLE_FIT_ID)
-        else:
-            panel.set_global_fits({run_number: payload}, fit_id=SINGLE_FIT_ID)
+        restore_saved_fit_overlay(
+            panel, self._bound_record(), projection, projection, slot, "Fit", SINGLE_FIT_ID
+        )
         panel.set_shown_fits(run_number, [SINGLE_FIT_ID])
         self._sync_saved_fit_overlays()
-        # Re-fitting the opened fit unchanged must replace it (D1), so the
-        # project's window follows it; an open side leaves the range as it is.
         window = slot.fit_range
         if window is not None and None not in window.values():
             panel.set_fit_range(window["min"], window["max"])
-        # A legacy model-only fit has no stored form: rebuild one from its own
-        # model and table. A slot with no model at all leaves the form as it is.
         form = self._single_fit_restore_payload(
             self._current_dataset
         ) or self._fit_panel.build_single_fit_payload_from_slot(

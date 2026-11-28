@@ -30,10 +30,12 @@ from asymmetry.core.fitting.engine import FitResult  # noqa: E402
 from asymmetry.core.fitting.input_attribution import fit_input_attribution  # noqa: E402
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
+from asymmetry.core.fitting.time_response import TimeResponse  # noqa: E402
 from asymmetry.core.representation import FitSlot, RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID  # noqa: E402
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY  # noqa: E402
+from tests._qt_helpers import wait_for  # noqa: E402
 from tests.gui.test_mainwindow_additional import _make_two_period_vector_dataset  # noqa: E402
 
 _RUN = 500
@@ -196,6 +198,166 @@ def test_opening_a_saved_fit_restores_its_form_and_swaps_the_curves(mw) -> None:
     assert SAVED_FIT_ID_PREFIX + exp.fit_id not in stored
     assert mw._plot_panel.shown_fit_ids(_RUN) == [SINGLE_FIT_ID]
     assert _hint(mw) == ""
+
+
+@pytest.mark.parametrize(
+    ("response", "history_matches"),
+    [(TimeResponse(), True), (TimeResponse("double_delta", 0.4), True), (TimeResponse(), False)],
+)
+def test_saved_single_overlay_includes_only_verified_centres_beyond_rounded_bound(
+    mw, response, history_matches
+):
+    panel = mw._plot_panel
+    lower, upper = 0.2, 0.3
+    centre = np.nextafter(lower, -np.inf)
+    dataset = mw._data_browser.get_dataset(_RUN)
+    dataset.time[2] = centre
+    mw._on_dataset_selected(_RUN)
+    panel.set_fit_range(lower, upper)
+    _fit(mw, _EXP.with_time_response(response))
+    if not history_matches:
+        dataset.asymmetry = dataset.asymmetry.copy()
+        dataset.asymmetry[2] += 0.5
+        mw._on_dataset_selected(_RUN)
+    panel.set_fit_range(0.1, upper)
+    _fit(mw, _GAUSS)
+    _, fit_set = _fit_set(mw)
+    saved = fit_set.fits[0]
+
+    assert CompositeModel.from_dict(saved.model).time_response == response
+    assert saved.fit_range == {"min": lower, "max": upper}
+    assert saved.result["input_attribution"]["min"] == centre
+    overlay = panel._fit_curves_by_key[(_RUN, None, SAVED_FIT_ID_PREFIX + saved.fit_id)]
+    assert overlay[0][0] == (centre if history_matches else lower)
+
+    _tab(mw).saved_fit_open_requested.emit(saved.fit_id)
+    reopened = panel._fit_curves_by_key[(_RUN, None, SINGLE_FIT_ID)]
+    np.testing.assert_array_equal(reopened[0], overlay[0])
+    np.testing.assert_array_equal(reopened[1], overlay[1])
+    assert panel.get_fit_range() == (lower, upper)
+
+
+def test_saved_alternate_overlay_refreshes_when_its_projection_is_bound(mw, _isolated_gui_state):
+    dataset = _make_two_period_vector_dataset(7454)
+    browser, panel = mw._data_browser, mw._plot_panel
+    browser.add_dataset(dataset)
+    browser.select_runs({dataset.run_number})
+    panel._on_projection_selection_changed(["P_x"])
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    rep = mw._project_model.representation(dataset.run_number, RepresentationType.TIME_FB_ASYMMETRY)
+    px_saved = rep.fit_set("P_x").fits[0]
+    px_key = (dataset.run_number, "P_x", SAVED_FIT_ID_PREFIX + px_saved.fit_id)
+    px_curve = panel._fit_curves_by_key[px_key]
+
+    panel._on_projection_selection_changed(["P_y"])
+    centre = dataset.time[1]
+    lower, upper = np.nextafter(centre, np.inf), dataset.time[-1]
+    panel.set_fit_range(lower, upper)
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    py_saved, py_open = rep.fit_set("P_y").fits
+    py_overlay = SAVED_FIT_ID_PREFIX + py_saved.fit_id
+    py_key = (dataset.run_number, "P_y", py_overlay)
+    # The project can carry more digits than the Single tab's range control.
+    py_saved.fit_range["min"] = lower
+    assert py_saved.fit_range == {"min": lower, "max": upper}
+    assert py_saved.result["input_attribution"]["min"] == centre
+
+    panel._on_projection_selection_changed(["P_x"])
+    panel.clear_run_fit(dataset.run_number, py_overlay)
+    mw._sync_saved_fit_overlays()
+    assert panel._fit_curves_by_key[py_key][0][0] == lower
+
+    panel._on_projection_selection_changed(["P_y"])
+    assert all(not entry.stale_reason for entry in mw._saved_fit_catalogue().entries)
+    assert panel._fit_curves_by_key[py_key][0][0] == centre
+    assert panel._fit_curves_by_key[px_key] is px_curve
+    assert rep.fit_set("P_y").open_id == py_open.fit_id
+
+    _tab(mw).saved_fit_compare_requested.emit()
+    compare = mw._saved_fit_compare_window
+    compare.panel.set_b(py_saved.fit_id)
+    _wait_for_curves(compare, py_saved.fit_id)
+    current = compare._curves[py_saved.fit_id][1]
+    assert current.fit[0][0] == current.residuals[0][0] == centre
+    assert not compare._status.text()
+
+    record = mw._bound_record()
+    record.asymmetry = record.asymmetry + 0.5
+    mw._rebind_single_fit_to_active_projection()
+    assert panel._fit_curves_by_key[py_key][0][0] == lower
+    assert panel._fit_curves_by_key[px_key] is px_curve
+    assert rep.fit_set("P_y").open_id == py_open.fit_id
+    assert py_saved.fit_range == {"min": lower, "max": upper}
+    assert all(
+        entry.stale_reason.startswith("Historical fit:")
+        for entry in mw._saved_fit_catalogue().entries
+    )
+
+    compare.panel.set_b(None)
+    compare.panel.set_b(py_saved.fit_id)
+    _wait_for_curves(compare, py_saved.fit_id)
+    historical = compare._curves[py_saved.fit_id][1]
+    assert historical.fit[0][0] == lower
+    assert historical.residuals[0].size == 0
+    assert not compare._status.text()
+    compare.close()
+
+
+def test_opening_historical_fit_with_prearrival_window_restores_form_without_overlay(
+    mw, qapp, monkeypatch
+):
+    panel = mw._plot_panel
+    dataset = mw._data_browser.get_dataset(_RUN)
+    birth = -0.1626
+    dataset.time = np.array([birth, -0.1625756, -0.1625512, 0.3])
+    mw._on_dataset_selected(_RUN)
+    panel.set_fit_range(birth, dataset.time[2])
+    response = TimeResponse("double_delta", -2 * birth)
+    _fit(mw, _EXP.with_time_response(response))
+    panel.set_fit_range(birth, dataset.time[-1])
+    _fit(mw, _GAUSS)
+
+    _, fit_set = _fit_set(mw)
+    historical, current = fit_set.fits
+    historical.fit_range = {"min": -0.163, "max": -0.163}
+    historical.result["computation_revision"] = "21"
+    overlay_id = SAVED_FIT_ID_PREFIX + historical.fit_id
+    panel.clear_run_fit(_RUN, overlay_id)
+
+    mw._sync_saved_fit_overlays()
+    assert overlay_id not in panel.stored_fit_ids(_RUN)
+    mw._on_saved_fit_open_requested(historical.fit_id)
+    assert fit_set.open_id == historical.fit_id
+    assert SINGLE_FIT_ID not in panel.stored_fit_ids(_RUN)
+    assert panel.get_fit_range() == (-0.163, -0.163)
+    assert _tab(mw)._composite_model.time_response == response
+    assert _tab(mw)._composite_model.component_names == _EXP.component_names
+
+    _tab(mw).saved_fit_compare_requested.emit()
+    compare = mw._saved_fit_compare_window
+    wait_for(lambda: bool(compare._status.text()), qapp)
+    assert compare._status.text() == "The saved fit window is outside the model's supported range."
+    assert compare.panel.a_key() == historical.fit_id
+
+    compare.panel.set_a(current.fit_id)
+    current_status = compare._status.text()
+    compare.panel.set_b(historical.fit_id)
+    assert compare._status.text() == "The saved fit window is outside the model's supported range."
+    compare.panel.set_b(None)
+    unpinned_status = compare._status.text()
+    compare.panel.set_b(historical.fit_id)
+
+    exceptions = []
+    monkeypatch.setattr(
+        sys, "excepthook", lambda _type, value, _traceback: exceptions.append(value)
+    )
+    _tab(mw).saved_fit_delete_requested.emit(historical.fit_id)
+    assert not exceptions
+    assert compare.panel.a_key() == current.fit_id
+    assert compare.panel.b_key() is None
+    assert (current_status, unpinned_status, compare._status.text()) == ("", "", "")
 
 
 def test_rename_then_delete_down_to_no_fit(mw) -> None:

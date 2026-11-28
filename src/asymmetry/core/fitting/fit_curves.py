@@ -55,5 +55,6 @@ def dense_fit_curve(
     model: CompositeModel, param_values: dict[str, float], x_min: float, x_max: float
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """``(x, f(x))`` over ``[x_min, x_max]``, sampled densely enough to draw."""
-    x = np.linspace(x_min, x_max, fit_curve_sample_count(model, param_values, x_min, x_max))
+    points = fit_curve_sample_count(model, param_values, x_min, x_max)
+    x = model.time_response.curve_times(x_min, x_max, points)
     return x, np.asarray(model.function(x, **param_values), dtype=float)

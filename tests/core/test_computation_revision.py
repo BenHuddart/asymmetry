@@ -97,6 +97,38 @@ def test_fit_codec_and_nested_history_never_stamp_on_load_or_resave(revision, mo
     assert slot.fitted_values() == summary["parameters"]
 
 
+def test_preview_fit_is_historical_with_identical_observation_identity():
+    data = reduced_curve().time_range(0.3, 0.5)
+    result = FitEngine().fit(data, constant, ParameterSet([Parameter("c", 0.0)]))
+    summary = fit_result_summary(result) | {"npar": 1, "ndof": result.dof}
+    current = FitSlot(result=summary)
+    saved = FitSlot(fit_id="preview-fit", result=summary | {"computation_revision": "21"})
+    payload = json.loads(json.dumps(saved.to_dict()))
+    historical = FitSlot.from_dict(payload)
+
+    assert saved_fit_matches(current, data)
+    assert historical.result["input_attribution"]["identity"] == current.data_key()[0]
+    assert historical.data_key() is None
+    assert not saved_fit_matches(historical, data)
+    assert historical.fitted_values() == current.fitted_values()
+    assert historical.to_dict() == payload
+
+
+def test_current_fit_matches_equal_window_support_after_bound_roundoff():
+    time = np.arange(1.0, 6.0)
+    values = np.array([8.0, 3.0, 4.0, 2.0, 6.0])
+    data = MuonDataset(time, values, np.ones(time.size))
+    lower, upper = np.nextafter(time[[1, 3]], [np.inf, -np.inf])
+    result = FitEngine().fit(
+        data, constant, ParameterSet([Parameter("c", 0.0)]), t_min=lower, t_max=upper
+    )
+    current = FitSlot(result=fit_result_summary(result), fit_range={"min": lower, "max": upper})
+    exact_support = fit_input_attribution(dataset_observations(data, 2.0, 4.0), data, window=(2, 4))
+    assert current.result["input_attribution"]["identity"] == exact_support["identity"]
+    assert saved_fit_matches(current, data)
+    assert not saved_fit_matches(current, data.time_range(3.0, 4.0))
+
+
 def test_revision_does_not_change_observation_or_recipe_identity(monkeypatch):
     data = reduced_curve()
     before = fit_input_attribution(dataset_observations(data), data)
@@ -190,6 +222,26 @@ def test_scan_codec_preserves_historical_execution(revision):
     assert field_scan_payload(restored)["computation_revision"] == revision
     np.testing.assert_array_equal(restored.value, scan.value)
     assert restored.effective_recipe == scan.effective_recipe
+
+
+def test_workdir_preview_integral_is_stale_with_identical_recipe(tmp_path):
+    scan = build_field_scan(
+        [reduced_curve()], method="integral", t_min=0.3, t_max=0.5, order_key="run"
+    )
+    current = field_scan_payload(scan)
+    historical = current | {"computation_revision": "21"}
+    wd = WorkDir(tmp_path)
+    wd.write_scan("current", current)
+    path = wd.write_scan("historical", historical)
+    saved = path.read_bytes()
+
+    assert field_scan_payload(field_scan_from_payload(wd.read_scan("current"))) == current
+    with pytest.raises(StaleWorkDirError, match="historical computation"):
+        wd.read_scan("historical")
+    reopened = field_scan_from_payload(wd.read_scan("historical", require_current=False))
+    assert reopened.effective_recipe.identity == scan.effective_recipe.identity
+    assert field_scan_payload(reopened) == historical
+    assert path.read_bytes() == saved
 
 
 def test_package_metadata_does_not_invalidate_real_reduction_reuse(

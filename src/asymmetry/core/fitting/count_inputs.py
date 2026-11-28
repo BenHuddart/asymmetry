@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fitting.count_corrections import (
     count_background_domain,
     require_count_background,
@@ -41,13 +42,9 @@ def count_time_selection(first, last, factor, axis_start, width, residual, t_min
     time = (np.arange(size, dtype=float) + axis_start) * width + residual
     if factor > 1:
         time = time[: size // factor * factor].reshape(-1, factor).mean(axis=1)
-    mask = np.ones(time.size, dtype=bool)
-    if t_min is not None:
-        mask &= time >= float(t_min)
-    if t_max is not None:
-        mask &= time <= float(t_max)
+    mask = time_window_mask(time, t_min, t_max)
     if exclude is not None and float(exclude[1]) > float(exclude[0]):
-        mask &= ~((time >= float(exclude[0])) & (time <= float(exclude[1])))
+        mask &= ~time_window_mask(time, float(exclude[0]), float(exclude[1]))
     return time, mask
 
 

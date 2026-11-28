@@ -26,7 +26,11 @@ from asymmetry.core.fitting.information_criteria import (
     information_weights,
     score_deltas,
 )
-from asymmetry.core.fitting.input_attribution import saved_fit_matches, source_context_key
+from asymmetry.core.fitting.input_attribution import (
+    saved_fit_matches,
+    saved_fit_observations,
+    source_context_key,
+)
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations
 from asymmetry.core.fitting.parameters import Parameter
 from asymmetry.core.fitting.spectral_weights import SpectralWeightPolicy, spectral_weight_policy
@@ -39,6 +43,7 @@ if TYPE_CHECKING:
         FitWizardRecommendation,
     )
     from asymmetry.core.fitting.global_fit_wizard import GlobalCandidateAssessment
+    from asymmetry.core.fitting.likelihood import GaussianObservations
     from asymmetry.core.representation.base import FitSlot
 
 Curve = tuple[NDArray[np.float64], NDArray[np.float64]]
@@ -70,7 +75,11 @@ def shortlist(scores: Mapping[str, float]) -> tuple[str, ...]:
 
 
 def normalised_residuals(
-    dataset: MuonDataset, curve: Curve, *, result=None, observation_report=None
+    dataset: MuonDataset,
+    curve: Curve,
+    *,
+    result=None,
+    observation_report=None,
 ) -> Curve:
     """``(y − f(t)) / σ`` on the dataset's own time grid within the curve's span, f linearly interpolated."""
     if (
@@ -83,15 +92,16 @@ def normalised_residuals(
     if result is not None and result.observation_report is not None:
         return np.array([], dtype=float), np.array([], dtype=float)
     curve_time, curve_value = curve
+    bounds = (curve_time[0], curve_time[-1])
     if observation_report is not None or dataset.metadata.get("plot_domain") == "frequency":
-        observations = dataset_observations(dataset, curve_time[0], curve_time[-1])
+        observations = dataset_observations(dataset, *bounds)
         sigma = observations.stated_sigma
         if sigma is None:
             return np.array([], dtype=float), np.array([], dtype=float)
         model = np.interp(observations.time, curve_time, curve_value)
         return observations.time, (observations.values - model) / sigma
     time = np.asarray(dataset.time, dtype=float)
-    inside = (time >= curve_time[0]) & (time <= curve_time[-1])
+    inside = dataset.window_mask(*bounds)
     t = time[inside]
     model = np.interp(t, curve_time, curve_value)
     residual = (np.asarray(dataset.asymmetry, dtype=float)[inside] - model) / np.asarray(
@@ -374,30 +384,52 @@ def saved_fit_model(slot: FitSlot) -> tuple[CompositeModel, dict[str, float]] | 
     return model, {name: values[name] for name in model.param_names}
 
 
+def saved_fit_curve_bounds(
+    model: CompositeModel,
+    slot: FitSlot,
+    dataset: MuonDataset,
+    observations: GaussianObservations | None,
+) -> tuple[float, float] | None:
+    """Include verified centres and omit windows before the model's first arrival."""
+    window = slot.fit_range or {"min": None, "max": None}
+    lower, upper = window["min"], window["max"]
+    x_min = float(np.min(dataset.time)) if lower is None else lower
+    x_max = float(np.max(dataset.time)) if upper is None else upper
+    if observations is not None:
+        x_min = min(x_min, float(observations.time.min()))
+        x_max = max(x_max, float(observations.time.max()))
+    first_arrival = model.time_response.first_arrival_us
+    if first_arrival is not None and x_max < first_arrival:
+        return None
+    if x_min > x_max:
+        if lower is None:
+            x_max = x_min
+        elif upper is None:
+            x_min = x_max
+    return x_min, x_max
+
+
 def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
     """A saved single fit's dense curve over its window, and its normalised residuals.
 
-    ``None`` for a fit :func:`saved_fit_model` cannot draw. An open window
-    side, or a fit saved before its window was recorded (pre-v25), reaches the
-    edge of the record. Evaluates the model, so a caller off the GUI thread
-    runs it.
+    ``None`` for a missing drawable model or a window outside its support.
+    An open window side, including an unrecorded historical window, reaches
+    the record edge. The caller runs model evaluation off the GUI thread.
     """
     drawable = saved_fit_model(slot)
     if drawable is None:
         return None
     model, values = drawable
-    window = slot.fit_range or {"min": None, "max": None}
-    x_min = float(np.min(dataset.time)) if window["min"] is None else window["min"]
-    x_max = float(np.max(dataset.time)) if window["max"] is None else window["max"]
-    curve = dense_fit_curve(model, values, x_min, x_max)
-    return RunCurves(
-        curve,
-        normalised_residuals(
-            dataset, curve, observation_report=(slot.result or {}).get("observation_report")
-        )
-        if saved_fit_matches(slot, dataset)
-        else (np.array([]), np.array([])),
-    )
+    observations = saved_fit_observations(slot, dataset)
+    bounds = saved_fit_curve_bounds(model, slot, dataset, observations)
+    if bounds is None:
+        return None
+    curve = dense_fit_curve(model, values, *bounds)
+    sigma = observations.stated_sigma if observations is not None else None
+    if sigma is None:
+        return RunCurves(curve, (np.array([]), np.array([])))
+    predicted = model.function(observations.time, **values)
+    return RunCurves(curve, (observations.time, (observations.values - predicted) / sigma))
 
 
 def _saved_fit_comparison_key(

@@ -7,13 +7,19 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.reduction_recipe import numerical_recipe
-from asymmetry.core.fitting.likelihood import GaussianObservations, dataset_observations
+from asymmetry.core.data.time_window import time_window_mask
+from asymmetry.core.fitting.likelihood import GaussianObservations, gaussian_selection
 from asymmetry.core.fitting.spectral_weights import SpectralWeightPolicy, spectral_weight_policy
 from asymmetry.core.fourier.uncertainty import FIT_UNCERTAINTY_SCOPE
 
 
 def fit_input_attribution(
-    observations, dataset=None, *, window=None, error_oversampling=1.0, coupled_unit_weights=False
+    observations,
+    dataset=None,
+    *,
+    window=None,
+    error_oversampling=1.0,
+    coupled_unit_weights=False,
 ):
     """Capture sampled values, errors and omission support without archiving arrays.
 
@@ -67,17 +73,23 @@ def fit_input_attribution(
         values = np.ascontiguousarray(array, dtype="<f8")
         digest.update(str(values.shape).encode())
         digest.update(values.tobytes())
-    support = dataset.time if dataset is not None else observations.time
-    inside = np.ones(support.size, dtype=bool)
-    if window is not None:
-        if window[0] is not None:
-            inside &= support >= window[0]
-        if window[1] is not None:
-            inside &= support <= window[1]
-    support = support[inside]
+    if gaussian and observations.support is not None:
+        support = observations.support.time
+        validity = observations.support.validity
+    elif dataset is not None:
+        lower, upper = window if window is not None else (None, None)
+        inside = dataset.window_mask(lower, upper)
+        support = dataset.time[inside]
+        validity = (
+            dataset.ratio_validity.select(inside) if dataset.ratio_validity is not None else None
+        )
+    else:
+        lower, upper = window if window is not None else (None, None)
+        support = observations.time[time_window_mask(observations.time, lower, upper)]
+        validity = None
     digest.update(np.ascontiguousarray(support, dtype="<f8").tobytes())
-    if dataset is not None and dataset.ratio_validity is not None:
-        digest.update(dataset.ratio_validity.reasons[inside].tobytes())
+    if validity is not None:
+        digest.update(validity.reasons.tobytes())
     return {
         "identity": digest.hexdigest(),
         "computation_revision": dataset.computation_revision if dataset is not None else None,
@@ -95,7 +107,12 @@ def fit_input_attribution(
 
 
 def saved_fit_matches(slot, dataset):
-    """Verify current observations before drawing historical residuals."""
+    """Check whether the saved fit's observations and source context still match."""
+    return saved_fit_observations(slot, dataset) is not None
+
+
+def saved_fit_observations(slot, dataset) -> GaussianObservations | None:
+    """Restore exactly the verified observations used for the saved Gaussian fit."""
     recorded = (slot.result or {}).get("input_attribution")
     if (
         dataset is None
@@ -104,28 +121,28 @@ def saved_fit_matches(slot, dataset):
         or not computation.is_current((slot.result or {}).get("computation_revision"))
         or (slot.result or {}).get("objective") != "gaussian"
     ):
-        return False
-    from asymmetry.core.fitting.likelihood import gaussian_selection
-
-    window = {"min": recorded["min"], "max": recorded["max"]}
-    selection = gaussian_selection(dataset, window["min"], window["max"])
+        return None
+    selection = gaussian_selection(dataset, recorded["min"], recorded["max"], exact=True)
     mask = selection.mask
     if not selection.used or not (
         np.isfinite(dataset.time[mask]).all() and np.isfinite(dataset.asymmetry[mask]).all()
     ):
-        return False
+        return None
     if dataset.metadata.get("plot_domain") != "frequency" and not (
         np.isfinite(dataset.error[mask]).all() and np.all(dataset.error[mask] > 0)
     ):
-        return False
-    observations = dataset_observations(dataset, window["min"], window["max"])
+        return None
+    observations = selection.observations(dataset)
     current = fit_input_attribution(
         observations,
         dataset,
-        window=(window["min"], window["max"]),
         error_oversampling=recorded.get("error_oversampling", 1.0),
     )
-    return current["identity"] == recorded["identity"] and same_source_context(current, recorded)
+    return (
+        observations
+        if current["identity"] == recorded["identity"] and same_source_context(current, recorded)
+        else None
+    )
 
 
 def same_source_context(first, second):

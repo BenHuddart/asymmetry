@@ -56,6 +56,7 @@ from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RatioReason
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe, field_scan_recipe
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
@@ -69,6 +70,7 @@ from asymmetry.core.transform.counting_noise import (
 from asymmetry.core.transform.fb_counts import (
     GroupCounts,
     native_count_time,
+    native_time_window,
     validated_count_arrays,
 )
 from asymmetry.core.transform.grouping import (
@@ -443,12 +445,9 @@ def reduce_period_integral(
         time = native_count_time(
             pair.forward.counts.size, pair.bin_width_us, pair.common_t0_bin, pair.t0_time_us
         )
-        mask = _window_mask(
-            time,
-            time[pair.window.first] if t_min is None else t_min,
-            time[pair.window.last] if t_max is None else t_max,
-            time.size,
-        )
+        window = native_time_window(time, pair.window, (t_min, t_max))
+        mask = np.zeros(time.size, dtype=bool)
+        mask[window.first : window.last + 1] = True
         masks[label] = mask
         ratios[label] = count_ratio_observations(
             pair.forward,
@@ -885,13 +884,7 @@ def _window_mask(
         raise ValueError("A time axis is required when t_min/t_max are supplied.")
     if t_min is not None and t_max is not None:
         _validate_window(float(t_min), float(t_max))
-    t = np.asarray(time, dtype=np.float64)[:n]
-    mask = np.ones(n, dtype=bool)
-    if t_min is not None:
-        mask &= t >= t_min
-    if t_max is not None:
-        mask &= t <= t_max
-    return mask
+    return time_window_mask(np.asarray(time, dtype=np.float64)[:n], t_min, t_max)
 
 
 def _resolve_run(data: MuonDataset | Run) -> Run:

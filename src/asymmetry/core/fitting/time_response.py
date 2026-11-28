@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from functools import wraps
+from functools import partial
+from inspect import ismethod, unwrap
 
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -60,6 +62,11 @@ class TimeResponse:
             **({"separation_us": self.separation_us} if self.mode != "off" else {}),
         }
 
+    @property
+    def first_arrival_us(self) -> float | None:
+        """The earliest defined prediction time for an active response."""
+        return None if self.mode == "off" else -self.separation_us / 2
+
     @classmethod
     def from_dict(cls, payload: Mapping | None) -> TimeResponse:
         """Restore optional authored settings; absent historical settings are off."""
@@ -80,15 +87,15 @@ class TimeResponse:
         survival factor without underflow at late observation times.
         """
         time = np.asarray(time, dtype=float)
-        if self.mode == "off":
+        first_arrival = self.first_arrival_us
+        if first_arrival is None:
             return source(time, **parameters)
-        half = self.separation_us / 2
-        if np.any(time < -half):
+        if np.any(time < first_arrival):
             raise ValueError(
                 "Double-pulse model has no source population before the first arrival "
-                f"(t = {-half:g} µs); choose a supported fit window or turn Time response off."
+                f"(t = {first_arrival:g} µs); choose a supported fit window or turn Time response off."
             )
-        latest_birth = np.where(time >= half, half, -half)
+        latest_birth = np.where(time >= -first_arrival, -first_arrival, first_arrival)
         numerator = np.zeros_like(time)
         denominator = np.zeros_like(time)
         for live, age, birth, incident in live_source_ages(time, self.separation_us):
@@ -104,8 +111,14 @@ class TimeResponse:
         Clipping extrapolation to the first birth does not omit observations;
         :meth:`evaluate` still diagnoses unsupported requested model points.
         """
-        if self.mode != "off":
-            t_min = max(t_min, -self.separation_us / 2)
+        first_arrival = self.first_arrival_us
+        if first_arrival is not None:
+            if (
+                t_max < first_arrival
+                and time_window_mask(np.array([first_arrival]), t_min, t_max).item()
+            ):
+                t_max = first_arrival
+            t_min = max(t_min, first_arrival)
             if t_max < t_min:
                 raise ValueError(
                     "Double-pulse curve window has no source population; choose a supported fit window."
@@ -117,8 +130,33 @@ class TimeResponse:
         if self.mode == "off":
             return source
 
-        @wraps(source)
-        def prediction(time, **parameters):
-            return self.evaluate(source, time, **parameters)
+        return TimeResponseFunction(source, self)
 
-        return prediction
+
+@dataclass(frozen=True)
+class TimeResponseFunction:
+    """Callable source with its authored time response available to selectors."""
+
+    source: Callable
+    time_response: TimeResponse
+
+    @property
+    def __wrapped__(self):
+        return self.source
+
+    def __call__(self, time, **parameters):
+        return self.time_response.evaluate(self.source, time, **parameters)
+
+
+def first_model_arrival(model_fn: Callable) -> float | None:
+    """Return the exact first arrival for known model callables and wrappers."""
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    fn = unwrap(model_fn, stop=lambda value: isinstance(value, TimeResponseFunction))
+    if isinstance(fn, partial):
+        return first_model_arrival(fn.func)
+    if isinstance(fn, TimeResponseFunction):
+        return fn.time_response.first_arrival_us
+    if ismethod(fn) and isinstance(fn.__self__, CompositeModel):
+        return fn.__self__.time_response.first_arrival_us
+    return None

@@ -14,7 +14,8 @@ from enum import Enum
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from asymmetry.core.data.ratio_validity import ObservationReport, RatioReason
+from asymmetry.core.data.ratio_validity import ObservationReport, RatioReason, RatioValidity
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fitting.spectral_weights import (
     SpectralWeighting,
     SpectralWeightPolicy,
@@ -39,7 +40,7 @@ class FitInputError(ValueError):
 
 
 def _observation_arrays(
-    *values: ArrayLike, t_min=None, t_max=None
+    *values: ArrayLike, t_min=None, t_max=None, support_start=None
 ) -> tuple[NDArray[np.float64], ...]:
     arrays = tuple(np.array(value, dtype=float, copy=True) for value in values)
     if any(array.ndim != 1 for array in arrays):
@@ -49,11 +50,7 @@ def _observation_arrays(
     if arrays[0].size == 0:
         raise FitInputError("fit observations contain no points")
     if t_min is not None or t_max is not None:
-        mask = np.ones(arrays[0].shape, dtype=bool)
-        if t_min is not None:
-            mask &= arrays[0] >= t_min
-        if t_max is not None:
-            mask &= arrays[0] <= t_max
+        mask = time_window_mask(arrays[0], t_min, t_max, support_start=support_start)
         arrays = tuple(array[mask] for array in arrays)
         if arrays[0].size == 0:
             raise FitInputError("fit observations contain no points in the fit window")
@@ -68,6 +65,20 @@ def _point_label(run_number, point, time):
 
 
 @dataclass(frozen=True)
+class GaussianSupport:
+    """Selected coordinates before ratio omissions or spectral weight selection."""
+
+    time: NDArray[np.float64]
+    validity: RatioValidity | None
+
+    def __post_init__(self):
+        self.time.setflags(write=False)
+
+    def __reduce__(self):
+        return type(self), (self.time, self.validity)
+
+
+@dataclass(frozen=True)
 class GaussianObservations:
     """Owned read-only least-squares observations with positive denominators."""
 
@@ -79,6 +90,8 @@ class GaussianObservations:
     t_max: InitVar[float | None] = None
     report: ObservationReport | None = None
     spectral_weighting: SpectralWeighting | None = None
+    support_start: InitVar[float | None] = None
+    support: GaussianSupport | None = None
 
     @property
     def stated_sigma(self) -> NDArray[np.float64] | None:
@@ -102,9 +115,14 @@ class GaussianObservations:
             )
         return None
 
-    def __post_init__(self, t_min, t_max):
+    def __post_init__(self, t_min, t_max, support_start):
         time, values, sigma = _observation_arrays(
-            self.time, self.values, self.sigma, t_min=t_min, t_max=t_max
+            self.time,
+            self.values,
+            self.sigma,
+            t_min=t_min,
+            t_max=t_max,
+            support_start=support_start,
         )
         for name, array in (("time", time), ("value", values), ("uncertainty", sigma)):
             invalid = ~np.isfinite(array)
@@ -132,6 +150,8 @@ class GaussianObservations:
             None,
             self.report,
             self.spectral_weighting,
+            None,
+            self.support,
         )
 
 
@@ -140,69 +160,85 @@ class GaussianSelection:
     """Requested full-grid membership and its optional histogram omission report."""
 
     mask: NDArray[np.bool_]
-    report: ObservationReport | None
+    support_mask: NDArray[np.bool_]
+    validity: RatioValidity | None
+
+    @property
+    def report(self) -> ObservationReport | None:
+        return self.validity.report() if self.validity is not None else None
 
     @property
     def used(self) -> int:
         return int(np.count_nonzero(self.mask))
 
-
-def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
-    """Select a requested fit window and known usable histogram observations."""
-    mask = np.ones(dataset.n_points, dtype=bool)
-    if t_min is not None:
-        mask &= dataset.time >= t_min
-    if t_max is not None:
-        mask &= dataset.time <= t_max
-    report = None
-    if dataset.ratio_validity is not None:
-        validity = dataset.ratio_validity.select(mask)
-        report = validity.report()
-        mask[mask] = validity.reasons == RatioReason.USABLE
-    return GaussianSelection(mask, report)
-
-
-def dataset_observations(dataset, t_min=None, t_max=None):
-    """Resolve spectral weights or known histogram support before validation."""
-    if dataset.metadata.get("plot_domain") == "frequency":
-        mask = gaussian_selection(dataset, t_min, t_max).mask
-        time, values = dataset.time[mask], dataset.asymmetry[mask]
+    def observations(self, dataset) -> GaussianObservations:
+        """Resolve weights and validate the selected observations."""
+        mask = self.mask
         error = np.asarray(dataset.error, dtype=float)
-        if dataset.error is None or error.size == 0:
-            error = np.zeros_like(dataset.time)
-        if error.shape != dataset.time.shape:
-            raise FitInputError("spectral errors must be absent or align with the frequency bins")
-        error = error[mask]
-        weighting, used = spectral_fit_weights(error)
+        time = np.asarray(dataset.time, dtype=float)
+        values = np.asarray(dataset.asymmetry, dtype=float)
+        support = GaussianSupport(time[self.support_mask], self.validity)
+        if dataset.metadata.get("plot_domain") == "frequency":
+            if dataset.error is None or error.size == 0:
+                error = np.zeros_like(time)
+            if error.shape != time.shape:
+                raise FitInputError(
+                    "spectral errors must be absent or align with the frequency bins"
+                )
+            error = error[mask]
+            weighting, used = spectral_fit_weights(error)
+            return GaussianObservations(
+                time[mask][used],
+                values[mask][used],
+                np.ones_like(error)
+                if weighting.policy is SpectralWeightPolicy.UNIT
+                else error[used],
+                run_number=dataset.run_number,
+                spectral_weighting=weighting,
+                support=support,
+            )
+        if any(array.ndim != 1 for array in (time, values, error)):
+            raise FitInputError("fit observations must be one-dimensional arrays")
+        if values.shape != time.shape or error.shape != time.shape:
+            raise FitInputError("fit observation arrays must have the same length")
+        report = self.report
+        if report is not None and not self.used:
+            raise FitInputError(
+                f"run {dataset.run_number}: no usable Gaussian observations. " + report.summary()
+            )
+        if not self.used and time.size:
+            raise FitInputError("fit observations contain no points in the fit window")
         return GaussianObservations(
-            time[used],
-            values[used],
-            np.ones_like(time) if weighting.policy is SpectralWeightPolicy.UNIT else error[used],
+            time[mask],
+            values[mask],
+            error[mask],
             run_number=dataset.run_number,
-            spectral_weighting=weighting,
+            report=report,
+            support=support,
         )
-    if dataset.ratio_validity is None:
-        return GaussianObservations(
-            dataset.time,
-            dataset.asymmetry,
-            dataset.error,
-            run_number=dataset.run_number,
-            t_min=t_min,
-            t_max=t_max,
-        )
-    selection = gaussian_selection(dataset, t_min, t_max)
-    if selection.report is not None and not selection.used:
-        raise FitInputError(
-            f"run {dataset.run_number}: no usable Gaussian observations. "
-            + selection.report.summary()
-        )
-    mask = selection.mask
-    return GaussianObservations(
-        dataset.time[mask],
-        dataset.asymmetry[mask],
-        dataset.error[mask],
-        run_number=dataset.run_number,
-        report=selection.report,
+
+
+def gaussian_selection(
+    dataset, t_min=None, t_max=None, *, support_start=None, exact=False
+) -> GaussianSelection:
+    """Select a requested fit window and known usable histogram observations."""
+    time = np.asarray(dataset.time, dtype=float)
+    if time.ndim != 1:
+        raise FitInputError("fit observations must be one-dimensional arrays")
+    support = dataset.window_mask(t_min, t_max, support_start=support_start, exact=exact)
+    mask = support
+    validity = None
+    if dataset.ratio_validity is not None:
+        validity = dataset.ratio_validity.select(support)
+        mask = support.copy()
+        mask[mask] = validity.reasons == RatioReason.USABLE
+    return GaussianSelection(mask, support, validity)
+
+
+def dataset_observations(dataset, t_min=None, t_max=None, *, support_start=None):
+    """Resolve spectral weights or known histogram support before validation."""
+    return gaussian_selection(dataset, t_min, t_max, support_start=support_start).observations(
+        dataset
     )
 
 

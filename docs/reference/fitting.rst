@@ -434,6 +434,11 @@ restrict which time bins enter the cost function:
        dataset, model.function, params, t_min=0.1, t_max=5.0,
    )
 
+The time-domain **Fit range** includes bin centres on both bounds and up to
+1e-12 μs outside either bound to allow for floating-point rounding. Asymmetry
+keeps the requested bounds as entered. With a double-pulse time response,
+only centres at or after the first arrival can be added by this margin.
+
 The two common reasons to clip the range are (a) early-time bins
 contaminated by deadtime or finite-pulse-width effects, and (b)
 late-time bins where the signal has decayed into the background and adds
@@ -709,8 +714,11 @@ Execution compatibility of saved fits
 Asymmetry also checks the captured scientific-computation revision alongside the
 actual fitted observations and objective before verified saved-fit ranking,
 automatic replacement, or current residuals. Old or unknown executions remain
-available as historical parameter values and models. Refitting records a new
-execution; saving or exporting a historical result preserves its revision.
+available as historical parameter values and models. Run an explicit refit to
+record a current result. Saving or exporting preserves the revision of a
+historical result.
+Saved-fit residuals evaluate the model at the verified fitted bin centres.
+The displayed curve uses its own sampling grid and spans those centres.
 This compatibility check changes neither the objective nor the statistical
 meaning of its uncertainties. See :doc:`project_files` for saved history and
 :doc:`agent_workflow` for persistent work-directory recomputation.

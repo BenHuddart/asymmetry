@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.transform.counting_noise import CountingNoise
 
@@ -393,11 +394,15 @@ class ForwardBackwardCounts:
 
 def native_time_window(time, good_window: BinWindow, bounds) -> BinWindow:
     """Select inclusive native observations, using good support for omitted bounds."""
-    lower = time[good_window.first] if bounds[0] is None else float(bounds[0])
-    upper = time[good_window.last] if bounds[1] is None else float(bounds[1])
-    if lower > upper:
+    t_min, t_max = bounds
+    if t_min is not None and t_max is not None and t_min > t_max:
         raise ValueError("Integration window requires t_min <= t_max.")
-    selected = np.flatnonzero((time >= lower) & (time <= upper))
+    mask = time_window_mask(time, t_min, t_max)
+    if t_min is None:
+        mask[: good_window.first] = False
+    if t_max is None:
+        mask[good_window.last + 1 :] = False
+    selected = np.flatnonzero(mask)
     if not selected.size:
         raise ValueError("Integration window contains no bins.")
     return BinWindow(int(selected[0]), int(selected[-1]))

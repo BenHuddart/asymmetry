@@ -20,6 +20,7 @@ from asymmetry.core import computation
 from asymmetry.core.data.acquisition import SourceBinding
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.instruments.source import SourceAssessment
 
 if TYPE_CHECKING:
@@ -226,6 +227,10 @@ class MuonDataset:
 
     effective_recipe: EffectiveReductionRecipe | None = field(default=None, repr=False)
     computation_revision: str | None = None
+    #: Literal centre crops on curves without a reduction recipe.
+    _curve_time_windows: tuple[tuple[float | None, float | None], ...] = field(
+        default=(), repr=False
+    )
 
     # Convenience -------------------------------------------------------
 
@@ -388,6 +393,7 @@ class MuonDataset:
             )
         return MuonDataset(
             computation_revision=computation.COMPUTATION_REVISION,
+            _curve_time_windows=self._curve_time_windows if factor == 1 else (),
             effective_recipe=self.effective_recipe.curve_operation(
                 "mean_curve_bins",
                 factor=int(factor),
@@ -405,8 +411,36 @@ class MuonDataset:
             run=self.run,
         )
 
+    def window_mask(
+        self,
+        lower: float | None,
+        upper: float | None,
+        *,
+        support_start: float | None = None,
+        exact: bool = False,
+    ) -> NDArray[np.bool_]:
+        """Select centres on this axis or reconstruct exact recorded support."""
+        time = np.asarray(self.time)
+        if not exact and self.metadata.get("plot_domain") != "frequency":
+            mask = time_window_mask(time, lower, upper, support_start=support_start)
+            if support_start is not None:
+                windows = (
+                    self._curve_time_windows
+                    if self.effective_recipe is None
+                    else self.effective_recipe.selected_time_windows()
+                )
+                for bounds in windows:
+                    mask &= time_window_mask(time, *bounds, support_start=support_start)
+            return mask
+        mask = np.ones(self.n_points, dtype=bool)
+        if lower is not None:
+            mask &= time >= lower
+        if upper is not None:
+            mask &= time <= upper
+        return mask
+
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
-        """Return a copy restricted to [t_min, t_max].
+        """Return a copy restricted to the inclusive range [t_min, t_max].
 
         Like :meth:`merge_curve_bins`, the copy shares this dataset's :class:`~asymmetry.core.data.dataset.Run` and so
         keeps its raw histograms: correct in-process, but it means a windowed
@@ -415,13 +449,12 @@ class MuonDataset:
         """
         from scipy.sparse import eye
 
-        mask = np.ones(self.n_points, dtype=bool)
-        if t_min is not None:
-            mask &= self.time >= t_min
-        if t_max is not None:
-            mask &= self.time <= t_max
+        mask = self.window_mask(t_min, t_max)
         return MuonDataset(
             computation_revision=self.computation_revision,
+            _curve_time_windows=(*self._curve_time_windows, (t_min, t_max))
+            if self.effective_recipe is None
+            else (),
             effective_recipe=self.effective_recipe.curve_operation(
                 "select_time_centres",
                 t_min=t_min,

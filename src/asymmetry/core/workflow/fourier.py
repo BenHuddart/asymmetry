@@ -24,6 +24,7 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.time_window import time_window_mask
 from asymmetry.core.fitting.peak_detection import detect_peaks_in_spectrum, serialize_peak_analysis
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
 from asymmetry.core.fourier.fft import fft_arrays
@@ -220,11 +221,7 @@ def _quantified(
         raise ValueError("The requested Fourier frequency window contains fewer than two bins.")
 
     time = np.asarray(time, dtype=np.float64)
-    time_mask = np.ones(time.size, dtype=bool)
-    if settings.t_min is not None:
-        time_mask &= time >= settings.t_min
-    if settings.t_max is not None:
-        time_mask &= time <= settings.t_max
+    time_mask = time_window_mask(time, settings.t_min, settings.t_max)
     selected_time = time[time_mask]
     if selected_time.size < 2:
         raise ValueError("The requested Fourier time window contains fewer than two points.")
