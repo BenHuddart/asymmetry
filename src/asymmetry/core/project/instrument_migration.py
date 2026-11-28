@@ -1,7 +1,8 @@
 """Saved layout choices retain their historical namespace and scientific payloads."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from asymmetry.core.instruments.recognition import ACQUIRED_LABEL_KEYS
 from asymmetry.core.instruments.resolution import (
     GenericInstrumentIdentity,
     InstrumentSelection,
@@ -40,13 +41,42 @@ class LegacyProfileFingerprint:
         return {"instrument": self.instrument, "histogram_count": self.histogram_count}
 
 
-def legacy_histogram_count(overrides: dict) -> int | None:
-    """Only saved acquired-channel tables establish the count, never group membership."""
-    for key in ("detector_t0_bins", "detector_first_good_bins", "histogram_labels"):
+def _legacy_histogram_counts(overrides: dict, *, extra_fields: tuple[str, ...] = ()):
+    for key in ("detector_t0_bins", "detector_first_good_bins", "histogram_labels", *extra_fields):
         value = overrides.get(key)
         if isinstance(value, (list, tuple)) and value:
-            return len(value)
-    return None
+            yield len(value)
+
+
+def legacy_histogram_count(overrides: dict) -> int | None:
+    """Only saved acquired-channel tables establish the count, never group membership."""
+    return next(_legacy_histogram_counts(overrides), None)
+
+
+def legacy_choice_with_acquired_evidence(
+    choice: RecordedInstrumentChoice | None, overrides: dict
+) -> RecordedInstrumentChoice | None:
+    """Retain saved table evidence alongside a legacy instrument choice."""
+    if (
+        choice is None
+        or not isinstance(choice.selection, InstrumentSelection)
+        or choice.selection.origin != "legacy"
+        or choice.selection.acquisition != UnmappedAcquisition("incompatible")
+    ):
+        return choice
+
+    counts = _legacy_histogram_counts(
+        overrides, extra_fields=("detector_last_good_bins", "detector_labels")
+    )
+    evidence = (
+        *(("grouping_overrides.histogram_count", str(count)) for count in counts),
+        *(
+            (f"grouping_overrides.{key}", str(list(labels)))
+            for key in ACQUIRED_LABEL_KEYS
+            if isinstance(labels := overrides.get(key), (list, tuple)) and labels
+        ),
+    )
+    return replace(choice, evidence=tuple(dict.fromkeys((*choice.evidence, *evidence))))
 
 
 def _stored_layout_selection(label: str, count: int | None):

@@ -126,9 +126,10 @@ Loading data
 Multiple file selection
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-1. Click **File → Open** (or toolbar "Open" button)
-2. Select one or multiple supported data files (use Ctrl+Click or Shift+Click)
-3. All selected files will be loaded into the data browser
+1. Choose **File → Open Data File(s)…** or use the toolbar's **Open** button.
+2. Select one or more supported data files using Ctrl+Click or Shift+Click.
+3. Check the **LOG** for files that could not be loaded, including
+   :ref:`run-number-conflicts`.
 
 The data browser shows:
 
@@ -750,7 +751,17 @@ state.
 When you open the Grouping dialog from a run selection, the currently selected
 datasets are pre-ticked in the dialog. When loading new runs into an existing
 project, Asymmetry reuses the grouping payload from the highest run number
-currently present in the Data Browser when that payload is well-defined.
+with a well-defined grouping in the Data Browser. This template applies only
+when the incoming run has the same resolved instrument and detector
+configuration. Otherwise, the incoming run keeps its file grouping and the
+**Log** reports why, as in this example.
+
+.. code-block:: text
+
+   Run 17294: skipped project grouping because the instrument or detector configuration does not match the template.
+
+If Asymmetry cannot reduce the selected run because its grouping is invalid,
+the plot displays the grouping error.
 
 Full Grouping dialog
 ~~~~~~~~~~~~~~~~~~~~

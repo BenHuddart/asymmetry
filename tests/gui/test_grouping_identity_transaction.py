@@ -12,8 +12,12 @@ from asymmetry.core.instruments.resolution import (
     InstrumentSelection,
     RecordedInstrumentChoice,
     accept_instrument_choice,
+    resolve_instrument,
 )
+from asymmetry.core.project.calibration import PreparedGrouping
 from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
+from asymmetry.core.transform.grouping import InvalidGroupingError
+from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
@@ -69,6 +73,33 @@ def two_run_editor(editor):
     dialog._assigned_profiles[18] = profile.name
     dialog._refresh_scope_panel()
     return dialog, run, other, profile
+
+
+@pytest.mark.parametrize("conflicting_identity", [True, False])
+def test_prepared_grouping_failure_preserves_identity_and_groups(
+    qapp, editor, conflicting_identity
+):
+    dialog, run, _ = editor
+    foreign = run.instrument_choice
+    run.instrument_choice = accept_instrument_choice(
+        run, resolve_instrument(run).observed.selection
+    )
+    before = deepcopy((run.instrument_choice, run.grouping))
+    payload = deepcopy(run.grouping)
+    if conflicting_identity:
+        request = PreparedGrouping(payload, foreign)
+        message = "Instrument identity conflicts"
+    else:
+        payload["groups"][1] = [9]
+        choice = RecordedInstrumentChoice(
+            foreign.selection, resolve_instrument(run).observed.evidence
+        )
+        request = PreparedGrouping(payload, choice)
+        message = r"Detector\(s\) 9 do not exist"
+    window = MainWindow()
+    with pytest.raises(InvalidGroupingError, match=message):
+        window._apply_grouping_settings_to_dataset(dialog._datasets[0], request)
+    assert (run.instrument_choice, run.grouping) == before
 
 
 @pytest.mark.parametrize("apply_preset", [False, True])

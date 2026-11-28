@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.gui.scan_fit_helpers import load_scan_selection
+
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
@@ -68,7 +70,7 @@ def test_alc_analysis_state_clears_on_new_project(mainwindow: MainWindow):
     mw._plot_workspace.set_active_view("integral_scan")
 
     # Build a scan and configure a Cubic baseline + regions + a Lorentzian peak.
-    mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0)])
+    load_scan_selection(mw, _ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0))
     mw._on_scan_requested()
     assert mw._alc_scan_view.point_count() == 2
 

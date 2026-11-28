@@ -82,11 +82,13 @@ you save a project, because they cannot reload with it.
    :alt: The Data Browser context menu for an in-memory synthetic run includes Save as NeXus.
 
 The **Save as NeXus…** button in **Generate Synthetic Run** exports a separate
-file. Open that file through **Open Data File(s)…** before saving a project that
-uses it. Both routes write standard ISIS muon NeXus with explicit temperature,
-field, and timing units. The browser route requires a single-period run with
-non-negative integer raw counts and no supplied counting variance. A cancelled
-or failed operation leaves the live run without a new source capture.
+file. To analyse that file, choose **File → New Project** and open it with
+**File → Open Data File(s)…** in the new tab. To keep working with the live
+single-period run in the original tab, use **Save as NeXus…** in the Data
+Browser. Both routes write standard ISIS muon NeXus with explicit temperature,
+field, and timing units. The browser route requires non-negative integer raw
+counts and no supplied counting variance. A cancelled or failed operation
+leaves the live run without a new source capture.
 
 The same template, model, parameters, events, **seed**, and numerical environment
 reproduce the count draw; cross-version or cross-platform bitwise identity is

@@ -82,11 +82,25 @@ def test_for_run_recommends_spin_rotated_preset_on_gps() -> None:
     from asymmetry.core.instrument import recommend_grouping_preset_for_run
 
     rec = recommend_grouping_preset_for_run(
-        n_histograms=5,
+        n_histograms=6,
         metadata={"facility": "PSI", "instrument": "GPS", "field_direction": "Transverse"},
         current_preset="Longitudinal",
     )
     assert rec == "Spin-rotated (B+U/F+D)"
+
+
+def test_for_run_recommends_transverse_preset_for_matched_hal_forward_ring():
+    from asymmetry.core.instrument import recommend_grouping_preset_for_run
+
+    metadata = {
+        "facility": "PSI",
+        "instrument": "HAL",
+        "histogram_labels": ["MV", *(f"F{i}" for i in range(1, 9))],
+        "field_direction": "Transverse",
+    }
+    assert recommend_grouping_preset_for_run(n_histograms=9, metadata=metadata) == (
+        "Transverse (opposed pairs)"
+    )
 
 
 def test_for_run_suppresses_nudge_when_already_on_recommended_preset() -> None:

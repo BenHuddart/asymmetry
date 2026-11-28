@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Build the integral scan from the runs selected in the Data Browser, even
+  while a Batch series is open.
+
 - Report fitted frequency spacings descriptively and require a separate
   model comparison to assess spectral line multiplicity.
 - Use fitted frequency covariance for CLI line-spacing uncertainties and
@@ -125,9 +128,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Write unexpected errors and crash tracebacks to a log file, show unexpected
   errors in the window, and add Help → Open Log Folder.
+- Open HAL-9500 files with the nine-channel forward-ring readout using
+  **Transverse (opposed pairs)** and F1/F5 asymmetry.
 
 ### Fixed
 
+- Refuse to load a different file with an occupied run number, keeping the
+  original data and fits and identifying both files in the log.
+- Keep a newly loaded run's own instrument and grouping when the project's grouping belongs to
+  another instrument, and show grouping errors in the plot instead of the previous run's data.
 - Open **Grouping** on runs with missing detectors in the authored grouping,
   show the preview diagnostic, and let users repair the membership.
 - Returning from the FFT or MaxEnt view no longer replaces the time-domain fit

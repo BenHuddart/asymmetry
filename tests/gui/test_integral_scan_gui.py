@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tests.gui.scan_fit_helpers import wait_for_fit
+from tests.gui.scan_fit_helpers import load_scan_selection, wait_for_fit
 
 pytestmark = [pytest.mark.gui]
 
@@ -135,16 +135,14 @@ def test_integral_scan_is_remembered_as_time_view(mainwindow: MainWindow, monkey
 def test_alc_build_creates_percent_scan_and_renders(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets(
-        [
-            _ds(11, 110.0, 90.0, 100.0),  # A = 0.1 -> 10.0 %
-            _ds(12, 120.0, 80.0, 200.0),  # A = 0.2 -> 20.0 %
-            _ds(13, 130.0, 70.0, 300.0),  # A = 0.3 -> 30.0 %
-        ]
+    load_scan_selection(
+        mw,
+        _ds(11, 110.0, 90.0, 100.0),  # A = 0.1 -> 10.0 %
+        _ds(12, 120.0, 80.0, 200.0),  # A = 0.2 -> 20.0 %
+        _ds(13, 130.0, 70.0, 300.0),  # A = 0.3 -> 30.0 %
     )
 
-    mw._alc_fit_panel.build_requested.emit()  # exercises the wiring
-
+    mw._alc_fit_panel.build_requested.emit()
     series = next(s for s in mw._project_model.batches.values() if s.batch_id.startswith("scan-"))
     assert series.is_computed is True
     by_run = {
@@ -162,12 +160,11 @@ def test_alc_build_creates_percent_scan_and_renders(mainwindow: MainWindow, monk
 def test_alc_x_axis_selector_reorders(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets(
-        [
-            _ds(11, 110.0, 90.0, field=100.0, temperature=5.0),
-            _ds(12, 120.0, 80.0, field=200.0, temperature=15.0),
-            _ds(13, 130.0, 70.0, field=300.0, temperature=25.0),
-        ]
+    load_scan_selection(
+        mw,
+        _ds(11, 110.0, 90.0, field=100.0, temperature=5.0),
+        _ds(12, 120.0, 80.0, field=200.0, temperature=15.0),
+        _ds(13, 130.0, 70.0, field=300.0, temperature=25.0),
     )
     mw._on_scan_requested()
     view = mw._alc_scan_view
@@ -183,12 +180,11 @@ def test_alc_x_axis_selector_reorders(mainwindow: MainWindow, monkeypatch):
 def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets(
-        [
-            _ds(11, 110.0, 90.0, 100.0),
-            _ds(12, 120.0, 80.0, 200.0, 20.0),
-            _ds(13, 130.0, 70.0, 300.0, 30.0),
-        ]
+    load_scan_selection(
+        mw,
+        _ds(11, 110.0, 90.0, 100.0),
+        _ds(12, 120.0, 80.0, 200.0, 20.0),
+        _ds(13, 130.0, 70.0, 300.0, 30.0),
     )
     mw._on_scan_requested()
     view = mw._alc_scan_view
@@ -226,18 +222,25 @@ def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
     assert mw._alc_display_scan("run").derivative is False
 
 
-def test_alc_rebuild_replaces_scan_series(mainwindow: MainWindow, monkeypatch):
-    # Iterating the window (rebuilding) must replace the scan series, not
-    # accumulate a new one each time.
+def test_alc_build_and_rebuild_follow_browser_selection(mainwindow: MainWindow):
     mw = mainwindow
-    _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0)])
-    mw._on_scan_requested()
-    mw._on_scan_requested()
-    mw._on_scan_requested()
-    scans = [s for s in mw._project_model.batches.values() if s.batch_id.startswith("scan-")]
-    assert len(scans) == 1
-    assert scans[0].order_key == "run"
+    for number in range(11, 16):
+        mw._data_browser.add_dataset(_ds(number, 110.0, 90.0, field=100.0 * number))
+    batch = FitSeries("batch-copper", _FB, member_run_numbers=[11, 12], canonical_model="Constant")
+    mw._project_model.add_batch(batch)
+    mw._on_series_open_requested(batch.batch_id)
+    mw._plot_workspace.set_active_view("integral_scan")
+
+    for selection in ([13, 14, 15], [13, 15]):
+        mw._data_browser.select_runs(selection)
+        mw._alc_fit_panel.build_requested.emit()
+        scan = mw._project_model.batch(mw._alc_scan_series_id)
+        assert scan.member_run_numbers == selection
+        assert scan.order_key == "run"
+        assert mw._project_model.batches == {batch.batch_id: batch, scan.batch_id: scan}
+        assert mw._fit_panel.open_series_id() == batch.batch_id
+        assert batch.member_run_numbers == [11, 12]
+        assert [ds.run_number for ds in mw._fit_panel.batch_datasets()] == [11, 12]
 
 
 def test_alc_baseline_combo_offers_higher_order_models(qapp: QApplication):
@@ -267,7 +270,7 @@ def test_alc_build_needs_two_runs(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
     monkeypatch.setattr(mw_module.QMessageBox, "information", staticmethod(lambda *a, **k: None))
-    mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0)])
+    load_scan_selection(mw, _ds(11, 110.0, 90.0, 100.0))
     mw._on_scan_requested()
     scans = [s for s in mw._project_model.batches.values() if s.batch_id.startswith("scan-")]
     assert scans == []
@@ -278,7 +281,7 @@ def test_deleting_scan_series_clears_only_its_own_overlays(mainwindow: MainWindo
     # runs it shares with a real fit keep theirs.
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0)])
+    load_scan_selection(mw, _ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0))
     mw._on_scan_requested()
     scan = next(s for s in mw._project_model.batches.values() if s.batch_id.startswith("scan-"))
 
@@ -548,7 +551,7 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     for i, field in enumerate(np.linspace(50.0, 350.0, 31)):
         asymmetry = 0.1 + _gauss(field, -0.05, 200.0, 20.0)
         datasets.append(_ds(11 + i, 100 * (1 + asymmetry), 100 * (1 - asymmetry), float(field)))
-    mw._fit_panel.set_datasets(datasets)
+    load_scan_selection(mw, *datasets)
     mw._on_scan_requested()
     view = mw._alc_scan_view
     _set_regions(view, [(50.0, 125.0), (275.0, 350.0)])
@@ -633,11 +636,10 @@ def test_alc_restore_tolerates_malformed_extra(mainwindow: MainWindow):
 
 
 def test_alc_data_table_dialog(mainwindow: MainWindow, monkeypatch):
-    # The per-point table now lives in a separate dialog (to free plot space).
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets(
-        [_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0), _ds(13, 130.0, 70.0, 300.0)]
+    load_scan_selection(
+        mw, _ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0), _ds(13, 130.0, 70.0, 300.0)
     )
     mw._on_scan_requested()
     view = mw._alc_scan_view
@@ -762,12 +764,11 @@ def test_alc_peak_centre_drag_updates_b0(qapp: QApplication):
 def test_alc_x_axis_change_clears_analysis(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets(
-        [
-            _ds(11, 110.0, 90.0, field=100.0, temperature=5.0),
-            _ds(12, 120.0, 80.0, field=200.0, temperature=15.0),
-            _ds(13, 130.0, 70.0, field=300.0, temperature=25.0),
-        ]
+    load_scan_selection(
+        mw,
+        _ds(11, 110.0, 90.0, field=100.0, temperature=5.0),
+        _ds(12, 120.0, 80.0, field=200.0, temperature=15.0),
+        _ds(13, 130.0, 70.0, field=300.0, temperature=25.0),
     )
     mw._on_scan_requested()
     view = mw._alc_scan_view
@@ -831,12 +832,11 @@ def test_alc_point_toggle_excludes_and_restores(mainwindow: MainWindow, monkeypa
     # provenance line; a second toggle restores it.
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets(
-        [
-            _ds(11, 110.0, 90.0, 100.0),
-            _ds(12, 120.0, 80.0, 200.0),
-            _ds(13, 130.0, 70.0, 300.0),
-        ]
+    load_scan_selection(
+        mw,
+        _ds(11, 110.0, 90.0, 100.0),
+        _ds(12, 120.0, 80.0, 200.0),
+        _ds(13, 130.0, 70.0, 300.0),
     )
     mw._on_scan_requested()
 
@@ -862,7 +862,7 @@ def test_alc_exclusions_persist_and_survive_rebuild(mainwindow: MainWindow, monk
         _ds(12, 120.0, 80.0, 200.0),
         _ds(13, 130.0, 70.0, 300.0),
     ]
-    mw._fit_panel.set_datasets(datasets)
+    load_scan_selection(mw, *datasets)
     mw._on_scan_requested()
     mw._on_alc_point_toggled(12)
 
@@ -886,7 +886,7 @@ def test_alc_exclusions_persist_and_survive_rebuild(mainwindow: MainWindow, monk
     assert mw2._alc_scan_view._last_plot["excluded"].tolist() == [False, True, False]
 
     # Rebuild over a selection that no longer contains the run: pruned.
-    mw._fit_panel.set_datasets([datasets[0], datasets[2]])
+    mw._data_browser.select_runs([11, 13])
     mw._on_scan_requested()
     assert mw._alc_excluded_runs == set()
 
@@ -896,14 +896,13 @@ def test_alc_baseline_fit_skips_excluded_points(mainwindow: MainWindow, monkeypa
     # leaves an (essentially) zero-corrected scan of 4 points.
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
-    mw._fit_panel.set_datasets(
-        [
-            _ds(11, 110.0, 90.0, 100.0),
-            _ds(12, 110.0, 90.0, 150.0),
-            _ds(13, 105.0, 95.0, 200.0),  # dip (A = 0.05)
-            _ds(14, 110.0, 90.0, 250.0),
-            _ds(15, 110.0, 90.0, 300.0),
-        ]
+    load_scan_selection(
+        mw,
+        _ds(11, 110.0, 90.0, 100.0),
+        _ds(12, 110.0, 90.0, 150.0),
+        _ds(13, 105.0, 95.0, 200.0),  # dip (A = 0.05)
+        _ds(14, 110.0, 90.0, 250.0),
+        _ds(15, 110.0, 90.0, 300.0),
     )
     mw._on_scan_requested()
     mw._on_alc_point_toggled(13)
@@ -1205,7 +1204,7 @@ def test_alc_build_drops_surface_in_provenance(mainwindow: MainWindow, monkeypat
     good2 = _ds(12, 120.0, 80.0, 200.0)
     bad = _ds(13, 130.0, 70.0, 300.0)
     bad.histogram_observation = None
-    mw._fit_panel.set_datasets([good1, good2, bad])
+    load_scan_selection(mw, good1, good2, bad)
     mw._on_scan_requested()
     text = mw._alc_scan_view._provenance_label.text()
     assert "2 runs in scan" in text
@@ -1289,7 +1288,7 @@ def test_scan_mathematical_status_survives_real_build_and_restore(mainwindow, mo
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
     datasets = [_ds(1, 0.0, 10.0, 100.0), _ds(2, 60.0, 40.0, 200.0), _ds(3, 60.0, 40.0, 300.0)]
-    mw._fit_panel.set_datasets(datasets)
+    load_scan_selection(mw, *datasets)
     mw._on_scan_requested()
     scan = mw._alc_display_scan("field")
     assert scan.observations[0].reason == RatioReason.ZERO_VARIANCE
