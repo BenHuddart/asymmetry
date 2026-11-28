@@ -17,9 +17,11 @@ from asymmetry.core.io.periods import (
     select_period_grouping,
     selected_period_index,
 )
+from asymmetry.core.project.profiles import run_file_good_window
 from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.grouping import InvalidGroupingError, common_t0_for_groups
 from asymmetry.core.transform.t0 import (
+    EFFECTIVE_DETECTOR_T0_KEY,
     RunT0Search,
     T0Assessment,
     assess_t0,
@@ -63,6 +65,63 @@ class TimingControls:
             grouping=histogram_grouping_facts(
                 histograms, select_period_grouping(run.grouping, index)
             ),
+        )
+
+    def _good_window_grouping(self, *, inspect_file: bool = False) -> dict[str, Any]:
+        """Map the live selected channels using acquired facts and cached timing."""
+        run = self._t0_preview_run()
+        run_grouping = run.grouping
+        grouping: dict[str, Any] = {
+            "groups": {
+                gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
+            },
+            **self._selected_pair_payload(),
+        } | self._exclusion_payload()
+        for key in (
+            "detector_t0_bins",
+            "detector_first_good_bins",
+            "detector_last_good_bins",
+            "first_good_bin",
+            "last_good_bin",
+        ):
+            if key in run_grouping:
+                grouping[key] = run_grouping[key]
+        for key in ("t0_source", "detector_t0_sources"):
+            if key in run_grouping:
+                grouping[key] = run_grouping[key]
+        try:
+            resolve_selected_timing(
+                run.histograms,
+                grouping,
+                reference_observation_metadata(run),
+                mode=self._current_t0_mode(),
+                offset_bins=int(self._t0_spin.value())
+                - self._bin_index_base()
+                - self._timing_base_for_preview_run()
+                if self._current_t0_mode() == "manual"
+                else 0,
+                search_provider=self._cached_t0_search,
+            )
+        except ValueError as exc:
+            # An unavailable F/B pair has no aligned analysis window. Inspect
+            # the acquired channels' file limits without changing the draft.
+            if inspect_file and isinstance(exc, InvalidGroupingError):
+                grouping.pop("groups")
+            grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
+
+        return grouping
+
+    def _file_good_window_for_preview_run(self) -> tuple[int, int]:
+        """Map the selected period file limits through current effective timing."""
+        run = self._t0_preview_run()
+        if len(self._selected_pair_payload()) < 2:
+            return run.grouping.get("first_good_bin", 0), run.grouping.get(
+                "last_good_bin", run.histograms[0].n_bins - 1
+            )
+        return run_file_good_window(
+            run,
+            self._good_window_grouping(inspect_file=True),
+            common_t0_bin=self._effective_t0_for_preview_run(),
         )
 
     def _common_t0_for_preview_run(

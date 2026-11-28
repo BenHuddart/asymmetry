@@ -78,7 +78,6 @@ from asymmetry.core.project.profiles import (
     profile_fingerprint_for_run,
     profile_grouping_request,
     resolve_run_good_window,
-    run_file_good_window,
 )
 from asymmetry.core.transform import (
     RunT0Search,
@@ -92,13 +91,11 @@ from asymmetry.core.transform import (
     parse_group_detectors,
     resolve_background_mode,
     resolve_facility,
-    resolve_selected_timing,
 )
 from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
 from asymmetry.core.transform.reference_scale import ReferenceExposure
-from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -2207,6 +2204,7 @@ class GroupingDialog(TimingControls, QDialog):
             self._refresh_preset_selection()
             return
         self._mark_dirty()
+        self._apply_good_window_mode_to_controls()
         # _apply_preset_payload_to_form repopulates the group table with its
         # itemChanged signal blocked (see _populate_group_table), so the preview
         # needs one explicit refresh here rather than relying on the old
@@ -2584,60 +2582,6 @@ class GroupingDialog(TimingControls, QDialog):
 
     # -- good-window policy (t_good Offset + Last Good Bin) ---------------
 
-    def _good_window_grouping(self) -> dict[str, Any]:
-        """Map the live selected channels using acquired facts and cached timing."""
-        run = self._t0_preview_run()
-        run_grouping = run.grouping
-        grouping: dict[str, Any] = {
-            "groups": {
-                gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
-            },
-            **self._selected_pair_payload(),
-        } | self._exclusion_payload()
-        for key in (
-            "detector_t0_bins",
-            "detector_first_good_bins",
-            "detector_last_good_bins",
-            "first_good_bin",
-            "last_good_bin",
-        ):
-            if key in run_grouping:
-                grouping[key] = run_grouping[key]
-        for key in ("t0_source", "detector_t0_sources"):
-            if key in run_grouping:
-                grouping[key] = run_grouping[key]
-        try:
-            resolve_selected_timing(
-                run.histograms,
-                grouping,
-                reference_observation_metadata(run),
-                mode=self._current_t0_mode(),
-                offset_bins=int(self._t0_spin.value())
-                - self._bin_index_base()
-                - self._timing_base_for_preview_run()
-                if self._current_t0_mode() == "manual"
-                else 0,
-                search_provider=self._cached_t0_search,
-            )
-        except ValueError:
-            # File limits remain inspectable while the calibrated preview is unavailable.
-            grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
-
-        return grouping
-
-    def _file_good_window_for_preview_run(self) -> tuple[int, int]:
-        """Map the selected period file limits through current effective timing."""
-        run = self._t0_preview_run()
-        if len(self._selected_pair_payload()) < 2:
-            return run.grouping.get("first_good_bin", 0), run.grouping.get(
-                "last_good_bin", run.histograms[0].n_bins - 1
-            )
-        return run_file_good_window(
-            run,
-            self._good_window_grouping(),
-            common_t0_bin=self._effective_t0_for_preview_run(),
-        )
-
     def _set_good_window_mode_combo(self, mode: str) -> None:
         """Select *mode* in the good-window mode combo without emitting change signals."""
         idx = self._good_window_mode_combo.findData(mode)
@@ -2752,8 +2696,6 @@ class GroupingDialog(TimingControls, QDialog):
         manual = self._current_good_window_mode() == "manual"
         self._t_good_offset_spin.setReadOnly(not manual)
         self._last_good_spin.setReadOnly(not manual)
-        # A dataset without raw histograms (a co-added curve) has no file window
-        # to re-derive; its stored absolute values stand.
         if not manual and self._run is not None and self._run.histograms:
             self._set_good_window_spins(*self._file_good_window_for_preview_run())
         self._refresh_good_window_line()
@@ -4195,6 +4137,8 @@ class GroupingDialog(TimingControls, QDialog):
         self._refresh_group_combo_items()
         self._update_vector_mode_controls()
         self._refresh_preset_selection()
+        if item.column() == 3:
+            self._apply_good_window_mode_to_controls()
 
     def _current_included_groups(self) -> dict[int, bool]:
         """Return the include-checkbox state from the group table."""

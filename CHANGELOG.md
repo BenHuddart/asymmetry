@@ -91,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show the histogram snapshot dialog during grouping only when capture takes
   about 400 ms or longer.
+- Open **Grouping** on runs with missing detectors in the authored grouping,
+  show the preview diagnostic, and let users repair the membership.
 
 - Fit the public ISIS ARGUS copper run 76935 in the Quickstart, then reopen
   the saved project and export its fit report.
