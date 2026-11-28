@@ -106,6 +106,13 @@ def _make_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
     )
 
 
+def _make_musr_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
+    dataset = _make_dataset(run_number, with_grouping=with_grouping)
+    dataset.run.metadata.update(instrument="MuSR", facility="ISIS")
+    dataset.run.histograms *= 32
+    return dataset
+
+
 def _make_vector_dataset(run_number: int) -> MuonDataset:
     """A two-detector run on a P_x/P_y/P_z grouping (each pair reuses both detectors)."""
     dataset = _make_dataset(run_number, with_grouping=True)
@@ -5553,71 +5560,39 @@ class TestMainWindowBasic:
         assert mainwindow._global_parameter_fit_window is not None
         assert mainwindow._global_parameter_fit_window.isVisible()
 
+    @pytest.mark.parametrize("manual_deadtime", [False, True])
     def test_load_files_auto_applies_existing_grouping(
-        self,
-        mainwindow: MainWindow,
-        monkeypatch: pytest.MonkeyPatch,
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch, manual_deadtime: bool
     ) -> None:
-        """Newly loaded datasets should inherit existing project grouping settings."""
-        existing = _make_dataset(7001, with_grouping=True)
-        incoming = _make_dataset(7002, with_grouping=False)
+        existing = _make_musr_dataset(7001, with_grouping=True)
+        incoming = _make_musr_dataset(7002, with_grouping=False)
+        if manual_deadtime:
+            existing.run.grouping.update(
+                deadtime_correction=True,
+                deadtime_mode="manual",
+                deadtime_method="manual",
+                deadtime_manual_us=0.02,
+                dead_time_us=[0.02, 0.02],
+            )
         mainwindow._data_browser.add_dataset(existing)
-
         monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
-
-        applied_payloads: list[dict] = []
+        applied_payloads = []
 
         def _stub_apply(dataset, payload):
-            assert int(dataset.run_number) == 7002
-            applied_payloads.append(payload)
+            assert dataset is incoming
+            applied_payloads.append(payload.payload)
             return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
-
         mainwindow._load_files(["/tmp/new_run.nxs"])
 
-        assert len(applied_payloads) == 1
-        assert applied_payloads[0].payload["forward_group"] == 1
-        assert applied_payloads[0].payload["backward_group"] == 2
-
-    def test_load_files_auto_applies_existing_manual_deadtime_grouping(
-        self,
-        mainwindow: MainWindow,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        existing = _make_dataset(7003, with_grouping=True)
-        incoming = _make_dataset(7004, with_grouping=False)
-        assert existing.run is not None
-        existing.run.grouping.update(
-            {
-                "deadtime_correction": True,
-                "deadtime_mode": "manual",
-                "deadtime_method": "manual",
-                "deadtime_manual_us": 0.02,
-                "dead_time_us": [0.02, 0.02],
-            }
-        )
-        mainwindow._data_browser.add_dataset(existing)
-
-        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
-        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
-
-        applied_payloads: list[dict] = []
-
-        def _stub_apply(dataset, payload):
-            assert int(dataset.run_number) == 7004
-            applied_payloads.append(payload)
-            return True, {"red": CorrectionOutcomes()}
-
-        monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
-
-        mainwindow._load_files(["/tmp/new_run_with_manual_deadtime.nxs"])
-
-        assert len(applied_payloads) == 1
-        assert applied_payloads[0].payload["deadtime_mode"] == "manual"
-        assert applied_payloads[0].payload["deadtime_method"] == "manual"
-        assert applied_payloads[0].payload["dead_time_us"] == pytest.approx([0.02, 0.02])
+        (applied,) = applied_payloads
+        assert (applied["forward_group"], applied["backward_group"]) == (1, 2)
+        if manual_deadtime:
+            assert applied["deadtime_mode"] == "manual"
+            assert applied["deadtime_method"] == "manual"
+            assert applied["dead_time_us"] == pytest.approx([0.02, 0.02])
 
     def test_load_files_auto_applies_grouping_from_highest_run_dataset(
         self,
@@ -5625,9 +5600,9 @@ class TestMainWindowBasic:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto-grouping should use the highest run number already in the browser."""
-        low_run = _make_dataset(7001, with_grouping=True)
-        high_run = _make_dataset(7010, with_grouping=True)
-        incoming = _make_dataset(7020, with_grouping=False)
+        low_run = _make_musr_dataset(7001, with_grouping=True)
+        high_run = _make_musr_dataset(7010, with_grouping=True)
+        incoming = _make_musr_dataset(7020, with_grouping=False)
 
         assert low_run.run is not None
         low_run.run.grouping.update(

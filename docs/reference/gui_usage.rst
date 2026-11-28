@@ -750,7 +750,17 @@ state.
 When you open the Grouping dialog from a run selection, the currently selected
 datasets are pre-ticked in the dialog. When loading new runs into an existing
 project, Asymmetry reuses the grouping payload from the highest run number
-currently present in the Data Browser when that payload is well-defined.
+with a well-defined grouping in the Data Browser. This template applies only
+when the incoming run has the same resolved instrument and detector
+configuration. Otherwise, the incoming run keeps its file grouping and the
+**Log** reports why, as in this example.
+
+.. code-block:: text
+
+   Run 17294: skipped project grouping because the instrument or detector configuration does not match the template.
+
+If Asymmetry cannot reduce the selected run because its grouping is invalid,
+the plot displays the grouping error.
 
 Full Grouping dialog
 ~~~~~~~~~~~~~~~~~~~~

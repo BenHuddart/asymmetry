@@ -2173,20 +2173,46 @@ class TestPlotPanel:
         # First-paint x lower edge is clamped to t0 (=0), not the pre-t0 −1.5 µs.
         assert panel._x_min.value() == pytest.approx(0.0)
 
-    def test_plot_dataset(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
-        """Test plotting a single dataset."""
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+    def test_invalid_grouping_replaces_previous_plot_with_message(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not panel._has_mpl:
             pytest.skip("matplotlib not available")
         panel.plot_dataset(sample_dataset)
+        assert panel._ax.get_legend_handles_labels()[1] == ["12345"]
 
-    def test_plot_dataset_decimates_dense_display_but_keeps_full_cached_arrays(
-        self,
-        panel: PlotPanel,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+        run = Run(
+            run_number=56789,
+            histograms=[Histogram(np.full(100, 80), 0.1)] * 2,
+            grouping={"groups": {1: [1], 2: [3]}, "first_good_bin": 0, "last_good_bin": 99},
+        )
+        invalid = MuonDataset(
+            sample_dataset.time, sample_dataset.asymmetry, sample_dataset.error, run=run
+        )
+        panel.plot_dataset(invalid)
+
+        assert any("Detector(s) 3 do not exist" in text.get_text() for text in panel._ax.texts)
+        assert not panel._ax.has_data()
+        assert panel._ax.get_legend() is None
+        assert panel._last_plot_time is None and not panel._export_gle_btn.isEnabled()
+        assert panel._header_title_label.text() == "Time-domain F-B asymmetry"
+
+    def test_unreduced_dataset_displays_stored_correction_error(self, panel: PlotPanel) -> None:
+        if not panel._has_mpl:
             pytest.skip("matplotlib not available")
+        reason = "Instrument identity conflicts with the acquired evidence"
+        metadata = {"run_number": 56789, "correction_error": reason}
+        empty = np.array([])
+        panel.plot_dataset(MuonDataset(empty, empty, empty, metadata=metadata))
+        assert [text.get_text() for text in panel._ax.texts] == [reason]
+        assert panel._header_title_label.text() == "Time-domain F-B asymmetry"
 
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_plot_dataset_decimation_keeps_full_cached_arrays(
+        self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch, enabled: bool
+    ) -> None:
+        if not panel._has_mpl:
+            pytest.skip("matplotlib not available")
         t = np.linspace(0.0, 10.0, 101)
         ds = MuonDataset(
             time=t,
@@ -2195,52 +2221,23 @@ class TestPlotPanel:
             metadata={"run_number": 7771},
         )
         panel._max_render_points_per_trace = 10
-
+        panel.set_decimation_enabled(enabled, redraw=False)
         errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_dataset(ds)
 
-        assert panel._last_plot_time is not None
-        assert len(panel._last_plot_time) == len(t)
-        assert errorbar_calls
+        np.testing.assert_array_equal(panel._last_plot_time, t)
         plotted_x = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
-        assert plotted_x.size < t.size
-        assert plotted_x.size <= 11
-        # The corner chip flags the decimated view ("11 of 101 pts"); the
-        # x-axis itself is left untouched (no more alarm-red labels).
-        chip_text = panel.decimation_chip_text()
-        assert chip_text is not None
-        assert "of" in chip_text and "pts" in chip_text
-        assert panel._ax.xaxis.label.get_color() == panel._default_x_axis_label_color
-        assert panel._canvas.toolTip() != ""
-
-    def test_plot_dataset_can_disable_decimation_for_dense_display(
-        self,
-        panel: PlotPanel,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        t = np.linspace(0.0, 10.0, 101)
-        ds = MuonDataset(
-            time=t,
-            asymmetry=0.2 * np.exp(-0.25 * t),
-            error=np.full_like(t, 0.01),
-            metadata={"run_number": 7775},
-        )
-        panel._max_render_points_per_trace = 10
-        panel.set_decimation_enabled(False, redraw=False)
-
-        errorbar_calls = _capture_errorbar_dots(monkeypatch)
-
-        panel.plot_dataset(ds)
-
-        plotted_x = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
-        assert plotted_x.size == t.size
-        # No decimation -> no chip, no tooltip.
-        assert panel.decimation_chip_text() is None
-        assert panel._canvas.toolTip() == ""
+        chip = panel.decimation_chip_text()
+        if enabled:
+            assert 0 < plotted_x.size <= 11
+            assert chip is not None and "of" in chip and "pts" in chip
+            assert panel._ax.xaxis.label.get_color() == panel._default_x_axis_label_color
+            assert panel._canvas.toolTip()
+        else:
+            np.testing.assert_array_equal(plotted_x, t)
+            assert chip is None
+            assert panel._canvas.toolTip() == ""
 
     @staticmethod
     def _widest_rendered_line_extent(ax) -> tuple[float, float]:

@@ -219,10 +219,19 @@ Inheritance across a series
 ------------------------------
 
 Once a project has a default profile for an instrument, runs you load
-afterwards are assigned to it automatically — no per-run Apply step is needed — and
-the LOG reports::
+afterwards are assigned to it automatically. The **Log** reports the totals
+when a project grouping template is offered to incoming runs.
+
+.. code-block:: text
 
    Auto-applied existing project grouping to 1 dataset(s); skipped 0.
+
+Runs with a different instrument or detector configuration count as skipped.
+The **Log** names each such run.
+
+.. code-block:: text
+
+   Run 17294: skipped project grouping because the instrument or detector configuration does not match the template.
 
 This is exactly what you want for a temperature or field series measured on
 one sample: calibrate once, then load the rest of the series and have every

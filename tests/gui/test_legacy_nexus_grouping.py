@@ -6,6 +6,7 @@ import h5py
 import numpy as np
 import pytest
 
+from asymmetry.core.instruments.resolution import resolve_instrument
 from asymmetry.core.io.nexus_grouping import NexusGroupingWarning
 from asymmetry.core.project import save_project
 from asymmetry.core.project.calibration import PreparedGrouping
@@ -90,3 +91,52 @@ def test_ad_hoc_grouping_template_does_not_transfer_legacy_file_provenance(qapp,
     finally:
         window._clear_dirty()
         window.close()
+
+
+@pytest.mark.parametrize(
+    ("instrument", "detectors", "matches_instrument"),
+    [("MuSR", 64, False), ("Unknown", 96, False), ("EMU", 64, False), ("EMU", 96, True)],
+)
+def test_project_template_preserves_file_grouping_on_skip(
+    qapp, tmp_path, instrument, detectors, matches_instrument
+):
+    template = tmp_path / "emu51343.nxs"
+    incoming = tmp_path / f"{instrument.lower()}17294.nxs"
+    grouping_file(template, "v1", instrument="EMU", count=96, table=[1] * 48 + [2] * 48)
+    grouping_file(
+        incoming,
+        "v1",
+        instrument=instrument,
+        count=detectors,
+        table=[1, 2] * (detectors // 2),
+    )
+    for path, run_number in [(template, 51343), (incoming, 17294)]:
+        with h5py.File(path, "r+") as handle:
+            handle["run/number"][()] = run_number
+
+    window = MainWindow()
+    expected = window._load_file(str(incoming))
+    window._load_files([str(template)])
+    panel = window._plot_panel
+    assert panel._ax.get_legend_handles_labels()[1] == ["51343"]
+    if matches_instrument:
+        # A different authored payload on the same mapped instrument can still fail.
+        window._data_browser.get_dataset(51343).run.grouping["groups"][2].append(97)
+    window._load_files([str(incoming)])
+    loaded = window._data_browser.get_dataset(17294)
+
+    assert loaded.run.instrument_choice == expected.run.instrument_choice
+    assert resolve_instrument(loaded.run).selection == resolve_instrument(expected.run).selection
+    assert loaded.run.grouping == expected.run.grouping
+    assert panel._header_title_label.text().endswith("17294")
+    assert panel._ax.get_legend_handles_labels()[1] == ["17294"]
+    log = window._log_panel.to_plain_text()
+    assert "Auto-applied existing project grouping to 0 dataset(s); skipped 1." in log
+    if not matches_instrument:
+        assert "correction_error" not in loaded.metadata
+        assert (
+            "Run 17294: skipped project grouping because the instrument or detector configuration "
+            "does not match the template." in log
+        )
+    else:
+        assert "Detector(s) 97 do not exist" in loaded.metadata["correction_error"]
