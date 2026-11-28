@@ -308,6 +308,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Returning from the FFT or MaxEnt view no longer replaces the time-domain fit
+  range with the frequency range.
+
 - Keep native GLE fonts for single uncertainty bands and component stacks over white;
   preserve transparency for overlapping fills and SVG exports with gleplot 6.1.1.
 
