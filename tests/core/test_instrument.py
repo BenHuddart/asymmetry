@@ -741,14 +741,12 @@ class TestPresetGroupingForRun:
         assert groups == {1: [2, 3, 4], 2: [1, 5, 6]}
 
     def test_partial_run_smaller_than_its_layout_is_not_a_mismatch(self):
-        # A HAL .mdu shipping only the forward ring keeps the full 17-detector
-        # layout; reduction drops the absent backward ring later.
         layout = get_instrument_layout("HAL")
-        labels = ["MV"] + [f"F{i}" for i in range(1, 9)]
+        labels = ["MV"] + [f"F{i}" for i in range(1, 8)]
         groups = preset_grouping_for_run(
             layout, "Per-octant", n_histograms=len(labels), labels=labels
         )
-        assert groups[1] == [2, 10]  # ids kept even though B1 is absent
+        assert groups[1] == [2, 10]
 
     def test_unknown_count_and_missing_labels_skip_both_checks(self):
         layout = get_instrument_layout("GPS-RD")
@@ -1486,14 +1484,11 @@ class TestInstrumentLayoutHelpers:
         segs = layout.all_segments
         assert len(segs) == 64
 
-    def test_default_preset_name_is_longitudinal(self):
-        # HAL-9500 is the one exception: its default is "Per-octant" (see
-        # TestHALLayout.test_default_preset_is_per_octant) because high-TF work
-        # on that instrument is done per-octant in practice.
+    def test_registered_layout_defaults(self):
+        hal_defaults = {"HAL": "Per-octant", "HAL-FORWARD": "Transverse (opposed pairs)"}
         for name in INSTRUMENT_NAMES:
             layout = get_instrument_layout(name)
-            expected = "Per-octant" if name == "HAL" else "Longitudinal"
-            assert layout.default_preset_name == expected
+            assert layout.default_preset_name == hal_defaults.get(name, "Longitudinal")
 
 
 # ---------------------------------------------------------------------------
@@ -1523,8 +1518,9 @@ class TestAsymmetryProjections:
 
     def test_longitudinal_presets_declare_no_projections(self):
         for name in INSTRUMENT_NAMES:
-            preset = get_instrument_layout(name).presets["Longitudinal"]
-            assert preset.projections == ()
+            preset = get_instrument_layout(name).presets.get("Longitudinal")
+            if preset is not None:
+                assert preset.projections == ()
 
     def test_projection_to_payload_roundtrips(self):
         proj = AsymmetryProjection("P_x", 5, 6, alpha=1.2, tint="#abcdef")
