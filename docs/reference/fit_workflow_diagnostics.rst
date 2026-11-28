@@ -167,7 +167,8 @@ Asymmetry does not keep a separate fit-log file. The durable record of a fit is
 same setup replaces it; see :ref:`saved-single-fits`), and each batch on its
 series. This holds what WiMDA's ``.fit``/``.bfit`` files hold, but inside the
 ``.asymp`` project with the full provenance (the quality verdict and, when run,
-the MINOS intervals) rather than in a side file.
+the MINOS intervals) rather than in a side file. The :ref:`application log
+<gui-diagnostic-logs>` records diagnostic messages and tracebacks.
 
 The stored fit includes the Asymmetry version that performed it. In a fit
 report, this appears as::
