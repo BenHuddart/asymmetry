@@ -57,6 +57,24 @@ integer per detector shared by all periods, a flat period-major vector with one
 integer per histogram, or an exact ``(periods, detectors)`` table. Every period
 must declare at least one positive group apart from the single-period case below.
 
+.. _run-number-conflicts:
+
+Run numbers in the desktop
+--------------------------
+
+Each project tab has one dataset per run number. If a different file has an
+occupied number, the desktop keeps the loaded dataset and its analyses and
+reports the rejected file in **LOG**. The message includes both paths, even
+when the filenames match. For example:
+
+   Run 42 is already loaded from "synthetic-emu.nxs". Could not load
+   "another/synthetic-emu.nxs". Use File → New Project for the other source.
+
+The rest of a multi-file selection can still load. With one successful file
+and one conflict the summary reads **Loaded 1 file(s), 1 failed**. Choose
+**File → New Project** to open the other source in a separate tab. Opening
+the same file again offers the **Data File Already Loaded** prompt.
+
 .. _legacy-v1-zero-grouping:
 
 All-zero legacy EMU and HiFi grouping
@@ -84,10 +102,10 @@ The HiFi warning names its own instrument.
 
 .. figure:: /_generated/screenshots/legacy_nexus_grouping_log.png
    :width: 100%
-   :alt: The desktop log identifies the standard EMU forward/backward grouping
-         applied to a synthetic single-period legacy NeXus run.
+   :alt: The desktop log identifies the standard EMU grouping applied to a
+         synthetic NeXus file and the second file refused for the same run number.
 
-   The desktop log reports the grouping used on import.
+   The desktop log shows the default grouping and the conflicting source paths.
 
 To change the grouping, open **Grouping**, choose a different **Preset** or edit
 the detector assignments in **Detector Layout**, then click **Apply** and save

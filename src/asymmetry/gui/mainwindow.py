@@ -350,6 +350,7 @@ from asymmetry.gui.utils.reference_timing import (
     load_reference_acquisition,
     prepare_reference_timing,
 )
+from asymmetry.gui.utils.run_sources import dataset_source_file, normalise_source_path
 from asymmetry.gui.utils.scientific_input import map_period_inputs
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
@@ -512,11 +513,6 @@ def _phase_reduced_chi_squared_text(assessment) -> str:
     if total_dof <= 0:
         return "χ²ᵣ n/a"
     return f"χ²ᵣ {total_chi2 / total_dof:.2f}"
-
-
-def _normalise_source_path(path: str) -> str:
-    """Return a canonical string for source-file path comparisons."""
-    return os.path.normcase(os.path.abspath(os.path.realpath(path)))
 
 
 def _format_bytes(num_bytes: int) -> str:
@@ -3820,9 +3816,9 @@ class MainWindow(QMainWindow):
         paths_to_load: list[str] = []
         overwrite_paths: set[str] = set()
         for path in paths:
-            if self._is_source_file_loaded(path):
+            if existing_runs := self._run_numbers_for_source_file(path):
                 if not overwrite_existing_to_all:
-                    overwrite_choice = self._prompt_overwrite_existing_dataset(path)
+                    overwrite_choice = self._prompt_overwrite_existing_dataset(existing_runs)
                     if overwrite_choice == QMessageBox.StandardButton.No:
                         self._log_panel.log(f"Skipped already-loaded file: {path}")
                         continue
@@ -3850,6 +3846,11 @@ class MainWindow(QMainWindow):
 
                 datasets = loaded if isinstance(loaded, list) else [loaded]
                 if not datasets:
+                    continue
+
+                if collision := self._data_browser.source_collision(datasets):
+                    self._log_panel.log(collision, tag="warn")
+                    failed += 1
                     continue
 
                 if path in overwrite_paths:
@@ -3996,57 +3997,26 @@ class MainWindow(QMainWindow):
             last_run=None if last_dataset is None else int(last_dataset.run_number),
         )
 
-    def _dataset_source_file(self, dataset) -> str:
-        """Return the dataset source file path, if available."""
-        source_file = ""
-        run = getattr(dataset, "run", None)
-        if run is not None:
-            source_file = str(getattr(run, "source_file", "") or "")
-        if not source_file:
-            metadata = getattr(dataset, "metadata", {})
-            if isinstance(metadata, dict):
-                source_file = str(metadata.get("source_file", "") or "")
-        return source_file
-
-    def _is_source_file_loaded(self, path: str) -> bool:
-        """Return True when a source file is already represented in the browser."""
-        target = _normalise_source_path(path)
-        for dataset in self._data_browser.get_all_datasets():
-            source_file = self._dataset_source_file(dataset)
-            if source_file and _normalise_source_path(source_file) == target:
-                return True
-        return False
+    def _run_numbers_for_source_file(self, path: str) -> list[int]:
+        target = normalise_source_path(path)
+        return [
+            int(dataset.run_number)
+            for dataset in self._data_browser.get_all_datasets()
+            if normalise_source_path(dataset_source_file(dataset)) == target
+        ]
 
     def _remove_datasets_for_source_file(self, path: str) -> int:
-        """Remove all datasets that originate from *path* and return count."""
-        target = _normalise_source_path(path)
-        run_numbers_to_remove: list[int] = []
-        for dataset in self._data_browser.get_all_datasets():
-            source_file = self._dataset_source_file(dataset)
-            if source_file and _normalise_source_path(source_file) == target:
-                run_numbers_to_remove.append(int(dataset.run_number))
-
-        for run_number in run_numbers_to_remove:
+        run_numbers = self._run_numbers_for_source_file(path)
+        for run_number in run_numbers:
             self._data_browser._remove_run_number(run_number)
-
-        if run_numbers_to_remove:
-            self._data_browser._rebuild_table()
-
-        return len(run_numbers_to_remove)
-
-    def _prompt_overwrite_existing_dataset(self, path: str) -> QMessageBox.StandardButton:
-        """Ask whether a duplicate file should overwrite currently loaded datasets."""
-        run_numbers = []
-        target = _normalise_source_path(path)
-        for dataset in self._data_browser.get_all_datasets():
-            source_file = self._dataset_source_file(dataset)
-            if source_file and _normalise_source_path(source_file) == target:
-                run_numbers.append(int(dataset.run_number))
-
-        run_numbers_text = "unknown"
         if run_numbers:
-            run_numbers_text = ", ".join(str(rn) for rn in sorted(set(run_numbers)))
+            self._data_browser._rebuild_table()
+        return len(run_numbers)
 
+    def _prompt_overwrite_existing_dataset(
+        self, run_numbers: list[int]
+    ) -> QMessageBox.StandardButton:
+        run_numbers_text = ", ".join(str(rn) for rn in sorted(run_numbers))
         answer = QMessageBox.question(
             self,
             "Data File Already Loaded",
