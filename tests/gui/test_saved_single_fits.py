@@ -237,6 +237,74 @@ def test_saved_single_overlay_includes_only_verified_centres_beyond_rounded_boun
     assert panel.get_fit_range() == (lower, upper)
 
 
+def test_saved_alternate_overlay_refreshes_when_its_projection_is_bound(mw, _isolated_gui_state):
+    dataset = _make_two_period_vector_dataset(7454)
+    browser, panel = mw._data_browser, mw._plot_panel
+    browser.add_dataset(dataset)
+    browser.select_runs({dataset.run_number})
+    panel._on_projection_selection_changed(["P_x"])
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    rep = mw._project_model.representation(dataset.run_number, RepresentationType.TIME_FB_ASYMMETRY)
+    px_saved = rep.fit_set("P_x").fits[0]
+    px_key = (dataset.run_number, "P_x", SAVED_FIT_ID_PREFIX + px_saved.fit_id)
+    px_curve = panel._fit_curves_by_key[px_key]
+
+    panel._on_projection_selection_changed(["P_y"])
+    centre = dataset.time[1]
+    lower, upper = np.nextafter(centre, np.inf), dataset.time[-1]
+    panel.set_fit_range(lower, upper)
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    py_saved, py_open = rep.fit_set("P_y").fits
+    py_overlay = SAVED_FIT_ID_PREFIX + py_saved.fit_id
+    py_key = (dataset.run_number, "P_y", py_overlay)
+    # The project can carry more digits than the Single tab's range control.
+    py_saved.fit_range["min"] = lower
+    assert py_saved.fit_range == {"min": lower, "max": upper}
+    assert py_saved.result["input_attribution"]["min"] == centre
+
+    panel._on_projection_selection_changed(["P_x"])
+    panel.clear_run_fit(dataset.run_number, py_overlay)
+    mw._sync_saved_fit_overlays()
+    assert panel._fit_curves_by_key[py_key][0][0] == lower
+
+    panel._on_projection_selection_changed(["P_y"])
+    assert all(not entry.stale_reason for entry in mw._saved_fit_catalogue().entries)
+    assert panel._fit_curves_by_key[py_key][0][0] == centre
+    assert panel._fit_curves_by_key[px_key] is px_curve
+    assert rep.fit_set("P_y").open_id == py_open.fit_id
+
+    _tab(mw).saved_fit_compare_requested.emit()
+    compare = mw._saved_fit_compare_window
+    compare.panel.set_b(py_saved.fit_id)
+    _wait_for_curves(compare, py_saved.fit_id)
+    current = compare._curves[py_saved.fit_id][1]
+    assert current.fit[0][0] == current.residuals[0][0] == centre
+    assert not compare._status.text()
+
+    record = mw._bound_record()
+    record.asymmetry = record.asymmetry + 0.5
+    mw._rebind_single_fit_to_active_projection()
+    assert panel._fit_curves_by_key[py_key][0][0] == lower
+    assert panel._fit_curves_by_key[px_key] is px_curve
+    assert rep.fit_set("P_y").open_id == py_open.fit_id
+    assert py_saved.fit_range == {"min": lower, "max": upper}
+    assert all(
+        entry.stale_reason.startswith("Historical fit:")
+        for entry in mw._saved_fit_catalogue().entries
+    )
+
+    compare.panel.set_b(None)
+    compare.panel.set_b(py_saved.fit_id)
+    _wait_for_curves(compare, py_saved.fit_id)
+    historical = compare._curves[py_saved.fit_id][1]
+    assert historical.fit[0][0] == lower
+    assert historical.residuals[0].size == 0
+    assert not compare._status.text()
+    compare.close()
+
+
 def test_opening_historical_fit_with_prearrival_window_restores_form_without_overlay(
     mw, qapp, monkeypatch
 ):

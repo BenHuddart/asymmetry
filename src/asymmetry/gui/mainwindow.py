@@ -84,13 +84,12 @@ from asymmetry.core.fitting import (
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.cross_group import CrossGroupFitRun, run_cross_group_fit_from_config
-from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_count
+from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
 from asymmetry.core.fitting.fit_quality import recorded_statistic
-from asymmetry.core.fitting.input_attribution import saved_fit_matches, saved_fit_observations
+from asymmetry.core.fitting.input_attribution import saved_fit_matches
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
 )
-from asymmetry.core.fitting.model_comparison import saved_fit_curve_bounds, saved_fit_model
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterGroupData,
@@ -352,6 +351,7 @@ from asymmetry.gui.utils.reference_timing import (
     prepare_reference_timing,
 )
 from asymmetry.gui.utils.run_sources import dataset_source_file, normalise_source_path
+from asymmetry.gui.utils.saved_fit_overlays import restore_saved_fit_overlay
 from asymmetry.gui.utils.scientific_input import map_period_inputs
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
@@ -11564,29 +11564,6 @@ class MainWindow(QMainWindow):
             open_id=fit_set.open_id,
         )
 
-    def _saved_fit_curve_payload(
-        self, slot: FitSlot, name: str, axis_key: str | None
-    ) -> tuple | None:
-        drawable = saved_fit_model(slot)
-        if drawable is None:
-            return None
-        model, values = drawable
-        record = dataset = self._bound_record()
-        if axis_key != self._current_single_fit_projection():
-            targets = self._plot_panel._vector_subplot_datasets.get(axis_key, ())
-            plotted = next(
-                (target for target in targets if target.run_number == record.run_number), None
-            )
-            dataset = self._plot_panel.get_analysis_dataset(plotted)
-        observations = saved_fit_observations(slot, dataset)
-        bounds = saved_fit_curve_bounds(
-            model, slot, dataset if dataset is not None else record, observations
-        )
-        if bounds is None:
-            return None
-        x, y = dense_fit_curve(model, values, *bounds)
-        return (x, y, name, (), None, model.formula_string(), axis_key)
-
     def _bound_record(self) -> MuonDataset:
         """The bound run's whole record in the active domain, before the fit-range crop."""
         if self._plot_workspace.active_domain() == "frequency":
@@ -11619,12 +11596,12 @@ class MainWindow(QMainWindow):
         if not open_fit.is_empty():
             labels[SINGLE_FIT_ID] = f"Single fit · {representation.fit_name(open_fit)}"
         panel.set_fit_labels(labels)
-        for plot_id, (key, slot) in wanted.items():
-            if plot_id in stored:
-                continue
-            payload = self._saved_fit_curve_payload(slot, representation.fit_name(slot), key)
-            if payload is not None:
-                panel.set_global_fits({run_number: payload}, fit_id=plot_id)
+        if wanted:
+            record = self._bound_record()
+            for plot_id, (key, slot) in wanted.items():
+                restore_saved_fit_overlay(
+                    panel, record, projection, key, slot, representation.fit_name(slot), plot_id
+                )
         self._refresh_saved_fit_compare()
 
     def _on_saved_fit_compare_requested(self) -> None:
@@ -11665,11 +11642,9 @@ class MainWindow(QMainWindow):
         fit_set.open(fit_id)
         slot = fit_set.open_fit()
         panel = self._plot_panel_for_rep(representation.rep_type)
-        payload = self._saved_fit_curve_payload(slot, "Fit", projection)
-        if payload is None:
-            panel.clear_run_fit(run_number, SINGLE_FIT_ID)
-        else:
-            panel.set_global_fits({run_number: payload}, fit_id=SINGLE_FIT_ID)
+        restore_saved_fit_overlay(
+            panel, self._bound_record(), projection, projection, slot, "Fit", SINGLE_FIT_ID
+        )
         panel.set_shown_fits(run_number, [SINGLE_FIT_ID])
         self._sync_saved_fit_overlays()
         window = slot.fit_range
