@@ -8,7 +8,7 @@ import json
 import math
 import sys
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -93,6 +93,7 @@ from asymmetry.gui.utils.phase_colors import (
     resolve_phase_color,
 )
 from asymmetry.gui.utils.profile_colors import display_profile_color
+from asymmetry.gui.utils.run_sources import first_run_source_collision
 from asymmetry.gui.utils.series_scoring import score_series_path
 from asymmetry.gui.widgets.phase_info_popover import PhaseInfoPopover
 
@@ -1311,15 +1312,7 @@ class DataBrowserPanel(QWidget):
         return list(self._datasets.values())
 
     def next_derived_run_number(self) -> int:
-        """Reserve a run number for a synthetic or degraded run.
-
-        Numbers start at 90001 and skip anything already loaded or reserved
-        this session. Real ISIS run numbers can exceed this (modern runs are
-        six digits), so a file loaded *later* could carry the same number —
-        ``add_dataset`` keys entries by run number and would replace the
-        derived run. Acceptable for session-scoped derived data; revisit if
-        derived runs gain a persistent identity.
-        """
+        """Reserve a free run number for a synthetic or degraded run."""
         number = 90001
         existing = set(self._datasets) | self._reserved_run_numbers
         while number in existing:
@@ -1328,12 +1321,7 @@ class DataBrowserPanel(QWidget):
         return number
 
     def release_derived_run_number(self, number: int) -> None:
-        """Return a reserved derived run number that was never used.
-
-        Lets a dialog hand back the number it reserved when generation fails,
-        so a failed Generate does not leave a permanent gap in the SIM series.
-        A number already claimed by a loaded dataset is left untouched.
-        """
+        """Return a reserved number if generation did not add a dataset."""
         try:
             value = int(number)
         except (TypeError, ValueError):
@@ -1341,7 +1329,13 @@ class DataBrowserPanel(QWidget):
         if value not in self._datasets:
             self._reserved_run_numbers.discard(value)
 
+    def source_collision(self, datasets: Iterable[MuonDataset]) -> str | None:
+        """Report an occupied run number before adding any rows from a file."""
+        return first_run_source_collision(self._datasets, datasets)
+
     def add_dataset(self, dataset: MuonDataset) -> None:
+        if collision := self.source_collision((dataset,)):
+            raise ValueError(collision)
         rn = int(dataset.run_number)
         if rn in self._combined_datasets and "combination" in dataset.metadata:
             restore_constituent_expectations(dataset, constituent_sources_for_project(dataset))

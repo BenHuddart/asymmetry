@@ -13,14 +13,20 @@ from asymmetry.core.instruments.source import SourceAssessment, assess_source, s
 
 @dataclass(frozen=True)
 class ReplayState:
-    """One load purpose's retained authority; an omitted source is legacy replay."""
+    """One load purpose's retained authority; an omitted source is legacy replay.
+
+    Deferred grouping leaves detector membership to the project's explicit request.
+    """
 
     instrument_choice: RecordedInstrumentChoice | None = None
     source: SourceAssessment | None = None
     run_number: int | None = None
     period_number: int | None = None
+    defer_grouping: bool = False
 
     def __post_init__(self):
+        if type(self.defer_grouping) is not bool:
+            raise ValueError("Replay grouping deferral requires a boolean")
         if self.instrument_choice is not None and not isinstance(
             self.instrument_choice, RecordedInstrumentChoice
         ):

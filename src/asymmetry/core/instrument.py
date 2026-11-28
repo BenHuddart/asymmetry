@@ -39,7 +39,11 @@ from asymmetry.core.instruments.layout import (
     generic_layout,
 )
 from asymmetry.core.instruments.recognition import canonical_layout_name, recognize_layout
-from asymmetry.core.instruments.resolution import assess_instrument, layout_key_for_selection
+from asymmetry.core.instruments.resolution import (
+    InstrumentContext,
+    assess_instrument,
+    layout_key_for_selection,
+)
 from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.transform.grouping import resolve_group_indices
 
@@ -350,7 +354,7 @@ def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | N
     the current preset already matches the recommendation — is the caller's
     decision; this helper does not know the current preset.
     """
-    if (field_direction or "").strip().lower() != "transverse":
+    if not isinstance(field_direction, str) or field_direction.strip().casefold() != "transverse":
         # No nudge for longitudinal / zero-field / unknown geometries.
         return None
 
@@ -382,13 +386,13 @@ def recommend_grouping_preset_for_run(
     metadata: dict | None,
     source_file: str | None = None,
     current_preset: str | None = None,
+    instrument_context: InstrumentContext | None = None,
 ) -> str | None:
     """Recommend a transverse grouping preset for a *loaded run*, or ``None``.
 
     A run-level convenience over :func:`recommend_grouping_preset`: it resolves
-    the run's instrument layout itself (via :func:`detect_instrument` +
-    :func:`variant_for_histograms`), asks for a transverse-field nudge, and then
-    suppresses the nudge when the run's *current* grouping already is the
+    the run's acquired instrument layout and suppresses the nudge when the
+    run's *current* grouping already is the
     recommended preset. Where the bare :func:`recommend_grouping_preset` is
     layout-only and preset-agnostic, this folds in the run's field geometry and
     current preset so a caller can decide in one call whether to surface the
@@ -403,12 +407,15 @@ def recommend_grouping_preset_for_run(
         the BIN/ROOT variant choice).
     metadata:
         Run metadata; ``metadata["field_direction"]`` supplies the geometry and
-        the instrument-like keys drive :func:`detect_instrument`.
+        the instrument and histogram labels drive acquisition matching.
     source_file:
         Optional source path, a final instrument-detection hint.
     current_preset:
         The grouping preset already applied to the run
         (``run.grouping["grouping_preset"]``), or ``None`` when unknown/custom.
+
+    instrument_context:
+        The loaded run's effective instrument choice, including conflicts.
 
     Returns
     -------
@@ -420,13 +427,17 @@ def recommend_grouping_preset_for_run(
     """
     metadata = metadata if isinstance(metadata, dict) else {}
     count = int(n_histograms or 0)
-    name = detect_instrument(count, metadata=metadata, source_file=source_file)
-    if not name:
+    selection = (
+        instrument_context.selection
+        if instrument_context is not None
+        else assess_instrument(count, metadata=metadata, source_file=source_file).selection
+    )
+    if selection is None:
         return None
-    try:
-        layout = get_instrument_layout(variant_for_histograms(name, count))
-    except KeyError:
+    name = layout_key_for_selection(selection, count)
+    if name is None:
         return None
+    layout = get_instrument_layout(name)
     recommended = recommend_grouping_preset(layout, metadata.get("field_direction"))
     if recommended is None or recommended == current_preset:
         return None

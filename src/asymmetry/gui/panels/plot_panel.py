@@ -48,6 +48,7 @@ from asymmetry.core.fourier.units import convert as convert_field_unit
 from asymmetry.core.project.view_migration import diagnostic_axis_id, is_asymmetry_axis_id
 from asymmetry.core.transform.corrections import CorrectionOutcomes, CorrectionStatus
 from asymmetry.core.transform.grouping import (
+    InvalidGroupingError,
     common_t0_for_groups,
     effective_group_indices,
     good_event_count,
@@ -3948,7 +3949,7 @@ class PlotPanel(QWidget):
         self._frame_status_label.setText(text or "")
 
     def show_message(self, message: str) -> None:
-        """Replace the plot with a centred *message* (the rotating frame awaiting ν_RF)."""
+        """Show a centred diagnostic while keeping recorded fits and view limits."""
         self._grouped_time_subplot_datasets = []
         self._maxent_reconstruction = None
         self._current_datasets = []
@@ -3957,11 +3958,14 @@ class PlotPanel(QWidget):
         self._vector_subplot_datasets = {}
         self._set_canvas_minimum_height_for_axes(1)
         self._set_alpha_label(None)
+        self._last_plot_time = self._last_plot_asymmetry = self._last_plot_error = None
+        self._last_low_count_mask = None
         self._ax.clear()
         style_axes(self._ax)
         draw_empty_state_message(self._ax, message)
         self._update_plot_header()
         self._refresh_fits_button()
+        self._update_export_enabled()
         self._canvas.draw_idle()
 
     def _remember_projection_selection(self) -> None:
@@ -5305,12 +5309,7 @@ class PlotPanel(QWidget):
         )
 
     def plot_dataset(self, dataset: MuonDataset) -> None:
-        """Plot a dataset, optionally rebinned according to the bunch factor.
-
-        The input dataset is stored unchanged as the current dataset. If the
-        bunch factor is greater than 1, temporary rebinned arrays are created
-        for plotting. The source dataset itself is never mutated.
-        """
+        """Draw the display reduction while retaining the original dataset."""
         if not self._has_mpl:
             return
 
@@ -5322,31 +5321,37 @@ class PlotPanel(QWidget):
         self._reset_decimation_view_state()
         self._rrf_frame_drawn = None
         self._clear_waterfall_render_record()
-        # Store the original dataset
+        try:
+            analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
+            low_count_mask = (
+                self._low_count_mask_for_dataset(analysis_dataset, source_dataset=dataset)
+                if self._has_plottable_samples(analysis_dataset)
+                else None
+            )
+        except InvalidGroupingError as exc:
+            self.show_message(str(exc))
+            return
+
+        if low_count_mask is None and (reason := dataset.metadata.get("correction_error")):
+            self.show_message(str(reason))
+            return
         self._current_dataset = dataset
         self._current_datasets = [dataset]
         self._update_plot_header()
         self._set_frequency_reference_from_dataset(dataset)
         self._refresh_fits_button()
-
-        analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
-        if not self._has_plottable_samples(analysis_dataset):
+        if low_count_mask is None:
             self._render_empty_plot_state(alpha_text=self._single_dataset_alpha_label_text(dataset))
             return
         time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
         asymmetry = self._convert_frequency_values_for_display(analysis_dataset.asymmetry, dataset)
         error = self._convert_frequency_values_for_display(analysis_dataset.error, dataset)
-        low_count_mask = self._low_count_mask_for_dataset(
-            analysis_dataset,
-            source_dataset=dataset,
-        )
 
         self._last_plot_time = time
         self._last_plot_asymmetry = asymmetry
         self._last_plot_error = error
         self._last_low_count_mask = low_count_mask
 
-        # X selection and any requested y bounds share the resolved viewport.
         y_axis_id = self._y_axis_id(self._current_polarization_axis)
         self._sync_auto_from_buttons([y_axis_id])
         resolved, window = self._resolve_x(self._default_x_limits(time, asymmetry))
@@ -5359,11 +5364,7 @@ class PlotPanel(QWidget):
         point_color = self._period_mode_color_for_dataset(dataset)
 
         if self._is_frequency_plot_panel():
-            # Frequency spectra render as a line with an error band (the
-            # WiMDA/musrview/Mantid idiom), not time-domain errorbar dots. The
-            # low-count grey split is a raw-counts concept and is always inert
-            # here (``_low_count_mask_for_dataset`` returns all-False for a
-            # frequency panel), so there is only ever one trace to draw.
+            # Frequency spectra use an error band around a single trace.
             self._plot_frequency_line_masked(
                 self._ax,
                 time,
@@ -5414,9 +5415,7 @@ class PlotPanel(QWidget):
         self._apply_axis_labels(x_label, y_label)
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))
 
-        # Re-plot every fit shown on this run: the active series' (or the run's
-        # single fit) in the fit colour, then any other shown fit in a trace
-        # colour. Each carries its own legend entry here, where there is room.
+        # The first visible fit uses the primary fit colour.
         for order, (_key, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
             fit_to_plot = rrf_display_fit_curve(self, curve, analysis_dataset)
             if fit_to_plot is None:
@@ -6314,11 +6313,7 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
-        # Reduce the forward/backward groups through the SAME core chokepoint the
-        # reduction uses (group_forward_backward: resolves groups via the
-        # exclusion-aware resolver, aligns to a common t0, sums, clamps alpha),
-        # so the mask cannot drift from the engine's grouping/exclusion/alpha
-        # handling. It raises when groups are undefined or empty after exclusion.
+        # Refine the colour mask when the raw aggregate has usable timing.
         try:
             fb = group_forward_backward(run.histograms, grouping)
         except ValueError:

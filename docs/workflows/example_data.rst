@@ -18,7 +18,8 @@ Extract the archive and open the ``Wimda Workshop`` folder. The paths below
 are relative to that folder. Use the instrument prefix as well as the run
 number when locating ISIS files. For example, the Basics folder has both a
 MuSR run 44989 for detector grouping and an EMU run 44989 for the
-steering-current trend.
+steering-current trend. Load the MuSR file in one tab, then use **File →
+New Project** to open the EMU files in a separate tab.
 
 EMU runs 18854, 19489, 51315, and 20721, and HiFi run 9023 open with
 the instrument's **Longitudinal** preset. Their legacy files declare all-zero

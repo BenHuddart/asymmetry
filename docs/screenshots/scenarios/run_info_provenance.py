@@ -119,14 +119,15 @@ register(RunInfoUnitsScenario())
 
 
 class LegacyNexusGroupingLogScenario(Scenario):
-    """Capture the real desktop import warning using a synthetic V1 acquisition."""
+    """Capture import warnings using synthetic V1 acquisitions."""
 
     name = "legacy_nexus_grouping_log"
-    description = "The desktop log reports the default grouping applied to legacy EMU counts."
+    description = "The desktop log reports legacy EMU grouping and a conflicting run number."
     size = (1080, 720)
 
     def capture(self, ctx: CaptureContext) -> Path:
         from contextlib import chdir
+        from shutil import copyfile
         from tempfile import TemporaryDirectory
 
         import h5py
@@ -140,7 +141,7 @@ class LegacyNexusGroupingLogScenario(Scenario):
             window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
             window.show()
             window._dock_log.show()
-            window.resizeDocks([window._dock_log], [150], Qt.Orientation.Vertical)
+            window.resizeDocks([window._dock_log], [190], Qt.Orientation.Vertical)
             window._log_panel.clear()
             with TemporaryDirectory() as directory:
                 source = Path(directory) / "synthetic-emu.nxs"
@@ -162,10 +163,14 @@ class LegacyNexusGroupingLogScenario(Scenario):
                     detector.create_dataset("grouping", data=np.zeros(96, dtype=int)).attrs[
                         "available"
                     ] = 1
+                conflicting_path = Path("another") / source.name
                 with chdir(directory):
-                    window._load_files([source.name])
-            if "Applied the standard EMU" not in window._log_panel.to_plain_text():
-                raise RuntimeError("Legacy EMU import did not report its grouping")
+                    conflicting_path.parent.mkdir()
+                    copyfile(source, conflicting_path)
+                    window._load_files([source.name, str(conflicting_path)])
+            log = window._log_panel.to_plain_text()
+            if "Applied the standard EMU" not in log or "Loaded 1 file(s), 1 failed" not in log:
+                raise RuntimeError("Legacy EMU import did not report both warnings")
             _pump_events(200)
             output = ctx.output_dir / f"{self.name}.png"
             output.parent.mkdir(parents=True, exist_ok=True)

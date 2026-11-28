@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 import os
+import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -32,6 +34,7 @@ from asymmetry.core.representation import FitSlot, RepresentationType  # noqa: E
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID  # noqa: E402
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY  # noqa: E402
+from tests.gui.test_mainwindow_additional import _make_two_period_vector_dataset  # noqa: E402
 
 _RUN = 500
 _EXP = CompositeModel(["Exponential", "Constant"], operators=["+"])
@@ -251,6 +254,57 @@ def test_compare_ranks_the_runs_fits_and_opens_a(mw) -> None:
     assert fit_set.open_id == exp.fit_id
     assert _tab(mw)._composite_model.component_names == ["Exponential", "Constant"]
     window.close()
+
+
+def test_failed_projection_clears_single_catalogue_and_compare_without_deleting_fits(
+    mw, monkeypatch
+):
+    good = _make_two_period_vector_dataset(7454)
+    invalid = _make_two_period_vector_dataset(7455)
+    invalid.run.grouping["groups"][5] = [7]
+    invalid.time, invalid.asymmetry, invalid.error = (np.empty(0) for _ in range(3))
+
+    browser, panel = mw._data_browser, mw._plot_panel
+    browser.add_dataset(good)
+    browser.add_dataset(invalid)
+    browser.select_runs({7454})
+    panel._on_projection_selection_changed(["P_x"])
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    good_rep = mw._project_model.representation(7454, RepresentationType.TIME_FB_ASYMMETRY)
+    invalid_rep = mw._project_model.ensure_dataset(7455).ensure(
+        RepresentationType.TIME_FB_ASYMMETRY
+    )
+    good_slots = good_rep.fit_set("P_x").fits
+    retained = [
+        invalid_rep.record_single_fit(
+            "P_x", replace(slot, fit_id="", fit_range=None), detached=True
+        )
+        for slot in good_slots
+    ]
+    _tab(mw)._compare_fits_btn.click()
+    assert mw._saved_fit_compare_window.isVisible()
+
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda _kind, error, _trace: errors.append(error))
+    browser.select_runs({7455})
+
+    assert not errors
+    assert mw._fit_panel.single_dataset() is None
+    assert not mw._saved_fit_catalogue().entries
+    assert not _tab(mw)._compare_fits_btn.isEnabled()
+    compare = mw._saved_fit_compare_window
+    assert compare is None or not compare.isVisible()
+    assert not panel.stored_fit_ids(7455)
+    assert invalid_rep.fit_set("P_x").fits == retained
+
+    browser.select_runs({7454})
+    assert mw._fit_panel.single_dataset().run_number == 7454
+    assert [entry.fit_id for entry in mw._saved_fit_catalogue().entries] == [
+        slot.fit_id for slot in good_slots
+    ]
+    assert _tab(mw)._compare_fits_btn.isEnabled()
+    assert not errors
 
 
 def test_compare_follows_a_new_fit_on_the_run(mw) -> None:

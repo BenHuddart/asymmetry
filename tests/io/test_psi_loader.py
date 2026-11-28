@@ -178,9 +178,9 @@ def _tag(
     return bytes(data)
 
 
-def _write_psi_mdu(path, run_number: int = 2468) -> None:
-    tags = [_tag(b"F1", b"P"), _tag(b"B1", b"P")]
-    tags.extend(_tag(b"", b"N", histomaxb=0) for _ in range(30))
+def _write_psi_mdu(path, run_number: int = 2468, *, labels=(b"F1", b"B1")) -> None:
+    tags = [_tag(label, b"P") for label in labels]
+    tags.extend(_tag(b"", b"N", histomaxb=0) for _ in range(32 - len(tags)))
     settings_prefix = struct.pack("<13i", 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0)
     settings = settings_prefix + b"".join(tags)
     stats = bytes(336)
@@ -199,8 +199,8 @@ def _write_psi_mdu(path, run_number: int = 2468) -> None:
         1,
         0,
         6,
-        2,
-        b"0 1\x00",
+        len(labels),
+        b" ".join(str(index).encode() for index in range(len(labels))) + b"\x00",
         b"25.0\x00",
         b"0.1\x00",
         0,
@@ -215,7 +215,7 @@ def _write_psi_mdu(path, run_number: int = 2468) -> None:
     for idx, tag in enumerate(tags):
         payload.extend(tag)
         if tag[12:13] == b"P":
-            payload.extend((counts_a if idx == 0 else counts_b).tobytes())
+            payload.extend((counts_a if idx == 0 else counts_b + idx - 1).tobytes())
     path.write_bytes(header + settings + stats + bytes(payload))
 
 
@@ -710,10 +710,9 @@ def test_load_psi_mdu_t5(tmp_path) -> None:
     assert ds.metadata["instrument"] == "HIFI"
     assert ds.metadata["field_direction"] == "Transverse"
     assert len(ds.run.histograms) == 2
-    assert ds.run.grouping["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
-    assert ds.run.grouping["grouping_preset"] == "Per-octant"
-    assert ds.n_points == 0
-    assert "do not exist" in ds.metadata["correction_error"]
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
+    assert "grouping_preset" not in ds.run.grouping
+    assert ds.n_points > 0
 
 
 def test_non_positron_label_classifier() -> None:
@@ -1026,31 +1025,6 @@ def test_hal_loaded_grouping_and_raw_header_survive_canonical_resolution() -> No
     assert run.grouping == before
     assert run.grouping["grouping_preset"] == "Per-octant"
     assert run.grouping["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
-
-
-def test_hal_forward_ring_only_run_retains_unavailable_per_octant(tmp_path) -> None:
-    """A missing bank stays an explicit mismatch with raw channels available."""
-    labels = [b"MV", b"F1", b"F2", b"F3", b"F4", b"F5", b"F6", b"F7", b"F8"]
-    counts = np.vstack(
-        [np.arange(6, dtype=np.int32) + 10 * (i + 1) for i in range(len(labels))]
-    ).astype("<i4")
-    # A "hifi"-tokened filename resolves to HAL, but only 9 histograms are present.
-    path = tmp_path / "tdc_hifi_9999.bin"
-    _write_psi_bin(path, labels=labels, counts=counts)
-
-    ds = PsiLoader().load(str(path))
-    grouping = ds.run.grouping
-
-    # Per-octant is applied even though the backward ring is absent; the full
-    # preset group definitions are kept (matching the manual-apply path).
-    assert grouping["grouping_preset"] == "Per-octant"
-    assert grouping["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
-    assert grouping["group_names"] == {k + 1: f"Octant {k + 1}" for k in range(8)}
-    assert grouping["forward_group"] == 1  # Octant 1 → present F1
-    assert grouping["backward_group"] == 5  # Octant 5 → present F5
-    assert ds.n_points == 0
-    assert "do not exist" in ds.metadata["correction_error"]
-    np.testing.assert_array_equal(np.vstack([h.counts for h in ds.run.histograms]), counts)
 
 
 def test_aligned_grouping_preserves_per_detector_t0() -> None:
