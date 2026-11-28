@@ -126,6 +126,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Write unexpected errors and crash tracebacks to a log file, show unexpected
   errors in the window, and add Help → Open Log Folder.
 
+### Fixed
+
+- Returning from the FFT or MaxEnt view no longer replaces the time-domain fit
+  range with the frequency range.
+
 ## [0.29.0] - 2026-11-25
 
 - Derive the analytic RF comparison helper directly from spin perturbation theory,
@@ -307,9 +312,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the distinction from deferred work.
 
 ### Fixed
-
-- Returning from the FFT or MaxEnt view no longer replaces the time-domain fit
-  range with the frequency range.
 
 - Keep native GLE fonts for single uncertainty bands and component stacks over white;
   preserve transparency for overlapping fills and SVG exports with gleplot 6.1.1.
