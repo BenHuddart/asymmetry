@@ -6313,11 +6313,9 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
-        # The display uses the same aligned, exclusion-aware counts as reduction.
+        # Refine the colour mask when the raw aggregate has usable timing.
         try:
             fb = group_forward_backward(run.histograms, grouping)
-        except InvalidGroupingError:
-            raise
         except ValueError:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,

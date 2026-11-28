@@ -1,5 +1,6 @@
 """Incomplete correction requests remain visible and cannot become final results."""
 
+import sys
 from copy import deepcopy
 
 import numpy as np
@@ -157,6 +158,61 @@ def test_period_outcomes_keep_distinct_background_levels(qapp):
     assert outcomes["red"].background.effective != outcomes["green"].background.effective
     assert set(dataset.run.grouping["background_details"]["periods"]) == {"red", "green"}
     assert "background_values" not in dataset.run.grouping
+
+
+def test_selected_green_period_plots_with_missing_red_t0(qapp):
+    dataset = _make_two_period_vector_dataset(42)
+    grouping = dataset.run.grouping
+    grouping.update(t0_source="missing", period_t0_sources=["missing", "file"])
+    window = MainWindow()
+
+    applied, outcomes = window._apply_grouping_settings_to_dataset(
+        dataset, dict(grouping, period_mode="green")
+    )
+    assert applied and outcomes["green"].complete
+    assert "correction_error" not in dataset.metadata
+    window._data_browser.add_dataset(dataset)
+    window._data_browser.select_runs({42})
+
+    panel = window._plot_panel
+    assert panel._ax.get_legend_handles_labels()[1] == ["42"]
+    np.testing.assert_allclose(panel._last_plot_time, np.arange(4) * 0.01)
+    np.testing.assert_allclose(panel._last_plot_asymmetry, -20.0)
+
+
+@pytest.mark.parametrize("stored_error", [False, True])
+def test_selecting_run_with_invalid_projection_replaces_old_curve(qapp, monkeypatch, stored_error):
+    usable = _make_two_period_vector_dataset(7454)
+    invalid = _make_two_period_vector_dataset(7455)
+    request = invalid.run.grouping
+    request["groups"][5] = [7]
+    if stored_error:
+        invalid.metadata["correction_error"] = "The saved detector grouping is invalid."
+
+    window = MainWindow()
+    browser, panel = window._data_browser, window._plot_panel
+    browser.add_dataset(usable)
+    browser.add_dataset(invalid)
+    browser.select_runs({7454})
+    panel._on_projection_selection_changed(["P_x"])
+    assert panel._ax.get_legend_handles_labels()[1] == ["7454"]
+
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda _kind, error, _trace: errors.append(error))
+    browser.select_runs({7455})
+
+    assert not errors
+    assert window._current_dataset is invalid
+    assert invalid.run.grouping is request
+    assert request["vector_axis"] == "P_z"
+    np.testing.assert_array_equal(invalid.asymmetry, np.zeros(4))
+    assert not panel._ax.has_data()
+    assert panel._header_title_label.text() == "Time-domain F-B asymmetry"
+    assert any("Detector(s) 7 do not exist" in text.get_text() for text in panel._ax.texts)
+    assert window._fit_panel.single_dataset() is None
+
+    browser.select_runs({7454})
+    assert panel._ax.get_legend_handles_labels()[1] == ["7454"]
 
 
 def test_one_incomplete_period_refuses_apply_without_mutation(qapp):

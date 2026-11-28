@@ -2499,8 +2499,8 @@ class MainWindow(QMainWindow):
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
         if axis == current_axis:
             return
-        updated = self._synchronize_targets_to_axis(targets, axis)
-        if redraw and (axis == "ALL" or updated or len(targets) > 1):
+        updated = self._select_projection(targets, axis)
+        if updated is not None and redraw and (axis == "ALL" or updated or len(targets) > 1):
             self._render_current_selection_plot()
 
     def _refresh_time_view_selector(self) -> None:
@@ -2699,14 +2699,10 @@ class MainWindow(QMainWindow):
         self,
         targets: list[MuonDataset],
         axis: str | None,
+        *,
+        recompute: bool = False,
     ) -> int:
-        """Ensure *targets* use a consistent projection component.
-
-        Returns the number of datasets updated. ``axis`` is a real projection
-        label (canonical ``P_x``/``P_y``/``P_z`` or a transverse-field label
-        like ``"Top-Bottom"``); the per-dataset ``axis not in pairs`` guard
-        below skips datasets that don't expose it. ``None``/``ALL`` are no-ops.
-        """
+        """Reduce each target to its requested projection and count the updates."""
         if not axis or axis == "ALL":
             return 0
 
@@ -2720,7 +2716,7 @@ class MainWindow(QMainWindow):
                 continue
 
             current_axis = self._normalize_vector_axis(grouping.get("vector_axis"))
-            if current_axis == axis:
+            if current_axis == axis and not recompute:
                 continue
 
             payload = self._extract_grouping_overrides(dataset)
@@ -2744,6 +2740,16 @@ class MainWindow(QMainWindow):
                 updated += 1
 
         return updated
+
+    def _select_projection(
+        self, targets: list[MuonDataset], axis: str | None, *, recompute: bool = False
+    ) -> int | None:
+        """Apply the chosen projection or show its grouping diagnostic."""
+        try:
+            return self._synchronize_targets_to_axis(targets, axis, recompute=recompute)
+        except InvalidGroupingError as exc:
+            self._plot_panel.show_message(str(exc))
+            return None
 
     def _update_grouping_hint(self) -> None:
         """Surface the transverse-field grouping nudge on the plot/Fourier panels.
@@ -3304,40 +3310,12 @@ class MainWindow(QMainWindow):
             self._log_panel.log("Set vector polarization axis to ALL.")
             return
 
-        selected = list(self._data_browser.get_selected_datasets())
-        targets = (
-            selected if selected else ([self._current_dataset] if self._current_dataset else [])
+        updated = self._select_projection(
+            self._selected_or_current_datasets(), axis, recompute=True
         )
-
-        updated = 0
-        for dataset in targets:
-            if dataset is None:
-                continue
-            run = getattr(dataset, "run", None)
-            grouping = getattr(run, "grouping", None)
-            if not isinstance(grouping, dict):
-                continue
-            payload = self._extract_grouping_overrides(dataset)
-            if not isinstance(payload, dict):
-                continue
-
-            pairs = self._vector_axis_pairs_for_grouping(
-                payload.get("groups", {}),
-                payload.get("group_names"),
-                payload.get("projections"),
-            )
-            if axis not in pairs:
-                continue
-            fwd_gid, bwd_gid = pairs[axis]
-            payload["forward_group"] = fwd_gid
-            payload["backward_group"] = bwd_gid
-            payload["vector_axis"] = axis
-
-            applied, _dt_applied = self._apply_grouping_settings_to_dataset(dataset, payload)
-            if applied:
-                updated += 1
-
-        if updated <= 0:
+        if updated is None:
+            self._fit_panel.set_dataset(None)
+        if not updated:
             return
 
         self._data_browser._rebuild_table()
@@ -9713,14 +9691,11 @@ class MainWindow(QMainWindow):
                 self._refresh_fourier_compute_scope()
                 if hasattr(self._frequency_plot_panel, "update_frequency_reference"):
                     self._frequency_plot_panel.update_frequency_reference(dataset)
-                # Reduce the newly selected run to the projection the fit will run
-                # on — the selected single axis, or the fit-target subplot in the
-                # stacked (ALL) view — so a fit binds to that projection's curve
-                # rather than whatever axis the run was last reduced to.
-                fit_projection = self._current_single_fit_projection()
-                if fit_projection and fit_projection != "ALL":
-                    self._synchronize_targets_to_axis([dataset], fit_projection)
-                self._render_current_selection_plot()
+                projected = self._select_projection(
+                    [dataset], self._current_single_fit_projection()
+                )
+                if projected is not None:
+                    self._render_current_selection_plot()
                 self._sync_frequency_plot_for_current_dataset()
                 self._refresh_vector_axis_selector()
                 if self._plot_workspace.active_domain() == "frequency":
@@ -9732,16 +9707,17 @@ class MainWindow(QMainWindow):
                 else:
                     if hasattr(self._fit_panel, "set_domain"):
                         self._fit_panel.set_domain("time")
-                    self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
+                    fit_dataset = (
+                        self._single_fit_dataset(dataset) if projected is not None else None
+                    )
+                    self._fit_panel.set_dataset(fit_dataset)
                     _fit_range = self._plot_panel.get_fit_range()
                 if hasattr(self._fit_panel, "set_fit_range_display"):
                     self._fit_panel.set_fit_range_display(*_fit_range)
                 if self._grouped_fit_surface_active():
-                    # Binding the grouped surfaces rebuilds their per-group
-                    # tables (FFT-seeded) — ~25 ms per switch — so only the
-                    # visible surface tracks the selection; _sync_fit_dock_mode
-                    # binds the window when the groups view is entered.
-                    self._multi_group_fit_window.set_dataset(self._single_fit_dataset(dataset))
+                    self._multi_group_fit_window.set_dataset(
+                        self._single_fit_dataset(dataset) if projected is not None else None
+                    )
                 if self._multi_group_fit_window is not None and hasattr(
                     self._multi_group_fit_window, "set_fit_range_display"
                 ):
@@ -11094,13 +11070,17 @@ class MainWindow(QMainWindow):
                     if projection not in pairs:
                         unavailable[int(source.run_number)] = f"No {projection} projection."
                         continue
-                    projected = fit_projection_dataset(
-                        source,
-                        projection,
-                        self._reduction_cache,
-                        self._resolve_background_reference,
-                        self,
-                    )
+                    try:
+                        projected = fit_projection_dataset(
+                            source,
+                            projection,
+                            self._reduction_cache,
+                            self._resolve_background_reference,
+                            self,
+                        )
+                    except InvalidGroupingError as exc:
+                        unavailable[int(source.run_number)] = str(exc)
+                        continue
             crop = self._get_fit_dataset(projected, fit_range, projection=projection)
             if crop is None:
                 continue
@@ -14879,15 +14859,10 @@ class MainWindow(QMainWindow):
         """Update the fit panel with currently selected datasets."""
         self._moment_batch.invalidate()
         selected = self._data_browser.get_selected_datasets()
-        # Reduce the selection to the projection a fit will run on — the active
-        # single axis, or the fit-target subplot in the stacked (ALL) view.
-        fit_projection = self._current_single_fit_projection()
-
-        if selected and fit_projection and fit_projection != "ALL":
-            updated = self._synchronize_targets_to_axis(selected, fit_projection)
-            if updated > 0:
-                self._data_browser._rebuild_table()
-                selected = self._data_browser.get_selected_datasets()
+        updated = self._select_projection(selected, self._current_single_fit_projection())
+        if updated:
+            self._data_browser._rebuild_table()
+            selected = self._data_browser.get_selected_datasets()
 
         selected_group_ids = (
             self._data_browser.get_selected_group_ids()
@@ -14927,7 +14902,8 @@ class MainWindow(QMainWindow):
 
         # Multi-selection render mode depends on the plot-panel Overlay toggle.
         if len(selected) > 1:
-            self._render_current_selection_plot()
+            if updated is not None:
+                self._render_current_selection_plot()
             # The frequency view tracks the selection too, so extending/shrinking
             # the selection on the frequency tab refreshes the overlay (the time
             # render above never touches the frequency panel).
@@ -14977,7 +14953,10 @@ class MainWindow(QMainWindow):
             # run. Re-binding the *leaving* run here first (saving and
             # restoring its form, rebuilding the grouped context) was pure
             # cost on every switch.
-            self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
+            fit_dataset = (
+                self._single_fit_dataset(self._current_dataset) if updated is not None else None
+            )
+            self._fit_panel.set_dataset(fit_dataset)
 
         self._update_fit_block_state()
         if new_draft:
