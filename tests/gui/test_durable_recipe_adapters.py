@@ -96,7 +96,7 @@ def test_gui_scan_series_restores_captured_coordinates_and_recipes(qapp):
     for dataset in datasets:
         window._data_browser.add_dataset(dataset)
     window._plot_workspace.set_active_view("integral_scan")
-    window._fit_panel.set_datasets(datasets)
+    window._data_browser.select_runs([dataset.run_number for dataset in datasets])
     window._on_scan_requested()
     series = window._project_model.batch(window._alc_scan_series_id)
     window._sync_alc_series_extra()

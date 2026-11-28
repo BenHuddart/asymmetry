@@ -19,8 +19,9 @@ from asymmetry.gui.tasks import TaskRunner, check_task_cancelled
 class ScanJob(QObject):
     """One immutable request, GUI-thread delivery, and bounded worker lifetime."""
 
-    def __init__(self, controller, datasets, bounds, rf_mode):
+    def __init__(self, controller, identity, datasets, bounds, rf_mode):
         super().__init__(controller)
+        self.identity = identity
         self.datasets, self.bounds, self.rf_mode = datasets, bounds, rf_mode
         self.runner = TaskRunner(self)
         self.loop = QEventLoop(self)
@@ -111,6 +112,13 @@ class ScanController(QObject):
         series = self.window._project_model.batch(self.window._alc_scan_series_id)
         return series.extra["estimator"] if series is not None else "legacy_unspecified"
 
+    def _selected_scan_datasets(self):
+        return sorted(self.window._data_browser.get_selected_datasets(), key=lambda d: d.run_number)
+
+    def selection_changed(self):
+        if self.jobs and self.jobs[-1].identity != self.request_identity():
+            self.invalidate()
+
     def request_identity(self):
         window = self.window
         return (
@@ -128,7 +136,7 @@ class ScanController(QObject):
                         for key in ("field", "temperature")
                     ),
                 )
-                for d in window._fit_panel.batch_datasets()
+                for d in self._selected_scan_datasets()
             ),
             window._plot_panel.get_fit_range(),
             window._alc_fit_panel.rf_difference_enabled(),
@@ -143,7 +151,7 @@ class ScanController(QObject):
                 "Integral-scan (ALC) mode applies to the Forward-Backward asymmetry only.",
             )
             return
-        datasets = window._fit_panel.batch_datasets()
+        datasets = self._selected_scan_datasets()
         if len(datasets) < 2:
             window._guidance_message(
                 "Integral scan", "Select at least two runs to build a field scan."
@@ -161,7 +169,7 @@ class ScanController(QObject):
             )
             for d in datasets
         )
-        job = ScanJob(self, datasets, (t_min, t_max), rf_mode)
+        job = ScanJob(self, identity, datasets, (t_min, t_max), rf_mode)
         self.jobs.append(job)
         scan = job.run()
         self.jobs.remove(job)

@@ -11,7 +11,7 @@ from asymmetry.core import computation
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.json_values import encode_non_finite
 from asymmetry.gui.mainwindow import MainWindow
-from tests.gui.scan_fit_helpers import wait_for_fit
+from tests.gui.scan_fit_helpers import load_scan_selection, wait_for_fit
 from tests.gui.test_integral_scan_gui import _ds, _set_regions
 from tests.gui.test_rf_scan_panel_gui import _rf_datasets
 
@@ -55,9 +55,8 @@ def build_fitted_scan(window, kind, *, source_root=None):
             )
             current.histogram_observation = histogram_observation(current.run)
             loaded.append(current)
-            window._data_browser.add_dataset(current)
         datasets = loaded
-    window._fit_panel.set_datasets(datasets)
+    load_scan_selection(window, *datasets)
     window._on_scan_requested()
     if kind == "rf":
         window._on_fit_rf()

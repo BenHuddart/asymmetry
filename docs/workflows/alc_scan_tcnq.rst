@@ -56,9 +56,9 @@ Building the integral scan
 --------------------------
 
 1. **Load the scan and select it.** Open the 31 runs of the 350 K scan and
-   multi-select them in the Data Browser — click the first row, then
-   ``Shift``-click the last. The scan is built from the *selected* runs, exactly
-   as a batch fit is.
+   multi-select them in the **Data Browser** by clicking the first row and
+   **Shift-click** the last. **Build Scan** uses the selected runs even when a
+   **Batch** series is open.
 2. **Enter the Integral scan representation.** Click **Integral scan** in the
    **Time domain** cluster of the main toolbar. The central plot area switches to
    the scan view; the fit dock's **ALC scan** tab shows the **Integral scan

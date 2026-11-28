@@ -220,8 +220,7 @@ class TcnqIntegralScanScenario(CorpusScenario):
             [int(ds.run_number) for ds in datasets],
             name="TCNQ ALC 350 K — 2000–5000 G",
         )
-        # Multi-select every run so the fit panel's batch (which the scan build
-        # reads) is populated, then enter the integral-scan view and build.
+        # Build Scan uses the Data Browser selection.
         window._data_browser._table.selectAll()
         _pump_events(200)
         window._plot_workspace.set_active_view("integral_scan")

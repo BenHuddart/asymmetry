@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tests.gui.scan_fit_helpers import wait_for_fit
+from tests.gui.scan_fit_helpers import load_scan_selection, wait_for_fit
 
 pytestmark = [pytest.mark.gui]
 
@@ -134,7 +134,7 @@ def test_rf_model_listed_for_field_trend_not_time_domain() -> None:
 def test_rf_mode_builds_difference_scan(mainwindow: MainWindow) -> None:
     mw = mainwindow
     _enter_alc(mw)
-    mw._fit_panel.set_datasets(_rf_datasets())
+    load_scan_selection(mw, *_rf_datasets())
     mw._alc_fit_panel._rf_difference_check.setChecked(True)
 
     mw._on_scan_requested()
@@ -148,7 +148,7 @@ def test_rf_mode_builds_difference_scan(mainwindow: MainWindow) -> None:
 def test_rf_fit_populates_couplings(mainwindow: MainWindow) -> None:
     mw = mainwindow
     _enter_alc(mw)
-    mw._fit_panel.set_datasets(_rf_datasets())
+    load_scan_selection(mw, *_rf_datasets())
     mw._alc_fit_panel._rf_difference_check.setChecked(True)
     mw._on_scan_requested()
 
@@ -181,7 +181,7 @@ def test_rf_fit_requires_rf_scan(mainwindow: MainWindow, monkeypatch) -> None:
         staticmethod(lambda *a, **k: pytest.fail("modal QMessageBox fired headless")),
     )
     mw._alc_fit_panel._rf_difference_check.setChecked(False)
-    mw._fit_panel.set_datasets(_rf_datasets())
+    load_scan_selection(mw, *_rf_datasets())
     mw._on_scan_requested()  # a normal integral scan
     assert mw._alc_rf_mode is False
 
@@ -195,7 +195,7 @@ def test_rf_scan_persists_and_restores(mainwindow: MainWindow) -> None:
     mw = mainwindow
     _enter_alc(mw)
     datasets = _rf_datasets()
-    mw._fit_panel.set_datasets(datasets)
+    load_scan_selection(mw, *datasets)
     mw._alc_fit_panel._rf_difference_check.setChecked(True)
     mw._on_scan_requested()
     mw._on_fit_rf()

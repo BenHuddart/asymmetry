@@ -2001,6 +2001,7 @@ class MainWindow(QMainWindow):
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         self._fit_panel.members_changed.connect(self._scan_fits.stop)
+        self._data_browser.selection_changed.connect(self._scan_controller.selection_changed)
         self._data_browser.selection_changed.connect(self._scan_fits.stop)
         self._plot_panel.fit_range_changed.connect(self._scan_fits.stop)
         self._alc_fit_panel._rf_difference_check.toggled.connect(self._scan_fits.stop)
@@ -11884,11 +11885,9 @@ class MainWindow(QMainWindow):
     _SCAN_QUANTITY = "Integral asymmetry (%)"
 
     def _on_scan_requested(self) -> None:
-        """Build the current count-integral request through the cancellable controller."""
         self._scan_fits.invalidate()
         self._scan_controller.build()
 
-    # x-axis key → (display label, derivative unit label).
     _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
     _ALC_DERIV_UNITS = {"field": "%/G", "temperature": "%/K", "run": "%/run"}
 
