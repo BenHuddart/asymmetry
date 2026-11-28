@@ -5,6 +5,7 @@ from functools import partial
 import numpy as np
 import pytest
 
+from asymmetry.core.computation import COMPUTATION_REVISION
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 from asymmetry.core.fitting.asymmetry_global import fit_global
@@ -301,7 +302,11 @@ def test_saved_residual_evaluates_at_the_second_birth_discontinuity():
     np.testing.assert_array_equal(residuals, np.zeros(time.size))
 
 
-def test_saved_curve_includes_fitted_centres_when_display_bounds_round_before_birth():
+@pytest.mark.parametrize("revision", [COMPUTATION_REVISION, "21"])
+@pytest.mark.parametrize("open_lower", [False, True])
+def test_saved_curve_uses_verified_centres_when_display_bounds_round_before_birth(
+    revision, open_lower
+):
     from asymmetry.core.fitting.time_response import TimeResponse
 
     birth = -0.1626
@@ -312,14 +317,23 @@ def test_saved_curve_includes_fitted_centres_when_display_bounds_round_before_bi
     result = FitEngine().fit(
         data, model.function, parameters, t_min=np.nextafter(birth, np.inf), t_max=time[2]
     )
+    window = (
+        {"min": None, "max": np.nextafter(birth, -np.inf)}
+        if open_lower
+        else {"min": -0.163, "max": -0.163}
+    )
     slot = FitSlot(
         model=model.to_dict(),
-        result=fit_result_summary(result),
-        fit_range={"min": -0.163, "max": -0.163},
+        result=fit_result_summary(result) | {"computation_revision": revision},
+        fit_range=window,
     )
 
-    assert saved_fit_matches(slot, data)
     curves = saved_fit_curves(slot, data)
+    if revision != COMPUTATION_REVISION:
+        assert not saved_fit_matches(slot, data)
+        assert curves is None
+        return
+    assert saved_fit_matches(slot, data)
     assert (curves.fit[0][0], curves.fit[0][-1]) == (birth, time[2])
     np.testing.assert_array_equal(curves.residuals[0], time[:3])
     np.testing.assert_array_equal(curves.residuals[1], np.zeros(3))

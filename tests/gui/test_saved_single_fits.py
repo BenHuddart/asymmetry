@@ -33,6 +33,7 @@ from asymmetry.core.representation import FitSlot, RepresentationType  # noqa: E
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID  # noqa: E402
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY  # noqa: E402
+from tests._qt_helpers import wait_for  # noqa: E402
 
 _RUN = 500
 _EXP = CompositeModel(["Exponential", "Constant"], operators=["+"])
@@ -231,6 +232,41 @@ def test_saved_single_overlay_includes_only_verified_centres_beyond_rounded_boun
     np.testing.assert_array_equal(reopened[0], overlay[0])
     np.testing.assert_array_equal(reopened[1], overlay[1])
     assert panel.get_fit_range() == (lower, upper)
+
+
+def test_opening_historical_fit_with_prearrival_window_restores_form_without_overlay(mw, qapp):
+    panel = mw._plot_panel
+    dataset = mw._data_browser.get_dataset(_RUN)
+    birth = -0.1626
+    dataset.time = np.array([birth, -0.1625756, -0.1625512, 0.3])
+    mw._on_dataset_selected(_RUN)
+    panel.set_fit_range(birth, dataset.time[2])
+    response = TimeResponse("double_delta", -2 * birth)
+    _fit(mw, _EXP.with_time_response(response))
+    panel.set_fit_range(birth, dataset.time[-1])
+    _fit(mw, _GAUSS)
+
+    _, fit_set = _fit_set(mw)
+    historical = fit_set.fits[0]
+    historical.fit_range = {"min": -0.163, "max": -0.163}
+    historical.result["computation_revision"] = "21"
+    overlay_id = SAVED_FIT_ID_PREFIX + historical.fit_id
+    panel.clear_run_fit(_RUN, overlay_id)
+
+    mw._sync_saved_fit_overlays()
+    assert overlay_id not in panel.stored_fit_ids(_RUN)
+    mw._on_saved_fit_open_requested(historical.fit_id)
+    assert fit_set.open_id == historical.fit_id
+    assert SINGLE_FIT_ID not in panel.stored_fit_ids(_RUN)
+    assert panel.get_fit_range() == (-0.163, -0.163)
+    assert _tab(mw)._composite_model.time_response == response
+    assert _tab(mw)._composite_model.component_names == _EXP.component_names
+
+    _tab(mw).saved_fit_compare_requested.emit()
+    compare = mw._saved_fit_compare_window
+    wait_for(lambda: bool(compare._status.text()), qapp)
+    assert compare._status.text() == "The saved fit window is outside the model's supported range."
+    assert compare.panel.a_key() == historical.fit_id
 
 
 def test_rename_then_delete_down_to_no_fit(mw) -> None:

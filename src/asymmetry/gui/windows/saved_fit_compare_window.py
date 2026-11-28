@@ -148,7 +148,7 @@ class SavedFitCompareWindow(QDialog):
             return
         dataset = self._dataset
 
-        def _materialise(_worker: object) -> tuple[MuonDataset, FitSlot, RunCurves]:
+        def _materialise(_worker: object) -> tuple[MuonDataset, FitSlot, RunCurves | None]:
             return dataset, slot, saved_fit_curves(slot, dataset)
 
         self._tasks.start(
@@ -164,6 +164,9 @@ class SavedFitCompareWindow(QDialog):
         """
         dataset, slot, run_curves = result
         if dataset is not self._dataset:
+            return
+        if run_curves is None:
+            self._status.setText("The saved fit window is outside the model's supported range.")
             return
         self._curves[slot.fit_id] = (slot, run_curves)
         self._panel.refresh_curves(self._summaries())

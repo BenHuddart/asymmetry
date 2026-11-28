@@ -1296,8 +1296,11 @@ support, interpretation, and objective before pooling rankings. Equal dimensions
 run labels, or recipe identities alone do not establish that match. Δ and weights
 are calculated within each verified group, with the open fit's group first.
 Unknown historical inputs and fits without a matching partner remain listed
-with Δ "—" and no weight. Historical parameter values and model curves remain
-available; residuals are drawn only against verified matching current data.
+with Δ "—" and no weight. Historical parameter values remain available.
+Historical curves draw over the supported portion of the recorded window.
+When that window falls wholly before the first pulse arrival, the comparison
+shows "The saved fit window is outside the model's supported range."
+Residuals are drawn only against verified matching current data.
 The caption explains: "Fits with verified matching observations, objectives, and computation revisions
 are ranked together." A changed or unverified input also receives a historical-fit
 hint in the **Saved fits** row; re-fitting keeps the historical result separately.

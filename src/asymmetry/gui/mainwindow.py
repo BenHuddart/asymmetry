@@ -11633,9 +11633,12 @@ class MainWindow(QMainWindow):
                 (target for target in targets if target.run_number == record.run_number), None
             )
             dataset = self._plot_panel.get_analysis_dataset(plotted)
+        observations = saved_fit_observations(slot, dataset)
         bounds = saved_fit_curve_bounds(
-            slot, dataset if dataset is not None else record, saved_fit_observations(slot, dataset)
+            model, slot, dataset if dataset is not None else record, observations
         )
+        if bounds is None:
+            return None
         x, y = dense_fit_curve(model, values, *bounds)
         return (x, y, name, (), None, model.formula_string(), axis_key)
 
@@ -11730,13 +11733,9 @@ class MainWindow(QMainWindow):
             panel.set_global_fits({run_number: payload}, fit_id=SINGLE_FIT_ID)
         panel.set_shown_fits(run_number, [SINGLE_FIT_ID])
         self._sync_saved_fit_overlays()
-        # Re-fitting the opened fit unchanged must replace it (D1), so the
-        # project's window follows it; an open side leaves the range as it is.
         window = slot.fit_range
         if window is not None and None not in window.values():
             panel.set_fit_range(window["min"], window["max"])
-        # A legacy model-only fit has no stored form: rebuild one from its own
-        # model and table. A slot with no model at all leaves the form as it is.
         form = self._single_fit_restore_payload(
             self._current_dataset
         ) or self._fit_panel.build_single_fit_payload_from_slot(

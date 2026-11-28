@@ -385,17 +385,22 @@ def saved_fit_model(slot: FitSlot) -> tuple[CompositeModel, dict[str, float]] | 
 
 
 def saved_fit_curve_bounds(
-    slot: FitSlot, dataset: MuonDataset, observations: GaussianObservations | None
-) -> tuple[float, float]:
-    """Include verified fitted bin centres in the drawable saved window."""
+    model: CompositeModel,
+    slot: FitSlot,
+    dataset: MuonDataset,
+    observations: GaussianObservations | None,
+) -> tuple[float, float] | None:
+    """Include verified centres and omit windows before the model's first arrival."""
     window = slot.fit_range or {"min": None, "max": None}
     lower, upper = window["min"], window["max"]
     x_min = float(np.min(dataset.time)) if lower is None else lower
     x_max = float(np.max(dataset.time)) if upper is None else upper
     if observations is not None:
-        return min(x_min, float(observations.time.min())), max(
-            x_max, float(observations.time.max())
-        )
+        x_min = min(x_min, float(observations.time.min()))
+        x_max = max(x_max, float(observations.time.max()))
+    first_arrival = model.time_response.first_arrival_us
+    if first_arrival is not None and x_max < first_arrival:
+        return None
     if x_min > x_max:
         if lower is None:
             x_max = x_min
@@ -407,17 +412,19 @@ def saved_fit_curve_bounds(
 def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
     """A saved single fit's dense curve over its window, and its normalised residuals.
 
-    ``None`` for a fit :func:`saved_fit_model` cannot draw. An open window
-    side, or a fit saved before its window was recorded (pre-v25), reaches the
-    edge of the record. Evaluates the model, so a caller off the GUI thread
-    runs it.
+    ``None`` for a missing drawable model or a window outside its support.
+    An open window side, including an unrecorded historical window, reaches
+    the record edge. The caller runs model evaluation off the GUI thread.
     """
     drawable = saved_fit_model(slot)
     if drawable is None:
         return None
     model, values = drawable
     observations = saved_fit_observations(slot, dataset)
-    curve = dense_fit_curve(model, values, *saved_fit_curve_bounds(slot, dataset, observations))
+    bounds = saved_fit_curve_bounds(model, slot, dataset, observations)
+    if bounds is None:
+        return None
+    curve = dense_fit_curve(model, values, *bounds)
     sigma = observations.stated_sigma if observations is not None else None
     if sigma is None:
         return RunCurves(curve, (np.array([]), np.array([])))
