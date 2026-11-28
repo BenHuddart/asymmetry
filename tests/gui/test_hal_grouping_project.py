@@ -134,7 +134,7 @@ def test_legacy_project_keeps_explicit_hal_grouping(
     choice = dataset.run.instrument_choice
     assert choice.selection.identity == ("psi.hal9500", UnmappedAcquisition("incompatible"))
     assert choice.selection.profile_revision == "1"
-    assert choice.evidence == (("grouping_overrides.instrument", "HAL"),)
+    assert choice.evidence[0] == ("grouping_overrides.instrument", "HAL")
     context = resolve_instrument(dataset.run)
     assert len(dataset.run.histograms) == len(acquired)
     assert {str(gid): members for gid, members in dataset.run.grouping["groups"].items()} == groups

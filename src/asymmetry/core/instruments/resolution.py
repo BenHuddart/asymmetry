@@ -419,13 +419,16 @@ class InstrumentContext:
             or selected.acquisition != UnmappedAcquisition("incompatible")
         ):
             return False
-        recorded = dict(normalized_evidence(self.recorded.evidence))
+        recorded = tuple(
+            (key.removeprefix("grouping_overrides."), value)
+            for key, value in normalized_evidence(self.recorded.evidence)
+        )
         observed = dict(normalized_evidence(self.observed.evidence))
-        recorded_labels = {recorded[key] for key in ACQUIRED_LABEL_KEYS if key in recorded}
+        recorded_labels = {value for key, value in recorded if key in ACQUIRED_LABEL_KEYS}
         observed_labels = {observed[key] for key in ACQUIRED_LABEL_KEYS if key in observed}
-        recorded_count = recorded.get("histogram_count")
+        recorded_counts = {value for key, value in recorded if key == "histogram_count"}
         if (
-            (recorded_count is not None and recorded_count != observed.get("histogram_count"))
+            (recorded_counts and recorded_counts != {observed.get("histogram_count")})
             or (recorded_labels and recorded_labels != observed_labels)
             or (not recorded_labels and selected.origin != "legacy")
         ):

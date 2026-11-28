@@ -1079,6 +1079,7 @@ class PsiLoader(BaseLoader):
         selection = assess_instrument(
             n_hist, metadata=metadata, source_file=raw.source_file
         ).selection
+        layout_key = layout_key_for_selection(selection, n_hist) if selection is not None else None
         profile = profile_by_key(selection.profile_key) if selection is not None else None
         grouping = {
             "alpha": 1.0,
@@ -1094,8 +1095,8 @@ class PsiLoader(BaseLoader):
             # Preserve the established all-zero PSI table convention.
             "t0_source": "missing" if not any(int(v) for v in t0_bins) else "file",
             "histogram_labels": list(raw.histogram_labels),
-            # The registry identity and the raw header name have separate provenance.
-            "instrument": (profile.identity.layout_key if profile is not None else raw.instrument),
+            "instrument": layout_key
+            or (profile.identity.layout_key if profile else raw.instrument),
         }
         run = Run(
             run_number=int(raw.run_number),
@@ -1128,7 +1129,6 @@ class PsiLoader(BaseLoader):
             empty = np.empty(0, dtype=np.float64)
             return MuonDataset(time=empty, asymmetry=empty, error=empty, metadata=metadata, run=run)
 
-        layout_key = layout_key_for_selection(selection, n_hist) if selection is not None else None
         preset_override = (
             self._instrument_default_preset(
                 get_instrument_layout(layout_key), n_hist, labels=raw.histogram_labels

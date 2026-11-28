@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from asymmetry.core.data.acquisition import SourceBinding, SourceVerification, verify_sources
+from asymmetry.core.project.instrument_migration import legacy_choice_with_acquired_evidence
 from asymmetry.core.project.preparation import PreparedProject, prepare_project
 
 
@@ -18,11 +19,14 @@ def sample_load_request(prepared, fact):
 
     source = fact.source
     grouping = prepared.groupings.get(source.run_number)
+    choice = prepared.instrument_choices.get(source.run_number)
     return (
         source.owner,
         fact.candidate_file,
         ReplayState(
-            prepared.instrument_choices.get(source.run_number),
+            legacy_choice_with_acquired_evidence(choice, grouping.payload)
+            if grouping is not None
+            else choice,
             prepared.source_assessments.get(source.run_number),
             source.run_number,
             source.period_number,
