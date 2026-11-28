@@ -354,7 +354,7 @@ def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | N
     the current preset already matches the recommendation — is the caller's
     decision; this helper does not know the current preset.
     """
-    if (field_direction or "").strip().lower() != "transverse":
+    if not isinstance(field_direction, str) or field_direction.strip().casefold() != "transverse":
         # No nudge for longitudinal / zero-field / unknown geometries.
         return None
 

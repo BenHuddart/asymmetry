@@ -1138,8 +1138,7 @@ class PsiLoader(BaseLoader):
         )
         if preset_override is None:
             groups, group_names, forward_gid, backward_gid = self._default_groups(
-                raw.histogram_labels,
-                n_hist,
+                raw.histogram_labels, n_hist
             )
         else:
             groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (

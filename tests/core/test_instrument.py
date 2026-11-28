@@ -748,12 +748,6 @@ class TestPresetGroupingForRun:
         )
         assert groups[1] == [2, 10]
 
-    def test_hal_full_preset_cannot_supply_the_forward_ring_variant(self):
-        layout = get_instrument_layout("HAL")
-        labels = ["MV"] + [f"F{i}" for i in range(1, 9)]
-        with pytest.raises(PresetLayoutMismatchError, match="HAL-FORWARD"):
-            preset_grouping_for_run(layout, "Per-octant", n_histograms=len(labels), labels=labels)
-
     def test_unknown_count_and_missing_labels_skip_both_checks(self):
         layout = get_instrument_layout("GPS-RD")
         assert preset_grouping_for_run(layout, "Longitudinal", n_histograms=0) == {1: [1], 2: [2]}

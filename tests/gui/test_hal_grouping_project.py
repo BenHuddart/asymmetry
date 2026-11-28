@@ -10,7 +10,8 @@ from asymmetry.core.io import load
 from asymmetry.core.project import CURRENT_SCHEMA_VERSION, save_project
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
-from tests.io.test_psi_loader import _HAL_FORWARD_LABELS, _HAL_FULL_LABELS, _write_psi_mdu
+from tests.io.test_psi_hal_grouping import _HAL_FORWARD_LABELS, _HAL_FULL_LABELS
+from tests.io.test_psi_loader import _write_psi_mdu
 
 pytestmark = pytest.mark.gui
 
