@@ -279,9 +279,11 @@ def test_cancel_menu_identity_leaves_the_complete_live_state_unchanged(workflow,
     assert not window._dirty
 
 
-def test_fresh_file_retains_template_identity_request_and_fresh_raw_evidence(workflow):
-    window, state, profile, request, tmp_path = workflow
-    template = window._load_file(state["datasets"][0]["source_file"])
+def test_fresh_file_keeps_its_own_identity_and_grouping_with_foreign_template(workflow):
+    window, state, _, request, tmp_path = workflow
+    source = state["datasets"][0]["source_file"]
+    expected = window._load_file(source)
+    template = window._load_file(source)
     template.run.run_number = 11
     template.metadata["run_number"] = 11
     template.run.metadata["run_number"] = 11
@@ -294,14 +296,14 @@ def test_fresh_file_retains_template_identity_request_and_fresh_raw_evidence(wor
     )
     window._data_browser.add_dataset(template)
     assert window._grouping_profiles == []
-    window._load_files([state["datasets"][0]["source_file"]])
+    window._load_files([source])
     fresh = window._data_browser.get_dataset(17)
     assert fresh is not None
     assert fresh.run.metadata["instrument"] == "FLAME"
-    assert fresh.run.instrument_choice.selection.identity == ("psi.gps", "bin_combined")
-    assert resolve_instrument(fresh.run).requires_choice
-    assert_request_retained(fresh.run.grouping, request)
-    assert "Instrument identity conflicts" in fresh.metadata["correction_error"]
+    assert fresh.run.instrument_choice == expected.run.instrument_choice
+    assert resolve_instrument(fresh.run).selection.identity == ("psi.flame", "eight_channel")
+    assert fresh.run.grouping == expected.run.grouping
+    assert "correction_error" not in fresh.metadata
     assert window._grouping_profiles == []
     assert_request_retained(template.run.grouping, request)
 

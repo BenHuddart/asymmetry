@@ -2051,13 +2051,14 @@ below the Nyquist frequency for the 0.0244 ns HAL ``.mdu`` bins. You can
 analyse the precession directly in the laboratory frame. Find the raw HAL
 runs in the :ref:`Rigi school data <rigi-school-data>`.
 
-The files used here export the forward-ring channels F1–F8 and the auxiliary
-MV channel. In **Grouping**, assign F1–F8 to one group each and leave MV
-out. Choose F1 as **Forward Group** and F5 as **Backward Group**. The FFT
-uses this pair's **F−B asymmetry**, and MaxEnt uses all eight forward groups.
-Keep the file timing and good-bin limits. For the FFT overlay, set the
+Open HAL runs 686 and 693. Their histogram labels ``MV, F1…F8`` match the
+forward-ring readout and load with **Transverse (opposed pairs)**. In
+**Grouping**, check that F1–F8 each have their own group and that MV is
+excluded. The FFT uses **F−B asymmetry** with F1 as **Forward Group** and
+F5 as **Backward Group**. MaxEnt uses all eight forward groups. Keep the
+file timing and good-bin limits. For the FFT overlay, set the
 **Fit range** in **Single** to 0–8 µs, within both runs' usable count
-statistics. Select HAL runs 686 and 693 and open **FFT**. Select
+statistics. Select both runs and open **FFT**. Select
 **F−B asymmetry**, **(Power)^1/2**, and **Lorentzian**, and set
 **Filter τ (µs)** to 3. Click **Compute FFT (2 runs)**, then turn on
 **Overlay** and select **Temperature (K)** under **Label**.
