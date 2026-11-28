@@ -1079,6 +1079,7 @@ class PsiLoader(BaseLoader):
         selection = assess_instrument(
             n_hist, metadata=metadata, source_file=raw.source_file
         ).selection
+        profile = profile_by_key(selection.profile_key) if selection is not None else None
         grouping = {
             "alpha": 1.0,
             "bin_index_base": 0,
@@ -1094,11 +1095,7 @@ class PsiLoader(BaseLoader):
             "t0_source": "missing" if not any(int(v) for v in t0_bins) else "file",
             "histogram_labels": list(raw.histogram_labels),
             # The registry identity and the raw header name have separate provenance.
-            "instrument": (
-                profile_by_key(selection.profile_key).identity.layout_key
-                if selection is not None
-                else raw.instrument
-            ),
+            "instrument": (profile.identity.layout_key if profile is not None else raw.instrument),
         }
         run = Run(
             run_number=int(raw.run_number),
@@ -1108,7 +1105,16 @@ class PsiLoader(BaseLoader):
             source_file=raw.source_file,
         )
         run = prepare_loaded_run(run, replay)
-        defer = replay is not None and replay.defer_grouping and replay.selects(run)
+        defer = (
+            replay is not None
+            and replay.defer_grouping
+            and replay.selects(run)
+            and selection is not None
+            and any(
+                config.key == selection.acquisition and config.previously_unmapped_revisions
+                for config in profile.detectors.acquisitions
+            )
+        )
         if defer and resolve_instrument(run).has_new_acquisition_map:
             # An unmapped readout supplied raw bounds until the project
             # assigned detector legs and its good-bin window.

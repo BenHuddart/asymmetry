@@ -2771,6 +2771,7 @@ class MainWindow(QMainWindow):
                     metadata=dataset.metadata,
                     source_file=dataset.run.source_file,
                     current_preset=grouping.get("grouping_preset"),
+                    instrument_context=resolve_instrument(dataset.run),
                 )
             except Exception:
                 recommended = None

@@ -419,6 +419,17 @@ class InstrumentContext:
             or selected.acquisition != UnmappedAcquisition("incompatible")
         ):
             return False
+        recorded = dict(normalized_evidence(self.recorded.evidence))
+        observed = dict(normalized_evidence(self.observed.evidence))
+        recorded_labels = {recorded[key] for key in ACQUIRED_LABEL_KEYS if key in recorded}
+        observed_labels = {observed[key] for key in ACQUIRED_LABEL_KEYS if key in observed}
+        recorded_count = recorded.get("histogram_count")
+        if (
+            (recorded_count is not None and recorded_count != observed.get("histogram_count"))
+            or (recorded_labels and recorded_labels != observed_labels)
+            or (not recorded_labels and selected.origin != "legacy")
+        ):
+            return False
         return any(
             config.key == current.acquisition
             and selected.profile_revision in config.previously_unmapped_revisions

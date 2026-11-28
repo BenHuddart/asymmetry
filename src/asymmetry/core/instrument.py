@@ -39,7 +39,11 @@ from asymmetry.core.instruments.layout import (
     generic_layout,
 )
 from asymmetry.core.instruments.recognition import canonical_layout_name, recognize_layout
-from asymmetry.core.instruments.resolution import assess_instrument, layout_key_for_selection
+from asymmetry.core.instruments.resolution import (
+    InstrumentContext,
+    assess_instrument,
+    layout_key_for_selection,
+)
 from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.transform.grouping import resolve_group_indices
 
@@ -382,6 +386,7 @@ def recommend_grouping_preset_for_run(
     metadata: dict | None,
     source_file: str | None = None,
     current_preset: str | None = None,
+    instrument_context: InstrumentContext | None = None,
 ) -> str | None:
     """Recommend a transverse grouping preset for a *loaded run*, or ``None``.
 
@@ -409,6 +414,9 @@ def recommend_grouping_preset_for_run(
         The grouping preset already applied to the run
         (``run.grouping["grouping_preset"]``), or ``None`` when unknown/custom.
 
+    instrument_context:
+        The loaded run's effective instrument choice, including conflicts.
+
     Returns
     -------
     str or None
@@ -419,7 +427,11 @@ def recommend_grouping_preset_for_run(
     """
     metadata = metadata if isinstance(metadata, dict) else {}
     count = int(n_histograms or 0)
-    selection = assess_instrument(count, metadata=metadata, source_file=source_file).selection
+    selection = (
+        instrument_context.selection
+        if instrument_context is not None
+        else assess_instrument(count, metadata=metadata, source_file=source_file).selection
+    )
     if selection is None:
         return None
     name = layout_key_for_selection(selection, count)
