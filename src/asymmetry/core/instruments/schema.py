@@ -184,6 +184,7 @@ class Acquisition:
     readout_sets: tuple[ReadoutSet, ...] = ()
     combined_readouts: tuple[CombinedReadout, ...] = ()
     conditional_contributions: tuple[ConditionalContribution, ...] = ()
+    require_file_labels: bool = False
 
     def __post_init__(self):
         if any(
@@ -434,6 +435,12 @@ class InstrumentProfile:
                 raise ValueError(
                     "Channels need nonempty keys and positive integer histogram numbers"
                 )
+            if config.require_file_labels and (
+                {channel.ordinal for channel in config.channels}
+                != set(range(1, len(config.channels) + 1))
+                or any(not channel.file_labels for channel in config.channels)
+            ):
+                raise ValueError("Label-matched acquisitions require a file label at every ordinal")
             if any(not set(channel.physical) <= hardware for channel in config.channels):
                 raise ValueError("Channel references an unknown physical element")
             _unique(tuple(view.key for view in config.views), "view IDs")

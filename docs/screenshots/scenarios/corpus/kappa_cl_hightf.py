@@ -89,43 +89,27 @@ def _rel(run: int) -> str:
 
 
 def _load_forward_ring(window, run_number):
-    """Edit the acquired forward-ring grouping through the Grouping controls."""
+    """Verify the fresh forward-ring preset through the Grouping controls."""
     from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
     dataset = load_corpus_datasets([_rel(run_number)])[0]
-    labels = dataset.run.grouping["histogram_labels"]
+    grouping = dataset.run.grouping
+    if not dataset.time.size or "correction_error" in dataset.metadata:
+        raise RuntimeError(f"Run {run_number} requires a reduced F1/F5 asymmetry")
+    if grouping.get("grouping_preset") != "Transverse (opposed pairs)":
+        raise RuntimeError(f"Run {run_number} requires the forward-ring preset")
+
     dialog = GroupingDialog([dataset], selected_run_number=run_number, parent=window)
     try:
         dialog.show()
-        pane = dialog._preview_pane
-        pane.flush()
-        if dataset.run.grouping.get("grouping_preset") == "Per-octant":
-            diagnostic = "10 do not exist in this 9-detector run"
-            _wait_until(
-                lambda: diagnostic in pane._incomplete_banner.text(),
-                timeout_ms=10000,
-            )
-            if diagnostic not in pane._incomplete_banner.text() or dialog._apply_btn.isEnabled():
-                raise RuntimeError(f"Run {run_number} requires an editable incomplete preview")
-        table = dialog._group_table
-        for row in range(table.rowCount()):
-            name = f"F{table.item(row, 0).text()}"
-            table.item(row, 2).setText(name)
-            table.item(row, 3).setText(str(labels.index(name) + 1))
-        dialog._forward_combo.setCurrentIndex(dialog._forward_combo.findData(1))
-        dialog._backward_combo.setCurrentIndex(dialog._backward_combo.findData(5))
-        pane.flush()
-        _wait_until(dialog._apply_btn.isEnabled, timeout_ms=15000)
-        dialog._apply_btn.click()
-        settings = dialog.get_grouping_result()
-        if dialog.result() != dialog.DialogCode.Accepted or not settings:
-            raise RuntimeError(f"Could not apply the F1/F5 grouping to run {run_number}")
+        payload = dialog._current_grouping_payload()
+        if payload["groups"] != {i: [i + 1] for i in range(1, 9)} or (
+            payload["forward_group"],
+            payload["backward_group"],
+        ) != (1, 5):
+            raise RuntimeError(f"Run {run_number} requires eight forward groups with F1/F5")
     finally:
-        dialog._clear_dirty()
         dialog.close()
-    applied, _ = window._apply_grouping_settings_to_dataset(dataset, settings)
-    if not applied or not dataset.time.size:
-        raise RuntimeError(f"Run {run_number} requires a reduced F1/F5 asymmetry")
     return dataset
 
 

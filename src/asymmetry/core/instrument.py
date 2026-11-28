@@ -386,8 +386,8 @@ def recommend_grouping_preset_for_run(
     """Recommend a transverse grouping preset for a *loaded run*, or ``None``.
 
     A run-level convenience over :func:`recommend_grouping_preset`: it resolves
-    the run's instrument layout itself (via :func:`detect_instrument` +
-    :func:`variant_for_histograms`), asks for a transverse-field nudge, and then
+    the run's instrument layout via :func:`detect_instrument`, asks for a
+    transverse-field nudge, and then
     suppresses the nudge when the run's *current* grouping already is the
     recommended preset. Where the bare :func:`recommend_grouping_preset` is
     layout-only and preset-agnostic, this folds in the run's field geometry and
@@ -421,12 +421,9 @@ def recommend_grouping_preset_for_run(
     metadata = metadata if isinstance(metadata, dict) else {}
     count = int(n_histograms or 0)
     name = detect_instrument(count, metadata=metadata, source_file=source_file)
-    if not name:
+    if name is None or variant_for_histograms(name, count) != name:
         return None
-    try:
-        layout = get_instrument_layout(variant_for_histograms(name, count))
-    except KeyError:
-        return None
+    layout = get_instrument_layout(name)
     recommended = recommend_grouping_preset(layout, metadata.get("field_direction"))
     if recommended is None or recommended == current_preset:
         return None

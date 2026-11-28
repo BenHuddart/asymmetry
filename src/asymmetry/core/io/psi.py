@@ -16,10 +16,12 @@ import numpy as np
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.instrument import (
-    detect_instrument,
+    InstrumentLayout,
     get_instrument_layout,
     preset_grouping_for_run,
 )
+from asymmetry.core.instruments.catalog import profile_by_key
+from asymmetry.core.instruments.resolution import assess_instrument, layout_key_for_selection
 from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.psi_units import read_header_quantities
@@ -1010,22 +1012,6 @@ class PsiLoader(BaseLoader):
             for i in range(n_hist)
         ]
 
-        groups, group_names, forward_gid, backward_gid = self._default_groups(
-            raw.histogram_labels,
-            n_hist,
-        )
-        canonical_instrument = self._detect_canonical_instrument(raw, n_hist)
-        preset_override = self._instrument_default_preset(
-            canonical_instrument,
-            n_hist,
-            labels=list(raw.histogram_labels),
-        )
-        preset_name: str | None = None
-        preset_projections: list[dict[str, Any]] = []
-        if preset_override is not None:
-            groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
-                preset_override
-            )
         metadata = {
             "run_number": raw.run_number,
             "title": raw.title,
@@ -1086,6 +1072,27 @@ class PsiLoader(BaseLoader):
         if rejections:
             metadata["temperature_log_rejected"] = rejections
 
+        selection = assess_instrument(
+            n_hist, metadata=metadata, source_file=raw.source_file
+        ).selection
+        layout_key = layout_key_for_selection(selection, n_hist) if selection is not None else None
+        groups, group_names, forward_gid, backward_gid = self._default_groups(
+            raw.histogram_labels,
+            n_hist,
+        )
+        preset_override = (
+            self._instrument_default_preset(
+                get_instrument_layout(layout_key), n_hist, labels=raw.histogram_labels
+            )
+            if layout_key is not None and replay is None
+            else None
+        )
+        preset_name: str | None = None
+        preset_projections: list[dict[str, Any]] = []
+        if preset_override is not None:
+            groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
+                preset_override
+            )
         grouping = {
             "groups": groups,
             "group_names": group_names,
@@ -1108,7 +1115,11 @@ class PsiLoader(BaseLoader):
             "t0_source": "missing" if not any(int(v) for v in t0_bins) else "file",
             "histogram_labels": list(raw.histogram_labels),
             # The registry identity and the raw header name have separate provenance.
-            "instrument": canonical_instrument or raw.instrument,
+            "instrument": (
+                profile_by_key(selection.profile_key).identity.layout_key
+                if selection is not None
+                else raw.instrument
+            ),
         }
         if preset_name is not None:
             grouping["grouping_preset"] = preset_name
@@ -1156,56 +1167,14 @@ class PsiLoader(BaseLoader):
             computation_revision=computation.COMPUTATION_REVISION,
         )
 
-    def _detect_canonical_instrument(self, raw: _PsiRawRun, n_hist: int) -> str | None:
-        """Resolve a canonical PSI instrument identity from acquired metadata."""
-        return detect_instrument(
-            n_hist,
-            metadata={
-                "instrument": raw.instrument,
-                "psi_format": raw.psi_format,
-                "facility": "PSI",
-                "histogram_labels": list(raw.histogram_labels),
-            },
-            source_file=raw.source_file or None,
-        )
-
     def _instrument_default_preset(
         self,
-        instrument_name: str | None,
+        layout: InstrumentLayout,
         n_hist: int,
         *,
         labels: list[str] | None = None,
     ) -> tuple[dict[int, list[int]], dict[int, str], int, int, str, list[dict[str, Any]]] | None:
-        """Return the default-preset grouping to apply on load, or ``None``.
-
-        *instrument_name* is the canonical instrument resolved by
-        :meth:`_detect_canonical_instrument`.
-
-        Some instruments (currently HAL-9500) declare
-        :attr:`~asymmetry.core.instrument.InstrumentLayout.apply_default_preset_on_load`
-        so their default preset becomes the live grouping the moment the run
-        loads, rather than only being pre-selected in the grouping window. When
-        the freshly loaded PSI run resolves to such an instrument, this returns
-        the preset's ``(groups, group_names, forward_gid, backward_gid,
-        preset_name, projections)`` so the caller can build the asymmetry and the
-        grouping payload from it. Detector IDs are 1-based (matching the loader's
-        ``groups``), where detector *N* maps to histogram index ``N - 1``.
-
-        Authored membership stays intact. Missing required channels make the
-        reduction unavailable while retaining the raw histograms for editing.
-        Returns ``None`` when detection is inconclusive or the instrument does
-        not opt into a default preset. Layout/label mismatches raise explicitly.
-
-        Raises
-        ------
-        ~asymmetry.core.instrument.PresetLayoutMismatchError
-            If the resolved layout does not describe this run.  Deliberately not
-            swallowed: a wrong-layout preset produces a plausible-looking but
-            wrong asymmetry, so it must surface at load time.
-        """
-        if not instrument_name:
-            return None
-        layout = get_instrument_layout(instrument_name)
+        """Apply an opted-in preset to a uniquely matched acquired channel map."""
         if not layout.apply_default_preset_on_load:
             return None
         preset = layout.presets.get(layout.default_preset_name)

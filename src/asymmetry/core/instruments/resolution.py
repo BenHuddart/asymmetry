@@ -144,10 +144,22 @@ class InstrumentResolution:
 
 
 def selection_for_profile(
-    profile: InstrumentProfile, count: int, origin: str
+    profile: InstrumentProfile, count: int, origin: str, *, labels: tuple[str, ...] = ()
 ) -> InstrumentSelection:
     matches = [
-        config.key for config in profile.detectors.acquisitions if len(config.channels) == count
+        config.key
+        for config in profile.detectors.acquisitions
+        if len(config.channels) == count
+        and (
+            not config.require_file_labels
+            or (
+                len(labels) == count
+                and all(
+                    labels[channel.ordinal - 1] in channel.file_labels
+                    for channel in config.channels
+                )
+            )
+        )
     ]
     acquisition = (
         matches[0]
@@ -197,6 +209,8 @@ def assess_instrument(
     }
     if metadata.get("psi_format"):
         facilities.add("PSI")
+    acquired_labels = next((metadata[key] for key in ACQUIRED_LABEL_KEYS if metadata.get(key)), ())
+    labels = tuple(acquired_labels) if isinstance(acquired_labels, (list, tuple)) else ()
     found = []
     hints = [
         (key, metadata[key], False)
@@ -260,7 +274,9 @@ def assess_instrument(
             ]
         for profile in matches:
             found.append(
-                selection_for_profile(profile, count, "filename" if filename else "metadata")
+                selection_for_profile(
+                    profile, count, "filename" if filename else "metadata", labels=labels
+                )
             )
     label_metadata = {
         key: metadata[key]
@@ -274,7 +290,7 @@ def assess_instrument(
                 (config.layout_key or profile.identity.layout_key) == label_key
                 for config in profile.detectors.acquisitions
             ):
-                found.append(selection_for_profile(profile, count, "labels"))
+                found.append(selection_for_profile(profile, count, "labels", labels=labels))
     candidates = tuple({candidate.identity: candidate for candidate in found}.values())
     contrary = bool(
         facilities

@@ -1,6 +1,7 @@
 """PSI HAL: explicit acquired channels and qualified schematic conventions."""
 
 import math
+from dataclasses import replace
 
 from asymmetry.core.instruments.geometry import (
     BeamDirection,
@@ -80,6 +81,23 @@ ACQUISITION = Acquisition(
     auxiliary=(Occurrence(channel="MV"),),
 )
 
+FORWARD_RING = replace(
+    ACQUISITION,
+    key="forward_ring",
+    label="Nine-channel forward-ring readout",
+    channels=ACQUISITION.channels[:9],
+    views=ACQUISITION.views[:1],
+    layout_key="HAL-FORWARD",
+    require_file_labels=True,
+)
+
+TRANSVERSE = Preset(
+    "Transverse (opposed pairs)",
+    tuple(ChannelGroup(i, f"F{i}", (f"F{i}",)) for i in range(1, 9)),
+    1,
+    5,
+)
+
 PRESETS = (
     Preset(
         "Per-octant",
@@ -105,25 +123,11 @@ PRESETS = (
         2,
         1,
     ),
-    Preset(
-        "Transverse (opposed pairs)",
-        (
-            ChannelGroup(1, "F1", ("F1",)),
-            ChannelGroup(2, "F2", ("F2",)),
-            ChannelGroup(3, "F3", ("F3",)),
-            ChannelGroup(4, "F4", ("F4",)),
-            ChannelGroup(5, "F5", ("F5",)),
-            ChannelGroup(6, "F6", ("F6",)),
-            ChannelGroup(7, "F7", ("F7",)),
-            ChannelGroup(8, "F8", ("F8",)),
-        ),
-        1,
-        5,
-    ),
+    TRANSVERSE,
 )
 
 PROFILE = InstrumentProfile(
-    identity=Identity("psi.hal9500", "PSI", "HAL-9500", "1", "HAL", "HAL", "piE3"),
+    identity=Identity("psi.hal9500", "PSI", "HAL-9500", "2", "HAL", "HAL", "piE3"),
     source=Source(
         "continuous", "Continuous muon source; spin rotation, field and timing remain run-specific."
     ),
@@ -138,17 +142,25 @@ PROFILE = InstrumentProfile(
             for prefix, bank in (("F", "forward"), ("B", "backward"))
             for index in range(1, 9)
         ),
-        (ACQUISITION,),
+        (ACQUISITION, FORWARD_RING),
     ),
-    presets=(ConfigurationPresets("full17", PRESETS),),
+    presets=(
+        ConfigurationPresets(ACQUISITION.key, PRESETS),
+        ConfigurationPresets(FORWARD_RING.key, (TRANSVERSE,)),
+    ),
     quirks=(
-        "PSI-scoped HIFI/tdc_hifi aliases identify HAL-9500, not ISIS HiFi. MV is an acquired channel with unverified hardware affiliation. Partial forward-only files remain supported by their loader.",
+        "PSI-scoped HIFI/tdc_hifi aliases identify HAL-9500, not ISIS HiFi. MV is an acquired channel with unverified hardware affiliation. The nine-channel map requires matching file labels in histogram order.",
     ),
     defaults=Defaults(apply_default_preset_on_load=True),
     sources=Sources(
         (
             Reference(
                 "instrument-page", "PSI HAL-9500 instrument", "https://www.psi.ch/en/smus/hal-9500"
+            ),
+            Reference(
+                "rigi-school-data",
+                "2026 ISIS/PSI Muon School at Rigi Kaltbad data",
+                "https://shadow.nd.rl.ac.uk/wimda/",
             ),
         ),
         (
@@ -191,20 +203,28 @@ PROFILE = InstrumentProfile(
             Evidence(
                 "defaults",
                 EvidenceStatus.AUTHORED,
-                "Per-octant remains the first preset and the existing fresh-load flag is retained; no loader path is newly enabled.",
+                "Fresh files use Per-octant for the seventeen-channel readout and Transverse (opposed pairs) for the matched forward-ring readout.",
             ),
             Evidence(
                 "acquisition.full17",
                 EvidenceStatus.UNVERIFIED,
                 "Preserved ordinal/label map and explicit groups; no new hardware or statistical relationship is inferred.",
             ),
+            Evidence(
+                "acquisition.forward_ring",
+                EvidenceStatus.SOURCE,
+                "The MDU headers export MV followed by F1 through F8 in histogram order.",
+                "rigi-school-data",
+                "Wimda Workshop: HAL-9500 runs 686 and 693",
+            ),
             *(
                 Evidence(
-                    f"view.full17.{view.key}",
+                    f"view.{config.key}.{view.key}",
                     EvidenceStatus.SCHEMATIC,
                     "Dimensionless schematic; coordinates, rotations and any direction arrows are drawing conventions, not measured detector dimensions or run settings.",
                 )
-                for view in ACQUISITION.views
+                for config in (ACQUISITION, FORWARD_RING)
+                for view in config.views
             ),
             *(
                 Evidence(
@@ -214,10 +234,15 @@ PROFILE = InstrumentProfile(
                 )
                 for preset in PRESETS
             ),
+            Evidence(
+                f"preset.{FORWARD_RING.key}.{TRANSVERSE.name}",
+                EvidenceStatus.AUTHORED,
+                "F1 and F5 are the ordered analysis legs. The pairing and angular convention are unverified pending instrument review.",
+            ),
         ),
     ),
     review=Review(
-        "1",
-        "Instrument identity and published detector count are separate from unverified export mapping and authored presets.",
+        "2",
+        "File headers establish the forward-ring export order. The authored F1/F5 pairing and angular convention await instrument review.",
     ),
 )

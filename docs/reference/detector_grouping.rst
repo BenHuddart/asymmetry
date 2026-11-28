@@ -592,8 +592,9 @@ Fourier plots:
 
 The named preset is the instrument's recommended transverse arrangement —
 ``Transverse (Vector)`` on HiFi and MuSR, ``Spin-rotated (B+U/F+D)`` on PSI GPS,
-``Per-octant`` on HAL-9500. **Open Grouping…** is a link that opens the Grouping
-window on the current run so you can apply it; the same nudge also appears inside
+**Per-octant** on the full HAL-9500 readout, and **Transverse (opposed pairs)**
+on its nine-channel forward-ring readout. **Open Grouping…** opens the Grouping
+window on the current run so you can apply the preset; the same nudge also appears inside
 the Grouping window itself, pointing at the Detector Layout editor. Applying the
 recommended preset clears the bar automatically. The **✕** dismisses it for that
 run only — a different transverse run still nudges, and a re-displayed dismissed
@@ -1552,12 +1553,10 @@ files). For PSI FLAME BIN files, filenames, detector labels, or metadata
 containing ``FLAME`` select the FLAME detector layout automatically; this
 includes PSI instrument strings such as ``LMU_BULKMUSR_FLAME``. PSI HAL-9500
 runs (the high-field πE3 spectrometer) are recognised from their ``HIFI``
-instrument string and ``tdc_hifi_*`` run names and open with the HAL-9500
-octagonal layout; a full HAL-9500 run additionally opens already grouped into
-its default **Per-octant** preset (see `PSI HAL-9500`_ below), so the
-angle-resolved analysis is available without opening the Grouping window. This
-is a distinct instrument from the ISIS HiFi spectrometer despite the shared
-``hifi`` token. PSI GPS BIN files
+instrument string and ``tdc_hifi_*`` run names. A recognised HAL-9500 file
+opens with a preset for its matched readout. See `PSI HAL-9500`_ below for
+the full and forward-ring layouts. PSI HAL-9500 and ISIS HiFi are separate
+spectrometers with the shared ``hifi`` token. PSI GPS BIN files
 (``deltat_tdc_gps_*`` with the six ``Forw/Back/Up/Down/Righ/Left`` histograms)
 select the GPS two-panel layout automatically (see `PSI GPS`_ below). This
 behaviour
@@ -1919,11 +1918,18 @@ separately qualified channel order, angular convention, and grouping defaults.
    available immediately without opening the Grouping window. The eight octant
    groups exclude the muon-veto MV.
 
-   A file exporting only the forward ring (``MV, F1…F8``) lacks the
-   backward channels required by **Per-octant**. The authored preset and raw
-   histograms remain accessible through **Analysis → Grouping...**. The
-   **Incomplete preview** message identifies the missing detector. Edit the
-   **Detector Indices (1-based)** cells to use only the acquired channels.
+A recognised HAL-9500 file with the nine histogram labels ``MV, F1…F8``
+in that order opens with **Transverse (opposed pairs)**. The preset enables
+one group per forward detector and leaves MV out of the groups. It selects
+F1 as **Forward Group** and F5 as **Backward Group** for **F−B asymmetry**.
+The F1/F5 pairing is an Asymmetry-defined analysis default pending instrument
+review. Other partial readouts start with the groups derived from their file
+labels.
+
+Reopening a project restores its saved grouping membership. If a saved group
+requests a missing channel, open **Analysis → Grouping...** to see the
+**Incomplete preview** diagnostic and edit the **Detector Indices (1-based)**
+cells.
 
 PSI GPS
 ~~~~~~~
