@@ -184,12 +184,15 @@ def test_selected_green_period_plots_with_missing_red_t0(qapp):
 def test_selecting_run_with_invalid_projection_replaces_old_curve(qapp, monkeypatch, stored_error):
     usable = _make_two_period_vector_dataset(7454)
     invalid = _make_two_period_vector_dataset(7455)
+    window = MainWindow()
+    applied, _ = window._apply_grouping_settings_to_dataset(invalid, dict(invalid.run.grouping))
+    assert applied
+    accepted_asymmetry = invalid.asymmetry.copy()
     request = invalid.run.grouping
     request["groups"][5] = [7]
     if stored_error:
         invalid.metadata["correction_error"] = "The saved detector grouping is invalid."
 
-    window = MainWindow()
     browser, panel = window._data_browser, window._plot_panel
     browser.add_dataset(usable)
     browser.add_dataset(invalid)
@@ -205,14 +208,32 @@ def test_selecting_run_with_invalid_projection_replaces_old_curve(qapp, monkeypa
     assert window._current_dataset is invalid
     assert invalid.run.grouping is request
     assert request["vector_axis"] == "P_z"
-    np.testing.assert_array_equal(invalid.asymmetry, np.zeros(4))
+    np.testing.assert_array_equal(invalid.asymmetry, accepted_asymmetry)
     assert not panel._ax.has_data()
     assert panel._header_title_label.text() == "Time-domain F-B asymmetry"
     assert any("Detector(s) 7 do not exist" in text.get_text() for text in panel._ax.texts)
     assert window._fit_panel.single_dataset() is None
 
+    for control in (panel._overlay_checkbox, panel._waterfall_checkbox):
+        assert control.isEnabled()
+        control.click()
+        assert panel.get_current_polarization_axis() == "P_x"
+        assert not panel._ax.has_data()
+        assert any("Detector(s) 7 do not exist" in text.get_text() for text in panel._ax.texts)
+
+    browser.select_runs({7454, 7455})
+    panel._waterfall_checkbox.click()
+    assert panel.get_current_polarization_axis() == "P_x"
+    assert not panel._ax.has_data()
+    assert any("Detector(s) 7 do not exist" in text.get_text() for text in panel._ax.texts)
+
     browser.select_runs({7454})
     assert panel._ax.get_legend_handles_labels()[1] == ["7454"]
+    panel._on_projection_selection_changed(["P_z"])
+    browser.select_runs({7455})
+    assert panel._ax.get_legend_handles_labels()[1] == ["7455"]
+    np.testing.assert_array_equal(panel._last_plot_asymmetry, accepted_asymmetry)
+    assert not errors
 
 
 def test_one_incomplete_period_refuses_apply_without_mutation(qapp):

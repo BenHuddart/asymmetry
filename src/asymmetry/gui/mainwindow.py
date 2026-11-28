@@ -2499,8 +2499,7 @@ class MainWindow(QMainWindow):
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
         if axis == current_axis:
             return
-        updated = self._select_projection(targets, axis)
-        if updated is not None and redraw and (axis == "ALL" or updated or len(targets) > 1):
+        if self._select_projection(targets, axis) is not None and redraw:
             self._render_current_selection_plot()
 
     def _refresh_time_view_selector(self) -> None:
@@ -2822,10 +2821,7 @@ class MainWindow(QMainWindow):
     def _render_current_selection_plot(self) -> None:
         """Render current single/multi selection using active polarization settings."""
         started_at = time.perf_counter()
-        # In the integral-scan view the centre shows the scan: refresh its
-        # time-strip preview and skip the (hidden) time panel's render — the
-        # switch back to a time view re-renders it (_on_plot_time_view_changed),
-        # so browsing runs in scan mode doesn't pay a full offscreen plot.
+        # The scan preview owns rendering while the time panel is hidden.
         if self._alc_mode:
             self._refresh_integral_time_strip()
             return
@@ -2834,13 +2830,12 @@ class MainWindow(QMainWindow):
         render_mode = "empty"
         try:
             targets = self._selected_or_current_datasets()
-            rendered_targets = list(targets)
+            rendered_targets = targets
             if not targets:
                 return
 
             time_view_mode = self._plot_panel.current_time_view_mode()
-            # A single data-group header selects all its members; the groups/raw-counts
-            # views show one run's detector groups, so render a representative member.
+            # Groups and raw counts use a representative run for a data-group header.
             group_target = self._single_group_view_target(targets)
             if (
                 time_view_mode in ("groups", "raw_counts")
@@ -2853,11 +2848,9 @@ class MainWindow(QMainWindow):
                     lifetime_corrected=time_view_mode != "raw_counts",
                 )
                 if grouped_targets:
-                    # Bind the current run to the representative member so fits and
-                    # labels follow the run whose groups are shown.
                     self._current_dataset = primary
                     render_mode = "grouped_time"
-                    rendered_targets = list(grouped_targets)
+                    rendered_targets = grouped_targets
                     self._plot_panel.plot_grouped_time_domain_subplots(grouped_targets)
                     return
 
@@ -2867,8 +2860,7 @@ class MainWindow(QMainWindow):
                     render_mode = "overlay_empty"
                     rendered_targets = []
                     return
-                targets = [chosen]
-                rendered_targets = list(targets)
+                targets = rendered_targets = [chosen]
 
             if len(targets) == 1:
                 self._current_dataset = targets[0]
@@ -2899,12 +2891,25 @@ class MainWindow(QMainWindow):
                     self._plot_panel.plot_vector_subplots(axis_datasets)
                     return
 
-            if active_axis is not None and len(targets) > 1:
-                # One projection of a mixed overlay shows only the runs measuring it.
-                members = self._projection_memberships(targets).get(active_axis)
-                if members:
-                    targets = [targets[index] for index in members]
-                    rendered_targets = list(targets)
+            if active_axis not in (None, "ALL"):
+                if len(targets) > 1 and (
+                    members := self._projection_memberships(targets).get(active_axis)
+                ):
+                    targets = rendered_targets = [targets[index] for index in members]
+                for dataset in targets:
+                    run = dataset.run
+                    pairs, reduced_axis = self._vector_axis_state_for_dataset(dataset)
+                    if run is None or len(pairs) < 2 or active_axis == reduced_axis:
+                        continue
+                    grouping = run.grouping
+                    for group in pairs.get(active_axis, ()):
+                        effective_group_indices(
+                            grouping, group, n_histograms=len(run.histograms) or None
+                        )
+                    raise InvalidGroupingError(
+                        f"Run {dataset.run_label}: {active_axis} has no current reduction.",
+                        grouping,
+                    )
 
             if len(targets) > 1:
                 render_mode = "overlay"
@@ -11554,13 +11559,10 @@ class MainWindow(QMainWindow):
     # ── Saved single fits ─────────────────────────────────────────────────
 
     def _bound_saved_fits(self) -> tuple[int, Representation, str | None] | None:
-        """``(run, representation, projection)`` the Single tab's saved fits live on.
-
-        ``None`` while no run is bound, or no fit was ever recorded on its view.
-        """
+        """Locate saved fits for the run and projection bound to Single."""
         rep_type = self._active_representation_type()
         run_number = self._single_fit_run_number()
-        if rep_type is None or run_number is None:
+        if rep_type is None or run_number is None or self._fit_panel.single_dataset() is None:
             return None
         representation = self._project_model.representation(run_number, rep_type)
         if representation is None:
@@ -11620,14 +11622,7 @@ class MainWindow(QMainWindow):
         return self._get_full_fit_context()[0]
 
     def _sync_saved_fit_overlays(self) -> None:
-        """Draw the bound run's saved fits that are not open, under their own ids (D6).
-
-        Every saved fit of the run's representation that is not its set's open
-        fit draws as ``single:<fit_id>`` on its projection's axis; a curve whose
-        fit was deleted, or is now open (and so draws as ``"single"``), goes.
-        Only a missing curve is evaluated, so a re-bind of the same run draws
-        nothing new.
-        """
+        """Reuse evaluated alternate fits under their own fit IDs and projections."""
         bound = self._bound_saved_fits()
         if bound is None:
             self._refresh_saved_fit_compare()
