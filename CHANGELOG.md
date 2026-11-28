@@ -133,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Returning from the FFT or MaxEnt view no longer replaces the time-domain fit
   range with the frequency range.
 - Keep endpoint bins when a time-domain window bound differs from the bin
-  centre by floating-point rounding.
+  centre by floating-point rounding. Saved Single fit overlays cover the
+  verified fitted centres.
 
 ## [0.29.0] - 2026-11-25
 

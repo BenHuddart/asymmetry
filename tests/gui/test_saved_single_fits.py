@@ -28,6 +28,7 @@ from asymmetry.core.fitting.engine import FitResult  # noqa: E402
 from asymmetry.core.fitting.input_attribution import fit_input_attribution  # noqa: E402
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
+from asymmetry.core.fitting.time_response import TimeResponse  # noqa: E402
 from asymmetry.core.representation import FitSlot, RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID  # noqa: E402
@@ -193,6 +194,43 @@ def test_opening_a_saved_fit_restores_its_form_and_swaps_the_curves(mw) -> None:
     assert SAVED_FIT_ID_PREFIX + exp.fit_id not in stored
     assert mw._plot_panel.shown_fit_ids(_RUN) == [SINGLE_FIT_ID]
     assert _hint(mw) == ""
+
+
+@pytest.mark.parametrize(
+    ("response", "history_matches"),
+    [(TimeResponse(), True), (TimeResponse("double_delta", 0.4), True), (TimeResponse(), False)],
+)
+def test_saved_single_overlay_includes_only_verified_centres_beyond_rounded_bound(
+    mw, response, history_matches
+):
+    panel = mw._plot_panel
+    lower, upper = 0.2, 0.3
+    centre = np.nextafter(lower, -np.inf)
+    dataset = mw._data_browser.get_dataset(_RUN)
+    dataset.time[2] = centre
+    mw._on_dataset_selected(_RUN)
+    panel.set_fit_range(lower, upper)
+    _fit(mw, _EXP.with_time_response(response))
+    if not history_matches:
+        dataset.asymmetry = dataset.asymmetry.copy()
+        dataset.asymmetry[2] += 0.5
+        mw._on_dataset_selected(_RUN)
+    panel.set_fit_range(0.1, upper)
+    _fit(mw, _GAUSS)
+    _, fit_set = _fit_set(mw)
+    saved = fit_set.fits[0]
+
+    assert CompositeModel.from_dict(saved.model).time_response == response
+    assert saved.fit_range == {"min": lower, "max": upper}
+    assert saved.result["input_attribution"]["min"] == centre
+    overlay = panel._fit_curves_by_key[(_RUN, None, SAVED_FIT_ID_PREFIX + saved.fit_id)]
+    assert overlay[0][0] == (centre if history_matches else lower)
+
+    _tab(mw).saved_fit_open_requested.emit(saved.fit_id)
+    reopened = panel._fit_curves_by_key[(_RUN, None, SINGLE_FIT_ID)]
+    np.testing.assert_array_equal(reopened[0], overlay[0])
+    np.testing.assert_array_equal(reopened[1], overlay[1])
+    assert panel.get_fit_range() == (lower, upper)
 
 
 def test_rename_then_delete_down_to_no_fit(mw) -> None:

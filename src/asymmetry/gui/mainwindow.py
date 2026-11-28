@@ -86,11 +86,11 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.cross_group import CrossGroupFitRun, run_cross_group_fit_from_config
 from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_count
 from asymmetry.core.fitting.fit_quality import recorded_statistic
-from asymmetry.core.fitting.input_attribution import saved_fit_matches
+from asymmetry.core.fitting.input_attribution import saved_fit_matches, saved_fit_observations
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
 )
-from asymmetry.core.fitting.model_comparison import saved_fit_model
+from asymmetry.core.fitting.model_comparison import saved_fit_curve_bounds, saved_fit_model
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterGroupData,
@@ -11622,16 +11622,21 @@ class MainWindow(QMainWindow):
     def _saved_fit_curve_payload(
         self, slot: FitSlot, name: str, axis_key: str | None
     ) -> tuple | None:
-        """Draw a historical model over its recorded window."""
         drawable = saved_fit_model(slot)
         if drawable is None:
             return None
         model, values = drawable
-        window = slot.fit_range or {"min": None, "max": None}
-        record = self._bound_record()
-        x_min = float(np.min(record.time)) if window["min"] is None else window["min"]
-        x_max = float(np.max(record.time)) if window["max"] is None else window["max"]
-        x, y = dense_fit_curve(model, values, x_min, x_max)
+        record = dataset = self._bound_record()
+        if axis_key != self._current_single_fit_projection():
+            targets = self._plot_panel._vector_subplot_datasets.get(axis_key, ())
+            plotted = next(
+                (target for target in targets if target.run_number == record.run_number), None
+            )
+            dataset = self._plot_panel.get_analysis_dataset(plotted)
+        bounds = saved_fit_curve_bounds(
+            slot, dataset if dataset is not None else record, saved_fit_observations(slot, dataset)
+        )
+        x, y = dense_fit_curve(model, values, *bounds)
         return (x, y, name, (), None, model.formula_string(), axis_key)
 
     def _bound_record(self) -> MuonDataset:
@@ -11642,14 +11647,7 @@ class MainWindow(QMainWindow):
         return self._get_full_fit_context()[0]
 
     def _sync_saved_fit_overlays(self) -> None:
-        """Draw the bound run's saved fits that are not open, under their own ids (D6).
-
-        Every saved fit of the run's representation that is not its set's open
-        fit draws as ``single:<fit_id>`` on its projection's axis; a curve whose
-        fit was deleted, or is now open (and so draws as ``"single"``), goes.
-        Only a missing curve is evaluated, so a re-bind of the same run draws
-        nothing new.
-        """
+        """Draw missing ``single:<fit_id>`` overlays and remove obsolete ones."""
         bound = self._bound_saved_fits()
         if bound is None:
             self._refresh_saved_fit_compare()

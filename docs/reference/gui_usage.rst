@@ -1273,7 +1273,9 @@ matches another saved fit. The buttons below act on the run's fits:
 On the plot, the open fit is the run's single fit as before. Each other saved
 fit is listed in the toolbar's **Fits** menu as ``Single fit ·`` *name*, after
 any series covering the run (see `Batch fitting`_); tick it to overlay its
-curve in a trace colour with its name in the legend.
+curve in a trace colour with its name in the legend. When the fitted observations
+match the current data, the curve includes centres retained by time-bound rounding.
+Opening the fit still restores the recorded bounds.
 
 **Comparing saved fits.** **Compare…** opens the **Compare saved fits** window
 for the run. It uses the comparison panel the Fit Wizard uses for its
