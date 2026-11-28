@@ -75,7 +75,7 @@ and one conflict the summary reads **Loaded 1 file(s), 1 failed**. Choose
 **File → New Project** to open the other source in a separate tab. Opening
 the same file again offers the **Data File Already Loaded** prompt.
 If mapping periods in **Grouping** would claim a run number held by another
-source, the status bar shows **Period mapping failed:** with the same details.
+source, check **LOG** for the same message and both source paths.
 
 .. _legacy-v1-zero-grouping:
 
